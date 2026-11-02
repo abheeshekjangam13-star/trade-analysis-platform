@@ -1,0 +1,69 @@
+version: "3.9"
+services:
+  discovery-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: discovery-server
+    ports: ["8761:8761"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 10s
+      retries: 5
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: api-gateway
+    ports: ["8080:8080"]
+    environment:
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+
+  market-data-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: market-data-service
+    ports: ["8081:8081"]
+    environment:
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+
+  indicator-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: indicator-service
+    ports: ["8082:8082"]
+    environment:
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+
+  strategy-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: strategy-service
+    ports: ["8083:8083"]
+    environment:
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+      market-data-service:
+        condition: service_started
+      indicator-service:
+        condition: service_started
