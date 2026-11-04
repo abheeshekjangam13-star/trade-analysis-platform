@@ -1,0 +1,24 @@
+meta {
+  name: Create MACD Signal Strategy
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "MACD Signal Line Cross",
+    "description": "Buy when MACD line crosses above signal line, sell on crossunder",
+    "type": "MACD_SIGNAL",
+    "parameters": {}
+  }
+}

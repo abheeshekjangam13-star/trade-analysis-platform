@@ -21,6 +21,7 @@ services:
     ports: ["8080:8080"]
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
+      EUREKA_INSTANCE_HOSTNAME: api-gateway
     depends_on:
       discovery-server:
         condition: service_healthy
@@ -34,6 +35,7 @@ services:
     ports: ["8081:8081"]
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
+      EUREKA_INSTANCE_HOSTNAME: market-data-service
     depends_on:
       discovery-server:
         condition: service_healthy
@@ -47,6 +49,7 @@ services:
     ports: ["8082:8082"]
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
+      EUREKA_INSTANCE_HOSTNAME: indicator-service
     depends_on:
       discovery-server:
         condition: service_healthy
@@ -60,6 +63,7 @@ services:
     ports: ["8083:8083"]
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
+      EUREKA_INSTANCE_HOSTNAME: strategy-service
     depends_on:
       discovery-server:
         condition: service_healthy

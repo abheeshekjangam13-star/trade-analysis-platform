@@ -1,0 +1,19 @@
+meta {
+  name: Get Backtest Results
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{strategyUrl}}/api/backtests/:strategyId
+  body: none
+  auth: none
+}
+
+params:path {
+  strategyId: 35
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

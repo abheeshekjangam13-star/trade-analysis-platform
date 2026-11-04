@@ -1,0 +1,15 @@
+meta {
+  name: List Symbols
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{marketDataUrl}}/api/market-data/symbols
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  marketDataUrl: http://localhost:8080
+}

@@ -1,0 +1,38 @@
+meta {
+  name: Create Nifty CE Gap-Up Breakout Strategy
+  type: http
+  seq: 7
+}
+
+post {
+  url: http://localhost:8080/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nifty CE Gap-Up Breakout with 80 Target 5 min",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "description": "Trades only when NIFTY opens >= 0.2% above the previous close. CE only, max 1 trade/day. Ref candle 09:15-09:20 IST; buy CE at ATM-50 on a fresh 5-min close above refHigh. Initial SL = (refHigh+refLow)/2; trail on completed 5-min block half (max(SL, low)). Target +150 spot points. EOD square-off 15:20. Backtest deducts Rs 85 charges per trade.",
+    "parameters": {
+      "lots": "2",
+      "lotSize": "65",
+      "directions": "CE",
+      "maxTradesPerDay": "1",
+      "trailMinutes": "5",
+      "targetPoints": "80",
+      "gapFilter": "GAP_UP",
+      "gapPct": "0.2",
+      "costPerTrade": "85"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

@@ -21,6 +21,10 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    # Register a stable name instead of the Mac's hostname (macOS renames Mac-1.lan → Mac-3.lan etc.,
+    # and the gateway then fails with "Failed to resolve 'mac-1.lan'"). Docker sets the service name.
+    hostname: ${EUREKA_INSTANCE_HOSTNAME:localhost}
 
 management:
   endpoints:
@@ -36,3 +40,8 @@ springdoc:
 
 market-data:
   refresh-ms: 300000
+
+kite:
+  api-key: ${KITE_API_KEY}
+  api-secret: ${KITE_API_SECRET}
+  access-token: ${KITE_ACCESS_TOKEN:}

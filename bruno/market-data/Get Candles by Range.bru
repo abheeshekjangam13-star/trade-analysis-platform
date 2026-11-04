@@ -1,0 +1,25 @@
+meta {
+  name: Get Candles by Range
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{marketDataUrl}}/api/market-data/:symbol/range
+  body: none
+  auth: none
+}
+
+params:query {
+  interval: DAY_1
+  from: 2024-01-01T00:00:00Z
+  to: 2024-12-31T23:59:59Z
+}
+
+params:path {
+  symbol: AAPL
+}
+
+vars:pre-request {
+  marketDataUrl: http://localhost:8080
+}

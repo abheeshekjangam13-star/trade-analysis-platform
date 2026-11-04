@@ -1,0 +1,19 @@
+meta {
+  name: Get Strategy
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{strategyUrl}}/api/strategies/:id
+  body: none
+  auth: none
+}
+
+params:path {
+  id: 43
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

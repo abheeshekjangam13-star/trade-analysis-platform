@@ -1,0 +1,27 @@
+meta {
+  name: Create SMA Crossover Strategy
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "SMA Crossover 10/50",
+    "description": "Buy when short SMA crosses above long SMA, sell on crossunder",
+    "type": "SMA_CROSSOVER",
+    "parameters": {
+      "shortPeriod": "10",
+      "longPeriod": "50"
+    }
+  }
+}

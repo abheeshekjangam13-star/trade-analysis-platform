@@ -12,7 +12,7 @@ public class BacktestResult {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     private Strategy strategy;
 
     private String symbol;

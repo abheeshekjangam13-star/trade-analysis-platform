@@ -1,0 +1,19 @@
+meta {
+  name: Get Trades by Strategy
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{strategyUrl}}/api/nifty-trades/strategy/:strategyId
+  body: none
+  auth: none
+}
+
+params:path {
+  strategyId: 35
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

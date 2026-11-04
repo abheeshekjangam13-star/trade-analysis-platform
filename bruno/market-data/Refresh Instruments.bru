@@ -1,0 +1,15 @@
+meta {
+  name: Refresh Instruments
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{marketDataUrl}}/api/market-data/admin/refresh-instruments
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  marketDataUrl: http://localhost:8080
+}

@@ -1,0 +1,19 @@
+meta {
+  name: Get Trades by Backtest
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{strategyUrl}}/api/nifty-trades/backtest/:backtestResultId
+  body: none
+  auth: none
+}
+
+params:path {
+  backtestResultId: 1
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

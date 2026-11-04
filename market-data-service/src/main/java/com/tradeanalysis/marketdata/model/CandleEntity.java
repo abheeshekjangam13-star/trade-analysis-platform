@@ -39,6 +39,14 @@ public class CandleEntity {
         this.open = open; this.high = high; this.low = low; this.close = close; this.volume = volume;
     }
 
+    /** Overwrites OHLCV with a newer version of the same bar; returns true if anything changed. */
+    public boolean update(BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, long volume) {
+        boolean changed = open.compareTo(this.open) != 0 || high.compareTo(this.high) != 0
+                || low.compareTo(this.low) != 0 || close.compareTo(this.close) != 0 || volume != this.volume;
+        this.open = open; this.high = high; this.low = low; this.close = close; this.volume = volume;
+        return changed;
+    }
+
     public Long getId() { return id; }
     public String getSymbol() { return symbol; }
     public String getIntervalCode() { return intervalCode; }

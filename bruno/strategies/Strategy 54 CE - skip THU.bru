@@ -1,0 +1,43 @@
+meta {
+  name: Strategy 54 CE - skip THU
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nifty CE Gap-Up Breakout 80 Target - delayed trail, no entry after 14:00, gap < 2% - skip THU",
+    "description": "Trades only when NIFTY opens >= 0.2% and < 2% above the previous close. CE only, max 1 trade/day. Ref candle 09:15-09:20 IST; buy CE at ATM-50 on a fresh 5-min close above refHigh, on 5-min candles starting before 14:00 IST. Initial SL = (refHigh+refLow)/2, held until spot is +20 points above entry; then SL moves to entry and trails on completed 5-min block lows (max(SL, low)). Target +80 spot points. EOD square-off 15:20. No trading on Thursdays (skipDays). Backtest deducts Rs 85 charges per trade.",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "parameters": {
+      "lots": "2",
+      "lotSize": "65",
+      "directions": "CE",
+      "maxTradesPerDay": "1",
+      "trailMinutes": "5",
+      "targetPoints": "80",
+      "gapFilter": "GAP_UP",
+      "gapPct": "0.2",
+      "maxGapPct": "2.0",
+      "entryUntil": "14:00",
+      "trailAfterPoints": "20",
+      "breakevenOnTrail": "true",
+      "skipDays": "THU",
+      "costPerTrade": "85"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

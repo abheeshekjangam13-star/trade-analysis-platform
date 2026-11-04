@@ -1,9 +1,11 @@
 package com.tradeanalysis.strategy.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.Map;
 
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 @Entity
 @Table(name = "strategy")
 public class Strategy {
@@ -14,6 +16,7 @@ public class Strategy {
     @Column(nullable = false, unique = true)
     private String name;
 
+    @Column(columnDefinition = "TEXT")
     private String description;
 
     /** E.g. "SMA_CROSSOVER", "RSI_THRESHOLD", "MACD_SIGNAL" */

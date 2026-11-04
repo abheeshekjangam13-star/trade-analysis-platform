@@ -1,0 +1,22 @@
+meta {
+  name: Run Nifty Backtest
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{strategyUrl}}/api/backtests?strategyId=54&symbol=NIFTY 50&lookbackDays=360&capital=100000
+  body: none
+  auth: none
+}
+
+params:query {
+  strategyId: 54
+  symbol: NIFTY 50
+  lookbackDays: 360
+  capital: 100000
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

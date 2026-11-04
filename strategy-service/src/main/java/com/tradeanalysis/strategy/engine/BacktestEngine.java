@@ -2,10 +2,14 @@ package com.tradeanalysis.strategy.engine;
 
 import com.tradeanalysis.common.dto.*;
 import com.tradeanalysis.common.indicator.Params;
+import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.model.Strategy;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.*;
 
 /**
@@ -19,15 +23,23 @@ import java.util.*;
 @Component
 public class BacktestEngine {
 
-    private final MarketDataClient mdClient;
-    private final IndicatorClient  indClient;
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
-    public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient) {
-        this.mdClient  = mdClient;
-        this.indClient = indClient;
+    private final MarketDataClient           mdClient;
+    private final IndicatorClient            indClient;
+    private final NiftyOpeningBreakoutEngine niftyEngine;
+
+    public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient,
+                          NiftyOpeningBreakoutEngine niftyEngine) {
+        this.mdClient    = mdClient;
+        this.indClient   = indClient;
+        this.niftyEngine = niftyEngine;
     }
 
     public BacktestOutput run(Strategy strategy, String symbol, int lookbackDays, double capital) {
+        if ("NIFTY_OPENING_BREAKOUT".equals(strategy.getType())) {
+            return runNiftyBreakout(strategy, symbol, lookbackDays, capital);
+        }
         PriceSeries series = mdClient.getSeries(symbol, Interval.DAY_1, lookbackDays);
         List<Signal> signals = generateSignals(strategy, series);
 
@@ -61,7 +73,42 @@ public class BacktestEngine {
         double totalReturn = (finalEquity - capital) / capital * 100;
         double sharpe = sharpe(returns);
 
-        return new BacktestOutput(finalEquity, totalReturn, maxDD, total, wins, sharpe, signals);
+        return new BacktestOutput(finalEquity, totalReturn, maxDD, total, wins, sharpe, signals, List.of());
+    }
+
+    private BacktestOutput runNiftyBreakout(Strategy strategy, String symbol, int lookbackDays, double capital) {
+        // Calendar-day window, starting at IST midnight so the first day's 09:15 candle is included.
+        // 5-min data starts a few days earlier only to give the first day a previous close (gap filter).
+        Instant to   = Instant.now();
+        LocalDate tradeFrom = LocalDate.now(IST).minusDays(lookbackDays);
+        Instant from = tradeFrom.atStartOfDay(IST).toInstant();
+        PriceSeries series = mdClient.getRange(symbol, Interval.MINUTE_5,
+                tradeFrom.minusDays(7).atStartOfDay(IST).toInstant(), to);
+        PriceSeries minutes = mdClient.getRange(symbol, Interval.MINUTE_1, from, to);
+        Params params = new Params(toObjectMap(strategy.getParameters()));
+        NiftyOpeningBreakoutEngine.BreakoutResult result =
+                niftyEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+
+        List<NiftyTradeLog> logs = result.tradeLogs();
+        int total = logs.size();
+        int wins  = (int) logs.stream().filter(t -> t.getEstimatedPnl() > 0).count();
+        double totalPnl = logs.stream().mapToDouble(NiftyTradeLog::getEstimatedPnl).sum();
+        double totalReturn = capital > 0 ? (totalPnl / capital) * 100 : 0;
+
+        return new BacktestOutput(capital + totalPnl, totalReturn, maxDrawdownPct(capital, logs),
+                total, wins, 0.0, result.signals(), logs);
+    }
+
+    /** Largest peak-to-trough fall in account equity (capital + cumulative P&L), as % of the peak. */
+    static double maxDrawdownPct(double capital, List<NiftyTradeLog> logs) {
+        double equity = capital, peak = capital, maxDD = 0;
+        for (NiftyTradeLog t : logs) {
+            equity += t.getEstimatedPnl();
+            if (equity > peak) peak = equity;
+            double dd = peak > 0 ? (peak - equity) / peak * 100 : 0;
+            if (dd > maxDD) maxDD = dd;
+        }
+        return maxDD;
     }
 
     private List<Signal> generateSignals(Strategy strategy, PriceSeries series) {
@@ -138,5 +185,5 @@ public class BacktestEngine {
 
     public record BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown,
                                   int totalTrades, int winningTrades, double sharpeRatio,
-                                  List<Signal> signals) {}
+                                  List<Signal> signals, List<NiftyTradeLog> tradeLogs) {}
 }

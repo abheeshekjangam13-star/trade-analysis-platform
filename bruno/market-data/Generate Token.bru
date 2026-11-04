@@ -1,0 +1,20 @@
+meta {
+  name: Generate Token
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{marketDataUrl}}/api/market-data/admin/generate-token?requestToken={{kiteRequestToken}}
+  body: none
+  auth: none
+}
+
+params:query {
+  requestToken: {{kiteRequestToken}}
+}
+
+vars:pre-request {
+  marketDataUrl: http://localhost:8081
+  kiteRequestToken: PASTE_KITE_REQUEST_TOKEN
+}

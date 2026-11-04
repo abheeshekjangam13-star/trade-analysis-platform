@@ -1,0 +1,28 @@
+meta {
+  name: Create RSI Threshold Strategy
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "RSI Oversold/Overbought",
+    "description": "Buy on RSI oversold bounce, sell on RSI overbought drop",
+    "type": "RSI_THRESHOLD",
+    "parameters": {
+      "period": "14",
+      "oversold": "30",
+      "overbought": "70"
+    }
+  }
+}

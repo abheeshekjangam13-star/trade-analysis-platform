@@ -1,0 +1,33 @@
+meta {
+  name: Compute VWAP
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{indicatorUrl}}/api/indicators/compute
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "indicator": "VWAP",
+    "series": {
+      "symbol": "AAPL",
+      "interval": "DAY_1",
+      "candles": [
+        { "timestamp": "2024-01-02T00:00:00Z", "open": 185.00, "high": 188.00, "low": 184.00, "close": 187.15, "volume": 55000000 },
+        { "timestamp": "2024-01-03T00:00:00Z", "open": 187.15, "high": 190.00, "low": 186.50, "close": 189.30, "volume": 48000000 },
+        { "timestamp": "2024-01-04T00:00:00Z", "open": 189.30, "high": 191.00, "low": 187.00, "close": 188.60, "volume": 52000000 },
+        { "timestamp": "2024-01-05T00:00:00Z", "open": 188.60, "high": 192.00, "low": 188.00, "close": 191.50, "volume": 60000000 },
+        { "timestamp": "2024-01-08T00:00:00Z", "open": 191.50, "high": 193.50, "low": 190.00, "close": 192.40, "volume": 45000000 }
+      ]
+    },
+    "parameters": {}
+  }
+}

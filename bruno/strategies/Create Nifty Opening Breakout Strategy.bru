@@ -1,0 +1,31 @@
+meta {
+  name: Create Nifty Opening Breakout Strategy
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nifty Opening Breakout",
+    "description": "Nifty 50 first 5-min candle breakout. Ref candle 09:15-09:20 IST. Bullish close > refHigh: buy CE at ATM-50. Bearish close < refLow: buy PE at ATM+50. ATM rounded to nearest 50. Initial SL = (refHigh+refLow)/2. Initial SL fixed at order placement; then trailing SL on each completed 1-min candle: CE max(SL, prev 1-min low), PE min(SL, prev 1-min high); never moves back. CE exits when spot <= SL, PE when spot >= SL. EOD square-off 15:20 IST. Max 1 open position. Max 2 trades/day. Fresh breakout only.",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "parameters": {
+      "lots": "2",
+      "lotSize": "65"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

@@ -17,10 +17,22 @@ spring:
     console:
       enabled: true
 
+  cloud:
+    openfeign:
+      client:
+        config:
+          market-data-service:
+            # First 1-minute backfill of a long range downloads and stores ~375 bars/day from Kite.
+            read-timeout: 600000
+
 eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    # Register a stable name instead of the Mac's hostname (macOS renames Mac-1.lan → Mac-3.lan etc.,
+    # and the gateway then fails with "Failed to resolve 'mac-1.lan'"). Docker sets the service name.
+    hostname: ${EUREKA_INSTANCE_HOSTNAME:localhost}
 
 management:
   endpoints:

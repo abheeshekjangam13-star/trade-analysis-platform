@@ -1,0 +1,20 @@
+meta {
+  name: Update Token
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{marketDataUrl}}/api/market-data/admin/update-token?token={{kiteAccessToken}}
+  body: none
+  auth: none
+}
+
+params:query {
+  token: {{kiteAccessToken}}
+}
+
+vars:pre-request {
+  marketDataUrl: http://localhost:8080
+  kiteAccessToken: PASTE_KITE_ACCESS_TOKEN
+}

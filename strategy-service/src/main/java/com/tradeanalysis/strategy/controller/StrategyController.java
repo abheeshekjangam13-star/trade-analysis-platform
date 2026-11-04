@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -27,10 +28,18 @@ public class StrategyController {
         @SuppressWarnings("unchecked")
         Map<String, String> params = (Map<String, String>) body.getOrDefault("parameters", Map.of());
         return svc.create(
-                body.get("name").toString(),
-                body.getOrDefault("description", "").toString(),
-                body.get("type").toString(),
+                required(body, "name"),
+                String.valueOf(body.getOrDefault("description", "")),
+                required(body, "type"),
                 params);
+    }
+
+    private static String required(Map<String, Object> body, String key) {
+        Object v = body.get(key);
+        if (v == null || v.toString().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing required field: " + key);
+        }
+        return v.toString();
     }
 
     @GetMapping

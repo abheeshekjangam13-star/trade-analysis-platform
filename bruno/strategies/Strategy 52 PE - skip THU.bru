@@ -1,0 +1,46 @@
+meta {
+  name: Strategy 52 PE - skip THU
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nifty PE Gap-Down Breakout 80 Target - delayed trail, failed-breakdown exit, 40pt stop cap2 - skip THU",
+    "description": "Trades only when NIFTY opens >= 0.2% and < 2% below the previous close. PE only, max 1 trade/day. Ref candle 09:15-09:20 IST; buy PE at ATM+50 on a fresh 5-min close below refLow, on 5-min candles starting before 14:00 IST. Initial SL = closer of (refHigh+refLow)/2 and entry + 40 points, held until spot is 20 points below entry; then SL moves to entry - 5 (locks 5 points) and trails on completed 5-min block highs (min(SL, high)). Before that, exit at the close of any 5-min candle that closes above refLow + 10 (failed breakdown). Target -80 spot points. EOD square-off 15:20. No trading on Thursdays (skipDays). Backtest deducts Rs 85 charges per trade.",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "parameters": {
+      "lots": "2",
+      "lotSize": "65",
+      "directions": "PE",
+      "maxTradesPerDay": "1",
+      "trailMinutes": "5",
+      "targetPoints": "80",
+      "gapFilter": "GAP_DOWN",
+      "gapPct": "0.2",
+      "maxGapPct": "2.0",
+      "entryUntil": "14:00",
+      "trailAfterPoints": "20",
+      "breakevenOnTrail": "true",
+      "breakevenLockPoints": "5",
+      "failedBreakoutPoints": "10",
+      "maxStopPoints": "40",
+      "skipDays": "THU",
+      "costPerTrade": "85"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}
