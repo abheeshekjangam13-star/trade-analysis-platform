@@ -22,9 +22,11 @@ public class UserService {
     private final AppUserRepository users;
     private final AppRoleRepository roles;
     private final AccessLogRepository accessLogs;
+    private final com.tradeanalysis.strategy.notify.EmailService emails;
 
-    public UserService(AppUserRepository users, AppRoleRepository roles, AccessLogRepository accessLogs) {
-        this.users = users; this.roles = roles; this.accessLogs = accessLogs;
+    public UserService(AppUserRepository users, AppRoleRepository roles, AccessLogRepository accessLogs,
+                       com.tradeanalysis.strategy.notify.EmailService emails) {
+        this.users = users; this.roles = roles; this.accessLogs = accessLogs; this.emails = emails;
     }
 
     /**
@@ -58,6 +60,7 @@ public class UserService {
         Set<String> r = new HashSet<>();
         u.getRoles().forEach(x -> r.add(x.getName()));
         u.setPlan(r.contains("PREMIUM") ? Plan.PREMIUM : r.contains("TRADER") ? Plan.GOLD : Plan.FREE, null);   // plan follows the role
+        emails.accountCreated(u);
         return u;
     }
 
@@ -114,6 +117,7 @@ public class UserService {
         u.setStatus(AppUser.Status.PENDING);
         u.setPasswordHash(passwordHash);
         users.save(u);
+        emails.signupReceived(u);
         return new SignupResult(u.getId(), u.getUsername(), u.getStatus(), u.getRequestedPlan(),
                 "Thanks! An admin will review your sign-up" + (u.getRequestedPlan() == Plan.FREE ? "" :
                 " and confirm payment for " + u.getRequestedPlan() + " (₹" + u.getRequestedPlan().pricePerMonth() + "/month)")
@@ -135,6 +139,7 @@ public class UserService {
         u.setStatus(AppUser.Status.ACTIVE);
         u.approved(admin, Instant.now());
         u.setReviewNote(note);
+        emails.approved(u);
         return u;
     }
 
@@ -147,6 +152,7 @@ public class UserService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only PENDING sign-ups can be rejected (" + u.getUsername() + " is " + u.getStatus() + ")");
         u.setStatus(AppUser.Status.REJECTED);
         u.setReviewNote(note);
+        emails.rejected(u);
         return u;
     }
 

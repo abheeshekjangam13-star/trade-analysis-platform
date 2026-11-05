@@ -225,6 +225,21 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
   optionally `AUTH_AUTO_REGISTER_USERS=true`) on strategy-service restores the old trusted `X-User` header. Never do
   this on a reachable machine.
 
+### Email notifications
+
+strategy-service emails users when they sign up (admins get an alert too), when an admin creates their account, and
+when their sign-up is approved or rejected. The admin's approve/reject note is included as **Remarks**. Emails are
+written to the `email_notification` table in the same transaction as the change and sent every 15 s; failures are
+retried up to 5 times (`GET /api/notifications/emails`, `POST /api/notifications/emails/{id}/retry`, admin only).
+
+| Env var | Example | Meaning |
+|---|---|---|
+| `MAIL_HOST` | `smtp.gmail.com` | SMTP server. **Unset = emails are only logged** (status `LOGGED`) |
+| `MAIL_PORT` | `587` | SMTP port (STARTTLS) |
+| `MAIL_USERNAME` / `MAIL_PASSWORD` | `you@gmail.com` / app password | SMTP login (Gmail needs an [app password](https://myaccount.google.com/apppasswords)) |
+| `MAIL_FROM` | `Trade Analysis <you@gmail.com>` | Sender; defaults to `MAIL_USERNAME` |
+| `APP_URL` | `https://trade.example.com` | UI address used in email links |
+
 ### Report and user APIs
 
 | Endpoint | Purpose |

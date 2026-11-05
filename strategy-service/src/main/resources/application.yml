@@ -22,6 +22,19 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
 
+  # Email (SMTP). Leave MAIL_HOST unset to only log emails. Gmail: smtp.gmail.com:587 with an app password.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
   cloud:
     openfeign:
       client:
@@ -40,6 +53,9 @@ eureka:
     hostname: ${EUREKA_INSTANCE_HOSTNAME:localhost}
 
 management:
+  health:
+    mail:
+      enabled: ${MAIL_HEALTH_CHECK:false}   # true = /actuator/health checks the SMTP connection
   endpoints:
     web:
       exposure:
@@ -67,3 +83,10 @@ auth:
   token-hours: 8
   trust-user-header: false     # true = accept a bare X-User header (development only)
   auto-register-users: false
+
+# Account emails (sign-up received, approved/rejected with remarks, payment received).
+notifications:
+  app-url: ${APP_URL:http://localhost:5173}     # links in emails point here (the UI)
+  email:
+    from: ${MAIL_FROM:}                          # e.g. "Trade Analysis <alerts@yourdomain.com>"; defaults to MAIL_USERNAME
+    dispatch-ms: 15000

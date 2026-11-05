@@ -5,7 +5,7 @@ import java.util.Set;
 /**
  * What each plan may call. Admins may call everything. FREE: read (GET) only. GOLD and PREMIUM: also create
  * strategies, portfolios, backtests, reports and paper trading. Some calls are admin-only whatever the plan
- * (user management, the access log, the broker account, trading limits, kill switch, running the live runner). Live orders and
+ * (user management, the access log, email notifications, the broker account, trading limits, kill switch, running the live runner). Live orders and
  * LIVE strategies are checked again in the trading service (admin-only until each user has their own Kite account).
  */
 public final class Access {
@@ -20,6 +20,7 @@ public final class Access {
         boolean read = READ.contains(method.toUpperCase());
         if ((path.startsWith("/api/users") && !path.equals("/api/users/me"))
                 || path.startsWith("/api/access-log")
+                || path.startsWith("/api/notifications")
                 || path.startsWith("/api/trading/broker/")
                 || path.startsWith("/api/trading/kill-switch")
                 || path.startsWith("/api/trading/runner/")
