@@ -1,0 +1,19 @@
+meta {
+  name: Get Monthly Stats
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{gatewayUrl}}/api/backtests/:backtestId/monthly
+  body: none
+  auth: none
+}
+
+params:path {
+  backtestId: 75
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

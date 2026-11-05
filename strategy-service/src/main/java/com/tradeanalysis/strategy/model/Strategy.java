@@ -32,6 +32,9 @@ public class Strategy {
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
+    /** User who created the strategy (null for strategies created before users existed or without X-User). */
+    private Long createdByUserId;
+
     protected Strategy() {}
 
     public Strategy(String name, String description, String type, Map<String, String> parameters) {
@@ -45,4 +48,6 @@ public class Strategy {
     public String getType() { return type; }
     public Map<String, String> getParameters() { return parameters; }
     public Instant getCreatedAt() { return createdAt; }
+    public Long getCreatedByUserId() { return createdByUserId; }
+    public void setCreatedByUserId(Long userId) { this.createdByUserId = userId; }
 }

@@ -1,0 +1,124 @@
+package com.tradeanalysis.strategy.trading;
+
+import com.tradeanalysis.strategy.model.Strategy;
+import com.tradeanalysis.strategy.service.StrategyService;
+import com.tradeanalysis.strategy.user.AppUserRepository;
+import com.tradeanalysis.strategy.user.CurrentUser;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+
+/** Strategy live modes, global controls and the kill switch. */
+@Service
+public class TradingService {
+
+    private final StrategyLiveConfigRepository configs;
+    private final TradingControlRepository controls;
+    private final TradeOrderRepository orders;
+    private final LivePositionRepository positions;
+    private final OrderService orderService;
+    private final StrategyService strategies;
+    private final AppUserRepository users;
+    private final ObjectProvider<LiveStrategyRunner> runner;
+
+    public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
+                          LivePositionRepository positions, OrderService orderService, StrategyService strategies,
+                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner) {
+        this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
+        this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
+    }
+
+    public record StrategyMode(Long strategyId, String name, String type, String direction, TradingMode mode, String product) {}
+
+    /** The caller's own mode for every strategy they can see. */
+    public List<StrategyMode> strategyModes() {
+        Map<Long, StrategyLiveConfig> byId = new HashMap<>();
+        CurrentUser.id().ifPresent(me -> configs.findByUserId(me).forEach(c -> byId.put(c.getStrategyId(), c)));
+        List<StrategyMode> out = new ArrayList<>();
+        for (Strategy s : strategies.list()) {
+            StrategyLiveConfig c = byId.get(s.getId());
+            out.add(new StrategyMode(s.getId(), s.getName(), s.getType(), s.getParameters().get("directions"),
+                    c == null ? TradingMode.OFF : c.getMode(), c == null ? "MIS" : c.getProduct()));
+        }
+        out.sort(Comparator.comparing(StrategyMode::strategyId).reversed());
+        return out;
+    }
+
+    /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs an ADMIN and live trading enabled. */
+    public StrategyMode setMode(Long strategyId, TradingMode mode, String product) {
+        Strategy s = strategies.get(strategyId);
+        if (mode != TradingMode.OFF && !"NIFTY_OPENING_BREAKOUT".equals(s.getType()))
+            throw new TradingException("Only NIFTY_OPENING_BREAKOUT strategies can trade live");
+        if (product != null && !Set.of("MIS", "NRML").contains(product)) throw new TradingException("Product must be MIS or NRML");
+        if (mode == TradingMode.LIVE) {
+            requireAdmin("switch a strategy to LIVE");
+            if (!orderService.liveEnabled())
+                throw new TradingException("Live trading is disabled on this server (start strategy-service with TRADING_LIVE_ENABLED=true)");
+        }
+        Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        StrategyLiveConfig c = configs.findByStrategyIdAndUserId(strategyId, me).orElseGet(() -> new StrategyLiveConfig(strategyId, me));
+        c.set(mode, product);
+        configs.save(c);
+        return strategyModes().stream().filter(m -> m.strategyId().equals(strategyId)).findFirst().orElseThrow();
+    }
+
+    public TradingControl controls() { return controls.get(); }
+
+    public TradingControl updateControls(Integer maxOrdersPerDay, Integer maxQuantityPerOrder, Double dailyLossLimit) {
+        requireAdmin("change trading limits");
+        if (maxOrdersPerDay != null && maxOrdersPerDay < 0 || maxQuantityPerOrder != null && maxQuantityPerOrder < 0
+                || dailyLossLimit != null && dailyLossLimit < 0) throw new TradingException("Limits cannot be negative");
+        TradingControl c = controls.get();
+        c.update(null, maxOrdersPerDay, maxQuantityPerOrder, dailyLossLimit, CurrentUser.id().orElse(null));
+        return controls.save(c);
+    }
+
+    public record KillResult(int cancelledOrders, int closedPositions, int strategiesStopped, List<String> details) {}
+
+    /**
+     * Stops everything: kill switch on, every strategy OFF, open live orders cancelled, open strategy positions
+     * closed, for every user. ADMIN only.
+     */
+    public KillResult engageKillSwitch() {
+        TradingControl c = controls.get();
+        c.update(true, null, null, null, CurrentUser.id().orElse(null));
+        controls.save(c);
+        int stopped = 0;
+        for (StrategyLiveConfig cfg : configs.findByModeNot(TradingMode.OFF)) {
+            cfg.set(TradingMode.OFF, null);
+            configs.save(cfg);
+            stopped++;
+        }
+        List<String> details = new ArrayList<>();
+        int cancelled = 0;
+        for (TradeOrder o : orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN)) {
+            try { orderService.cancel(o.getId()); cancelled++; } catch (RuntimeException e) { details.add("order " + o.getId() + ": " + e.getMessage()); }
+        }
+        int closed = 0;
+        LiveStrategyRunner r = runner.getIfAvailable();
+        for (LivePosition p : positions.findByStatus(LivePosition.Status.OPEN)) {
+            if (r == null) { details.add("position " + p.getId() + ": runner disabled, close it manually"); continue; }
+            try { details.add(r.exit(p, null, "KILL_SWITCH", null, "KILL_SWITCH", null)); closed++; }
+            catch (RuntimeException e) { details.add("position " + p.getId() + ": " + e.getMessage()); }
+        }
+        return new KillResult(cancelled, closed, stopped, details);
+    }
+
+    public TradingControl releaseKillSwitch() {
+        requireAdmin("turn the kill switch off");
+        TradingControl c = controls.get();
+        c.update(false, null, null, null, CurrentUser.id().orElse(null));
+        return controls.save(c);
+    }
+
+    /** Whether the caller is an ADMIN (non-admins only see paper trading). */
+    public boolean isAdmin() { return CurrentUser.admin(); }
+
+    public void requireAdmin(String action) {
+        Long id = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.FORBIDDEN, "Only an ADMIN can " + action + " (send X-User)"));
+        boolean admin = users.findById(id).map(u -> u.getRoles().stream().anyMatch(r -> "ADMIN".equals(r.getName()))).orElse(false);
+        if (!admin) throw new TradingException(HttpStatus.FORBIDDEN, "Only an ADMIN can " + action);
+    }
+}

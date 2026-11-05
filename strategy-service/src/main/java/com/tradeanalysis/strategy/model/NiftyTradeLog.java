@@ -80,6 +80,9 @@ public class NiftyTradeLog {
         this.estimatedPnl = spotDelta * lotSize * lots * 0.5 - (charges == null ? 0 : charges);
     }
 
+    /** Live use: record the stop currently in force on a still-open trade. */
+    public void trackStop(double currentStop) { this.finalStopLoss = currentStop; }
+
     /** Call before {@link #close}: gap at the open and the round-trip charges for this trade. */
     public void setContext(Double gapPercent, double charges) {
         this.gapPercent = gapPercent;

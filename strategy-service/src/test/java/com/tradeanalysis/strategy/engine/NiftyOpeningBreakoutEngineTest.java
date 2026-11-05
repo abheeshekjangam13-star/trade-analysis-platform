@@ -487,4 +487,90 @@ class NiftyOpeningBreakoutEngineTest {
                         List.of(REF), List.of(), closeOf(9, 15), null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("XYZ");
     }
+
+    @Test
+    void dayReportsExplainEveryDay() {
+        LocalDate mon = LocalDate.of(2026, 10, 26), tue = LocalDate.of(2026, 10, 27), wed = LocalDate.of(2026, 10, 28),
+                  thu = LocalDate.of(2026, 10, 29), fri = LocalDate.of(2026, 10, 30);
+        List<Candle> c = List.of(
+                barOn(mon, 9, 15, 23900, 24000, 23880, 23950), barOn(mon, 15, 25, 24000, 24010, 23990, 24000),
+                barOn(tue, 9, 15, 24100, 24150, 24080, 24120), barOn(tue, 9, 20, 24120, 24200, 24110, 24190),   // +0.42%: trades
+                barOn(tue, 15, 25, 24050, 24060, 24040, 24050),
+                barOn(wed, 9, 15, 24060, 24100, 24040, 24070), barOn(wed, 15, 25, 24060, 24070, 24050, 24060), // flat
+                barOn(thu, 9, 15, 24200, 24220, 24190, 24210), barOn(thu, 15, 25, 24210, 24220, 24200, 24210), // skipped
+                barOn(fri, 9, 20, 24300, 24310, 24290, 24300));                                              // no 09:15
+        Instant now = fri.atTime(15, 30).atZone(IST).toInstant();
+        List<NiftyOpeningBreakoutEngine.DayReport> days = run(params("directions", "CE", "gapFilter", "GAP_UP",
+                "gapPct", "0.2", "skipDays", "THU"), c, List.of(), now, tue).days();
+
+        assertThat(days).extracting(NiftyOpeningBreakoutEngine.DayReport::status)
+                .containsExactly("TRADED", "NO_TRADE", "SKIPPED", "NO_DATA");
+        assertThat(days.get(0).trades()).isEqualTo(1);
+        assertThat(days.get(1).reason()).contains("does not meet GAP_UP");
+        assertThat(days.get(2).reason()).isEqualTo("skipDays includes THURSDAY");
+        assertThat(days.get(2).gapPercent()).isNotNull();
+    }
+
+    @Test
+    void runLiveKeepsATradeOpenAtTheEndOfTheDataWithItsCurrentStop() {
+        List<Candle> fiveMin = List.of(REF, bar(9, 20, 24060, 24130, 24060, 24120), bar(9, 25, 24120, 24140, 24100, 24130));
+        NiftyOpeningBreakoutEngine.BreakoutResult live = engine.runLive(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, List.of()), params, 1L, closeOf(9, 25), null);
+        assertThat(live.tradeLogs()).isEmpty();
+        assertThat(live.openTrades()).hasSize(1);
+        assertThat(live.openTrades().get(0).getFinalStopLoss()).isEqualTo(24050.0);
+        assertThat(live.openTrades().get(0).getExitReason()).isNull();
+
+        NiftyOpeningBreakoutEngine.BreakoutResult backtest = run(fiveMin, List.of(), closeOf(9, 25));
+        assertThat(backtest.openTrades()).isEmpty();
+        assertThat(backtest.tradeLogs()).extracting(NiftyTradeLog::getExitReason).containsExactly("EOD_SQUAREOFF");
+    }
+
+    // 10:45 reference candle: high 24,372, low 24,345 (Candles.DAY is Tue 27 Oct 2026).
+    private static final Candle REF_1045 = bar(10, 45, 24360, 24372, 24345, 24369);
+
+    @Test
+    void referenceTimeBreakdownBuysPeWithTheReferenceHighAsStopAndTrailsOneMinuteHighs() {
+        List<Candle> five = List.of(REF, REF_1045,
+                bar(10, 50, 24369, 24370, 24340, 24341),       // closes below 24,345 → PE (ATM 24,350 + 50)
+                bar(10, 55, 24341, 24350, 24330, 24345));
+        List<Candle> one = List.of(
+                bar(10, 55, 24341, 24350, 24335, 24340),       // stop → min(24,372, 24,350)
+                bar(10, 56, 24340, 24346, 24330, 24333),       // → 24,346
+                bar(10, 57, 24333, 24347, 24331, 24345));      // high 24,347 ≥ 24,346 → stop hit
+        NiftyTradeLog t = run(params("referenceTime", "10:45", "initialStop", "OPPOSITE", "trailMinutes", "1",
+                "maxTradesPerDay", "1"), five, one, closeOf(10, 55), null).tradeLogs().get(0);
+        assertThat(t.getOptionType()).isEqualTo("PE");
+        assertThat(t.getStrikePrice()).isEqualTo(24400);
+        assertThat(t.getReferenceHigh()).isEqualTo(24372.0);
+        assertThat(t.getInitialStopLoss()).isEqualTo(24372.0);         // reference high, not the midpoint
+        assertThat(t.getFinalStopLoss()).isEqualTo(24346.0);
+        assertThat(t.getExitSpotPrice()).isEqualTo(24346.0);
+        assertThat(t.getExitTimestamp()).isEqualTo(at(10, 57));
+    }
+
+    @Test
+    void referenceTimeBreakoutBuysCeWithTheReferenceLowAsStop() {
+        List<Candle> five = List.of(REF, REF_1045,
+                bar(10, 50, 24369, 24380, 24360, 24378));       // closes above 24,372 → CE (ATM 24,400 − 50)
+        NiftyTradeLog t = run(params("referenceTime", "10:45", "initialStop", "OPPOSITE", "trailMinutes", "1"),
+                five, List.of(), closeOf(10, 50), null).tradeLogs().get(0);
+        assertThat(t.getOptionType()).isEqualTo("CE");
+        assertThat(t.getStrikePrice()).isEqualTo(24350);
+        assertThat(t.getInitialStopLoss()).isEqualTo(24345.0);         // reference low
+    }
+
+    @Test
+    void breakoutsBeforeTheReferenceCandleAreIgnoredAndOnlyOnLimitsTheDay() {
+        List<Candle> five = List.of(REF, bar(9, 20, 24060, 24400, 24060, 24390), REF_1045,
+                bar(10, 50, 24369, 24372, 24350, 24360));       // inside the 10:45 range: no trade
+        assertThat(run(params("referenceTime", "10:45", "initialStop", "OPPOSITE"), five, List.of(), closeOf(10, 50), null)
+                .tradeLogs()).isEmpty();
+
+        List<Candle> breakout = List.of(REF, REF_1045, bar(10, 50, 24369, 24380, 24360, 24378));
+        assertThat(run(params("referenceTime", "10:45", "onlyOn", "2026-10-28"), breakout, List.of(), closeOf(10, 50), null)
+                .tradeLogs()).isEmpty();
+        assertThat(run(params("referenceTime", "10:45", "onlyOn", "2026-10-27"), breakout, List.of(), closeOf(10, 50), null)
+                .tradeLogs()).hasSize(1);
+    }
 }

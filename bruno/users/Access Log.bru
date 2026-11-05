@@ -1,0 +1,20 @@
+meta {
+  name: Access Log
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{gatewayUrl}}/api/access-log?username=abheeshek&limit=100
+  body: none
+  auth: none
+}
+
+params:query {
+  username: abheeshek
+  limit: 100
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

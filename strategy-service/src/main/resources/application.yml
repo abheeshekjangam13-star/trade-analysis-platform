@@ -1,21 +1,26 @@
 server:
   port: 8083
+  error:
+    include-message: always   # e.g. explain why an X-User value was rejected
 
 spring:
   application:
     name: strategy-service
   datasource:
-    url: jdbc:h2:file:./data/strategy;DB_CLOSE_ON_EXIT=FALSE
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    # PostgreSQL: one database for all services; see README "Database (PostgreSQL)".
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}
+    username: ${DB_USER:trade}
+    password: ${DB_PASSWORD:choose-a-password}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate          # schema is owned by Flyway (src/main/resources/db/migration)
+    open-in-view: false
     show-sql: false
-  h2:
-    console:
-      enabled: true
+  flyway:
+    # Several services share one schema, so each keeps its own history table.
+    table: flyway_history_strategy
+    baseline-on-migrate: true
+    baseline-version: 0
 
   cloud:
     openfeign:
@@ -45,3 +50,20 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# Trading (paper/live orders through Kite). Live orders are refused unless TRADING_LIVE_ENABLED=true.
+trading:
+  live:
+    enabled: ${TRADING_LIVE_ENABLED:false}
+  runner:
+    enabled: ${TRADING_RUNNER_ENABLED:true}       # runs PAPER/LIVE strategies every minute in market hours
+    interval-ms: 60000
+    max-entry-delay-minutes: 5                    # never enter a signal older than this (e.g. after a late start)
+
+
+# Login (see README "Login"). Leave AUTH_JWT_SECRET unset to use the random key kept in the auth_key table.
+auth:
+  jwt-secret: ${AUTH_JWT_SECRET:}
+  token-hours: 8
+  trust-user-header: false     # true = accept a bare X-User header (development only)
+  auto-register-users: false

@@ -1,0 +1,19 @@
+meta {
+  name: Get Daily Report
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{gatewayUrl}}/api/backtests/:backtestId/daily
+  body: none
+  auth: none
+}
+
+params:path {
+  backtestId: 75
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

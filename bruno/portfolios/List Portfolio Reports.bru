@@ -1,0 +1,19 @@
+meta {
+  name: List Portfolio Reports
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{gatewayUrl}}/api/portfolios/:id/reports
+  body: none
+  auth: none
+}
+
+params:path {
+  id: 1
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

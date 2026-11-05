@@ -1,0 +1,18 @@
+# Integration tests: real Flyway migrations on H2 in PostgreSQL mode, Hibernate validating the entities.
+spring:
+  datasource:
+    url: jdbc:h2:mem:strategy-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  cloud:
+    discovery:
+      enabled: false
+eureka:
+  client:
+    enabled: false
+trading:
+  runner:
+    enabled: false
+auth:
+  trust-user-header: true     # tests identify callers by X-User without logging in
+  auto-register-users: true

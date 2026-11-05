@@ -1,0 +1,15 @@
+# Integration tests: real Flyway migrations on H2 in PostgreSQL mode, Hibernate validating the entities.
+spring:
+  datasource:
+    url: jdbc:h2:mem:market-data-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  cloud:
+    discovery:
+      enabled: false
+eureka:
+  client:
+    enabled: false
+kite:
+  api-key: test
+  api-secret: test

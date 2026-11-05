@@ -1,0 +1,15 @@
+meta {
+  name: List Portfolios
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{gatewayUrl}}/api/portfolios
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

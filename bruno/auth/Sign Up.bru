@@ -1,0 +1,27 @@
+meta {
+  name: Sign Up
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/auth/signup
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "ravi",
+    "password": "CHANGE-ME-1",
+    "email": "ravi@example.com",
+    "phone": "9876543210",
+    "fullName": "Ravi Kumar",
+    "plan": "GOLD"
+  }
+}
+
+docs {
+  Email and phone are required. The account is PENDING (cannot log in) until an admin approves it.
+  plan: FREE (view only), GOLD (999/month: backtests + paper trading), PREMIUM (1999/month: live trading, coming later).
+}

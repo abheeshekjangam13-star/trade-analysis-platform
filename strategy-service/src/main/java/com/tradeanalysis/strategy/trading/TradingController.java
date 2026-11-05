@@ -1,0 +1,167 @@
+package com.tradeanalysis.strategy.trading;
+
+import com.tradeanalysis.strategy.user.CurrentUser;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.*;
+
+@RestController
+@RequestMapping("/api/trading")
+@Tag(name = "Trading", description = "Kite account, orders (paper/live), strategy live modes, kill switch")
+public class TradingController {
+
+    public record ModeRequest(TradingMode mode, String product) {}
+    public record ControlsRequest(Integer maxOrdersPerDay, Integer maxQuantityPerOrder, Double dailyLossLimit) {}
+    public record ManualOrder(String exchange, String tradingsymbol, String transactionType, Integer quantity, String product,
+                              String orderType, Double price, Double triggerPrice, TradingMode mode, Boolean confirm) {}
+
+    private final TradingService trading;
+    private final OrderService orders;
+    private final TradeOrderRepository orderRepo;
+    private final LivePositionRepository positionRepo;
+    private final KiteApi kite;
+    private final NiftyOptions options;
+    private final ObjectProvider<LiveStrategyRunner> runner;
+    private final Clock clock;
+    private final QuoteCache quoteCache;
+
+    public TradingController(TradingService trading, OrderService orders, TradeOrderRepository orderRepo,
+                             LivePositionRepository positionRepo, KiteApi kite, NiftyOptions options,
+                             ObjectProvider<LiveStrategyRunner> runner, Clock clock, QuoteCache quoteCache) {
+        this.quoteCache = quoteCache;
+        this.trading = trading; this.orders = orders; this.orderRepo = orderRepo; this.positionRepo = positionRepo;
+        this.kite = kite; this.options = options; this.runner = runner; this.clock = clock;
+    }
+
+    @GetMapping("/status")
+    @Operation(summary = "Kite connection, live switch, controls and today's order counts / realized P&L")
+    public Map<String, Object> status() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Map<String, Object> k = new LinkedHashMap<>();
+        try {
+            KiteApi.Profile p = kite.profile();
+            k.put("connected", true); k.put("userId", p.userId()); k.put("userName", p.userName());
+        } catch (RuntimeException e) {
+            k.put("connected", false); k.put("message", e.getMessage());
+        }
+        if (!trading.isAdmin()) { k.remove("userId"); k.remove("userName"); }   // whose broker account is private
+        out.put("kite", k);
+        out.put("liveTradingEnabled", orders.liveEnabled());
+        out.put("runnerEnabled", runner.getIfAvailable() != null);
+        out.put("marketOpen", LiveStrategyRunner.marketOpen(clock.instant()));
+        out.put("controls", trading.controls());
+        Long who = trading.isAdmin() ? null : CurrentUser.id().orElse(null);   // non-admins: their own paper numbers
+        for (TradingMode m : who == null ? List.of(TradingMode.PAPER, TradingMode.LIVE) : List.of(TradingMode.PAPER))
+            out.put(m.name().toLowerCase(), Map.of("ordersToday", orders.ordersToday(m, who), "realizedToday", orders.realizedToday(m, who)));
+        return out;
+    }
+
+    @GetMapping("/controls")
+    public TradingControl controls() { return trading.controls(); }
+
+    @PutMapping("/controls")
+    @Operation(summary = "Change limits (ADMIN)")
+    public TradingControl updateControls(@RequestBody ControlsRequest r) {
+        return trading.updateControls(r.maxOrdersPerDay(), r.maxQuantityPerOrder(), r.dailyLossLimit());
+    }
+
+    @PostMapping("/kill-switch")
+    @Operation(summary = "Stop everything: no new orders, all strategies OFF, cancel open live orders, close strategy positions")
+    public TradingService.KillResult kill() { return trading.engageKillSwitch(); }
+
+    @DeleteMapping("/kill-switch")
+    @Operation(summary = "Allow new orders again (ADMIN); strategies stay OFF until switched on")
+    public TradingControl release() { return trading.releaseKillSwitch(); }
+
+    @GetMapping("/strategies")
+    public List<TradingService.StrategyMode> strategies() { return trading.strategyModes(); }
+
+    @PutMapping("/strategies/{id}")
+    @Operation(summary = "Set a strategy to OFF, PAPER or LIVE (LIVE: ADMIN and server switch)")
+    public TradingService.StrategyMode setMode(@PathVariable Long id, @RequestBody ModeRequest r) {
+        if (r.mode() == null) throw new TradingException("Missing mode");
+        return trading.setMode(id, r.mode(), r.product());
+    }
+
+    @PostMapping("/runner/run")
+    @Operation(summary = "Run the live runner once now for every PAPER/LIVE strategy")
+    public List<String> runNow() {
+        LiveStrategyRunner r = runner.getIfAvailable();
+        if (r == null) throw new TradingException("The live runner is disabled on this server");
+        return r.runAll();
+    }
+
+    @GetMapping("/orders")
+    @Operation(summary = "Orders the platform sent on a day (default today)")
+    public List<TradeOrder> orders(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date == null ? orders.today() : date;
+        return trading.isAdmin() ? orderRepo.findByTradeDateOrderByCreatedAtDesc(day)          // admins: everyone's
+                : orderRepo.findByTradeDateAndUserIdOrderByCreatedAtDesc(day, CurrentUser.id().orElseThrow());
+    }
+
+    @PostMapping("/orders")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Place a manual order (confirm=true required; LIVE needs ADMIN)")
+    public TradeOrder place(@RequestBody ManualOrder m) {
+        if (!Boolean.TRUE.equals(m.confirm())) throw new TradingException("Set confirm=true to place the order");
+        if (m.mode() == TradingMode.LIVE) trading.requireAdmin("place live orders");
+        OrderRequest r = new OrderRequest(m.exchange() == null ? "NFO" : m.exchange(), m.tradingsymbol(), m.transactionType(),
+                m.quantity() == null ? 0 : m.quantity(), m.product() == null ? "MIS" : m.product(),
+                m.orderType() == null ? "MARKET" : m.orderType(), m.price(), m.triggerPrice());
+        return orders.place(r, m.mode(), "MANUAL", null, CurrentUser.id().orElse(null), false);
+    }
+
+    @PostMapping("/orders/{id}/cancel")
+    public TradeOrder cancel(@PathVariable Long id) {
+        if (!trading.isAdmin()) {
+            TradeOrder o = orderRepo.findById(id).orElseThrow(() -> new TradingException(HttpStatus.NOT_FOUND, "Order not found: " + id));
+            if (o.getMode() != TradingMode.PAPER || !java.util.Objects.equals(o.getUserId(), CurrentUser.id().orElse(null)))
+                throw new TradingException(HttpStatus.NOT_FOUND, "Order not found: " + id);   // other users' orders don't exist for you
+        }
+        return orders.cancel(id);
+    }
+
+    @GetMapping("/positions")
+    @Operation(summary = "Positions the live runner opened for strategies on a day (default today)")
+    public List<LivePosition> positions(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date == null ? orders.today() : date;
+        return trading.isAdmin() ? positionRepo.findByTradeDateOrderByOpenedAtDesc(day)
+                : positionRepo.findByTradeDateAndUserIdOrderByOpenedAtDesc(day, CurrentUser.id().orElseThrow());
+    }
+
+    @GetMapping("/broker/margins")   public KiteApi.Margins brokerMargins() { return kite.margins(); }
+    @GetMapping("/broker/positions") public List<KiteApi.BrokerPosition> brokerPositions() { return kite.positions(); }
+    @GetMapping("/broker/orders")    public List<KiteApi.BrokerOrder> brokerOrders() { return kite.orders(); }
+
+    @GetMapping("/options/expiries")
+    @Operation(summary = "NIFTY option expiries from today")
+    public List<LocalDate> expiries() { return options.expiries(); }
+
+    @GetMapping("/options/chain")
+    @Operation(summary = "NIFTY options of one expiry, optionally only strikes within ±range of a spot price")
+    public List<KiteApi.OptionInstrument> chain(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expiry,
+                                                @RequestParam(required = false) Double spot,
+                                                @RequestParam(defaultValue = "500") int range) {
+        return options.chain(expiry).stream().filter(o -> spot == null || Math.abs(o.strike() - spot) <= range).toList();
+    }
+
+    @GetMapping("/ltp")
+    @Operation(summary = "Last traded prices, e.g. symbols=NFO:NIFTY25N1123550CE,NSE:NIFTY 50 (at most 1 second old)")
+    public Map<String, Double> ltp(@RequestParam List<String> symbols) {
+        return quotes(symbols).prices();
+    }
+
+    @GetMapping("/quotes")
+    @Operation(summary = "Last traded prices plus the time they were fetched from Kite (poll about once a second)")
+    public QuoteCache.Quotes quotes(@RequestParam List<String> symbols) {
+        if (symbols.size() > 50) throw new TradingException("At most 50 symbols");
+        return quoteCache.get(symbols);
+    }
+}

@@ -1,0 +1,17 @@
+meta {
+  name: Reject User (admin)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/users/2/reject
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "note": "Payment not received"
+  }
+}

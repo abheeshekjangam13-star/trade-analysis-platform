@@ -26,6 +26,10 @@ public class BacktestResult {
     private int    winningTrades;
     private double sharpeRatio;
 
+    private Integer lookbackDays;
+    private Long runByUserId;               // user who ran the backtest (null before users existed)
+    private Instant createdAt = Instant.now();
+
     @Transient
     private List<Signal> signals;  // not persisted – returned in the response
 
@@ -57,5 +61,11 @@ public class BacktestResult {
     public int getTotalTrades() { return totalTrades; }
     public int getWinningTrades() { return winningTrades; }
     public double getSharpeRatio() { return sharpeRatio; }
+    public Integer getLookbackDays() { return lookbackDays; }
+    public Long getRunByUserId() { return runByUserId; }
+    public Instant getCreatedAt() { return createdAt; }
+    public void setRunContext(int lookbackDays, Long runByUserId) {
+        this.lookbackDays = lookbackDays; this.runByUserId = runByUserId;
+    }
     public List<Signal> getSignals() { return signals; }
 }

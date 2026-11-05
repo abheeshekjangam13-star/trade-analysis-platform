@@ -1,0 +1,30 @@
+meta {
+  name: Update User
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{gatewayUrl}}/api/users/:id
+  body: json
+  auth: none
+}
+
+params:path {
+  id: 1
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "roles": ["ADMIN", "TRADER"],
+    "status": "ACTIVE"
+  }
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Me
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{gatewayUrl}}/api/users/me
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

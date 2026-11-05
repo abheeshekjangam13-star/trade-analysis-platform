@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: api-gateway
+  # Access log (table access_log, created by strategy-service's Flyway migrations).
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}
+    username: ${DB_USER:trade}
+    password: ${DB_PASSWORD:choose-a-password}
   cloud:
     gateway:
       server:
@@ -21,7 +26,7 @@ spring:
             - id: strategy-service
               uri: lb://strategy-service
               predicates:
-                - Path=/api/strategies/**, /api/backtests/**
+                - Path=/api/auth/**, /api/strategies/**, /api/backtests/**, /api/nifty-trades/**, /api/portfolios/**, /api/users/**, /api/access-log/**, /api/trading/**
 
 eureka:
   client:
@@ -33,7 +38,15 @@ eureka:
     hostname: ${EUREKA_INSTANCE_HOSTNAME:localhost}
 
 management:
+  health:
+    r2dbc:
+      enabled: false   # a database outage must not mark the gateway DOWN; access logging just pauses
   endpoints:
     web:
       exposure:
         include: health,info,gateway
+
+# Login: every /api call except /api/auth/{status,setup,login} needs a valid token (see README "Login").
+auth:
+  enabled: true                # false = development only: trust the client's X-User header
+  jwt-secret: ${AUTH_JWT_SECRET:}

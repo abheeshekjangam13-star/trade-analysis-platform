@@ -84,7 +84,7 @@ public final class TrailingStopLoss {
                                         Instant entryCandleStart, int trailMinutes) {
         Instant lastMinuteOfBreakout = entryCandleStart.plus(ENTRY_CANDLE).minus(TRAIL_CANDLE);
         TrailingStopLoss sl = new TrailingStopLoss(direction, initialStop(refHigh, refLow), lastMinuteOfBreakout, trailMinutes);
-        log.info("SL_INIT direction={} refHigh={} refLow={} initialSl={} entryCandle={} trailMinutes={}",
+        log.debug("SL_INIT direction={} refHigh={} refLow={} initialSl={} entryCandle={} trailMinutes={}",
                 direction, refHigh, refLow, sl.currentStop, ist(entryCandleStart), trailMinutes);
         return sl;
     }
@@ -123,6 +123,12 @@ public final class TrailingStopLoss {
     public TrailingStopLoss tightenTo(double level) {
         currentStop = direction == Direction.BULLISH ? Math.max(currentStop, level) : Math.min(currentStop, level);
         return this;
+    }
+
+    /** Like {@link #open(Direction, double, double, Instant, int)} but with an explicit initial stop (e.g. the reference low). */
+    public static TrailingStopLoss openAt(Direction direction, double initialStop, Instant entryCandleStart, int trailMinutes) {
+        Instant lastMinuteOfBreakout = entryCandleStart.plus(ENTRY_CANDLE).minus(TRAIL_CANDLE);
+        return new TrailingStopLoss(direction, initialStop, lastMinuteOfBreakout, trailMinutes);
     }
 
     /** Rebuilds a stop from persisted state; never resets to the initial value. */
@@ -165,7 +171,7 @@ public final class TrailingStopLoss {
         lastProcessedCandle = start;
         blockHigh = blockLow = Double.NaN;
 
-        log.info("SL_UPDATE ts={} direction={} trailMinutes={} prevSl={} blockHigh={} blockLow={} newSl={}",
+        log.debug("SL_UPDATE ts={} direction={} trailMinutes={} prevSl={} blockHigh={} blockLow={} newSl={}",
                 ist(start), direction, trailMinutes, previous, high, low, currentStop);
         return currentStop == previous ? UpdateOutcome.UNCHANGED : UpdateOutcome.UPDATED;
     }
@@ -182,7 +188,7 @@ public final class TrailingStopLoss {
                     ? Math.max(currentStop, entryPrice + breakevenLock)
                     : Math.min(currentStop, entryPrice - breakevenLock);
         }
-        log.info("SL_ARMED ts={} direction={} entry={} favourable={} stop={}",
+        log.debug("SL_ARMED ts={} direction={} entry={} favourable={} stop={}",
                 ist(candle.timestamp()), direction, entryPrice, bestFavourable, currentStop);
     }
 

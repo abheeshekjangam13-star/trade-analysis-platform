@@ -17,6 +17,7 @@ import org.springframework.web.client.RestClient;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -103,12 +104,50 @@ public class MarketDataController {
             Map<String, Object> data = (Map<String, Object>) resp.get("data");
             String accessToken = (String) data.get("access_token");
 
-            credentials.updateAccessToken(accessToken);
+            credentials.updateAccessToken(accessToken, (String) data.get("user_id"), (String) data.get("user_name"));
             instruments.refresh();
-            return "Access token generated and stored: " + accessToken;
+            return "Connected to Kite as " + data.get("user_name") + " (" + data.get("user_id") + ")";
         } catch (Exception e) {
             return "Failed to generate token: " + e.getMessage();
         }
+    }
+
+    @GetMapping("/admin/kite/login-url")
+    @Operation(summary = "Kite login page for this API key (redirects back with request_token)")
+    public Map<String, String> kiteLoginUrl() {
+        return Map.of("loginUrl", "https://kite.zerodha.com/connect/login?v=3&api_key=" + credentials.getApiKey());
+    }
+
+    @GetMapping("/admin/kite/status")
+    @Operation(summary = "Whether the stored Kite session works (checks the Kite profile); never returns the token")
+    public Map<String, Object> kiteStatus() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("apiKeyConfigured", credentials.getApiKey() != null && !credentials.getApiKey().isBlank());
+        if (!credentials.hasToken()) {
+            out.put("connected", false);
+            out.put("message", "Not connected: log in to Kite");
+            return out;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resp = RestClient.builder().baseUrl("https://api.kite.trade")
+                    .defaultHeader("X-Kite-Version", "3").build()
+                    .get().uri("/user/profile").header("Authorization", credentials.authHeader())
+                    .retrieve().body(Map.class);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> user = (Map<String, Object>) resp.get("data");
+            out.put("connected", true);
+            out.put("userId", user.get("user_id"));
+            out.put("userName", user.get("user_name"));
+            out.put("broker", user.get("broker"));
+            out.put("exchanges", user.get("exchanges"));
+            out.put("products", user.get("products"));
+            out.put("message", "Connected");
+        } catch (Exception e) {
+            out.put("connected", false);
+            out.put("message", "Kite session not valid (tokens expire daily): log in again");
+        }
+        return out;
     }
 
     private String sha256(String input) throws Exception {

@@ -1,0 +1,27 @@
+meta {
+  name: Setup (first admin, once)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/auth/setup
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{user}}",
+    "password": "{{password}}",
+    "fullName": ""
+  }
+}
+
+script:post-response {
+  if (res.status === 200) bru.setVar("token", res.body.token);
+}
+
+docs {
+  Works only once, while no admin has a password. Gives the user ADMIN and TRADER and logs them in.
+}

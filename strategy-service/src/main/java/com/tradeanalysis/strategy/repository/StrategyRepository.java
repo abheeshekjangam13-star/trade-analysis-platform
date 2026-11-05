@@ -6,4 +6,5 @@ import java.util.Optional;
 
 public interface StrategyRepository extends JpaRepository<Strategy, Long> {
     Optional<Strategy> findByName(String name);
+    boolean existsByNameAndCreatedByUserId(String name, Long createdByUserId);
 }

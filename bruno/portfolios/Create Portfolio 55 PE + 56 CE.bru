@@ -1,0 +1,27 @@
+meta {
+  name: Create Portfolio 55 PE + 56 CE
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{gatewayUrl}}/api/portfolios
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "CE 56 + PE 55 (skip THU)",
+    "description": "CE gap-up and PE gap-down opening breakout, Thursday skipped, 2 lots each",
+    "strategyIds": [55, 56]
+  }
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

@@ -1,0 +1,26 @@
+meta {
+  name: Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{user}}",
+    "password": "{{password}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) bru.setVar("token", res.body.token);
+}
+
+docs {
+  Logs in and stores the token for every other request. Wrong password 5 times locks the account for 15 minutes.
+}

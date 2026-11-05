@@ -1,5 +1,19 @@
 version: "3.9"
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: trade_analysis
+      POSTGRES_USER: trade
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trade -d trade_analysis"]
+      interval: 5s
+      retries: 10
+
   discovery-server:
     build:
       context: .
@@ -22,8 +36,12 @@ services:
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
       EUREKA_INSTANCE_HOSTNAME: api-gateway
+      DB_HOST: postgres
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
     depends_on:
       discovery-server:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   market-data-service:
@@ -36,8 +54,12 @@ services:
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
       EUREKA_INSTANCE_HOSTNAME: market-data-service
+      DB_HOST: postgres
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
     depends_on:
       discovery-server:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   indicator-service:
@@ -64,10 +86,17 @@ services:
     environment:
       EUREKA_URL: http://discovery-server:8761/eureka
       EUREKA_INSTANCE_HOSTNAME: strategy-service
+      DB_HOST: postgres
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
     depends_on:
       discovery-server:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       market-data-service:
         condition: service_started
       indicator-service:
         condition: service_started
+
+volumes:
+  pgdata:

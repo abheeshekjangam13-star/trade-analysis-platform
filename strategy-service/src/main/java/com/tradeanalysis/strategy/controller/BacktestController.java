@@ -1,5 +1,8 @@
 package com.tradeanalysis.strategy.controller;
 
+import com.tradeanalysis.strategy.report.BacktestDailyReport;
+import com.tradeanalysis.strategy.report.BacktestMonthlyStat;
+
 import com.tradeanalysis.strategy.model.BacktestResult;
 import com.tradeanalysis.strategy.service.StrategyService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,5 +35,17 @@ public class BacktestController {
     @Operation(summary = "Get all back-test results for a strategy")
     public List<BacktestResult> list(@PathVariable Long strategyId) {
         return svc.getBacktests(strategyId);
+    }
+
+    @GetMapping("/{backtestId}/daily")
+    @Operation(summary = "Stored day-by-day report of a backtest (traded or not, why not, P&L)")
+    public List<BacktestDailyReport> daily(@PathVariable Long backtestId) {
+        return svc.getDailyReport(backtestId);
+    }
+
+    @GetMapping("/{backtestId}/monthly")
+    @Operation(summary = "Stored month-wise statistics of a backtest")
+    public List<BacktestMonthlyStat> monthly(@PathVariable Long backtestId) {
+        return svc.getMonthlyStats(backtestId);
     }
 }

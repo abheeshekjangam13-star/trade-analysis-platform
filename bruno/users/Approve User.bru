@@ -1,0 +1,23 @@
+meta {
+  name: Approve User (admin)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/users/2/approve
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "plan": "GOLD",
+    "expiresAt": "2026-12-31T18:29:59Z",
+    "note": "UPI ref"
+  }
+}
+
+docs {
+  plan defaults to what the user asked for; expiresAt (paid plans) may be null for no expiry. After it passes the user counts as FREE.
+}

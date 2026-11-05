@@ -1,0 +1,25 @@
+meta {
+  name: Run Portfolio Report
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{gatewayUrl}}/api/portfolios/:id/reports?windows=30,90,180,360&capital=50000&symbol=NIFTY 50
+  body: none
+  auth: none
+}
+
+params:path {
+  id: 1
+}
+
+params:query {
+  windows: 30,90,180,360
+  capital: 50000
+  symbol: NIFTY 50
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

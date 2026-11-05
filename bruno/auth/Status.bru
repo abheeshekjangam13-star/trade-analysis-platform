@@ -1,0 +1,15 @@
+meta {
+  name: Status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/auth/status
+  body: none
+  auth: none
+}
+
+docs {
+  setupRequired = true until the first admin is created (auth/Setup, or the UI's first screen).
+}

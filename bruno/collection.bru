@@ -1,0 +1,10 @@
+headers {
+  Authorization: Bearer {{token}}
+}
+
+docs {
+  Every API call needs a login token. Run auth/Login first (or auth/Setup the very first time): it saves the
+  token in the "token" variable, which every request sends as "Authorization: Bearer <token>". Tokens last 8 hours;
+  log in again when you get 401. Put your username in the environment's "user" and your password in "password"
+  (mark it secret in Bruno so it is not saved to the file).
+}

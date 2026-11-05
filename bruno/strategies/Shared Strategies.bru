@@ -1,0 +1,15 @@
+meta {
+  name: Shared Strategies
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/api/strategies/shared
+  body: none
+  auth: none
+}
+
+docs {
+  Ids of the master strategies every user can see (read-only). All other strategies are private to whoever created them.
+}

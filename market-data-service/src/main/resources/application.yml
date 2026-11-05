@@ -5,17 +5,20 @@ spring:
   application:
     name: market-data-service
   datasource:
-    url: jdbc:h2:file:./data/market-data;DB_CLOSE_ON_EXIT=FALSE
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    # PostgreSQL: one database for all services; see README "Database (PostgreSQL)".
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}
+    username: ${DB_USER:trade}
+    password: ${DB_PASSWORD:choose-a-password}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate          # schema is owned by Flyway (src/main/resources/db/migration)
+    open-in-view: false
     show-sql: false
-  h2:
-    console:
-      enabled: true
+  flyway:
+    # Several services share one schema, so each keeps its own history table.
+    table: flyway_history_market_data
+    baseline-on-migrate: true
+    baseline-version: 0
 
 eureka:
   client:

@@ -96,7 +96,7 @@ public class BacktestEngine {
         double totalReturn = capital > 0 ? (totalPnl / capital) * 100 : 0;
 
         return new BacktestOutput(capital + totalPnl, totalReturn, maxDrawdownPct(capital, logs),
-                total, wins, 0.0, result.signals(), logs);
+                total, wins, 0.0, result.signals(), logs, result.days());
     }
 
     /** Largest peak-to-trough fall in account equity (capital + cumulative P&L), as % of the peak. */
@@ -185,5 +185,11 @@ public class BacktestEngine {
 
     public record BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown,
                                   int totalTrades, int winningTrades, double sharpeRatio,
-                                  List<Signal> signals, List<NiftyTradeLog> tradeLogs) {}
+                                  List<Signal> signals, List<NiftyTradeLog> tradeLogs,
+                                  List<NiftyOpeningBreakoutEngine.DayReport> days) {
+        public BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown, int totalTrades,
+                              int winningTrades, double sharpeRatio, List<Signal> signals, List<NiftyTradeLog> tradeLogs) {
+            this(finalCapital, totalReturn, maxDrawdown, totalTrades, winningTrades, sharpeRatio, signals, tradeLogs, List.of());
+        }
+    }
 }

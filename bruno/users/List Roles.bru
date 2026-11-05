@@ -1,0 +1,15 @@
+meta {
+  name: List Roles
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{gatewayUrl}}/api/users/roles
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

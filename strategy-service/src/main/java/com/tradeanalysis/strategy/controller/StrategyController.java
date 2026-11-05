@@ -46,6 +46,10 @@ public class StrategyController {
     @Operation(summary = "List all strategies")
     public List<Strategy> list() { return svc.list(); }
 
+    @GetMapping("/shared")
+    @Operation(summary = "Ids of the master strategies every user may see (read-only); all others are private to their creator")
+    public java.util.Set<Long> shared() { return svc.sharedIds(); }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get strategy by id")
     public Strategy get(@PathVariable Long id) { return svc.get(id); }

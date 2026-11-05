@@ -1,0 +1,29 @@
+meta {
+  name: Create User
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{gatewayUrl}}/api/users
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "username": "ravi",
+    "email": "ravi@example.com",
+    "fullName": "Ravi Kumar",
+    "roles": ["TRADER"],
+    "password": "CHANGE-ME-1"
+  }
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}
