@@ -26,7 +26,7 @@ spring:
             - id: strategy-service
               uri: lb://strategy-service
               predicates:
-                - Path=/api/auth/**, /api/strategies/**, /api/backtests/**, /api/nifty-trades/**, /api/portfolios/**, /api/users/**, /api/access-log/**, /api/trading/**
+                - Path=/api/auth/**, /api/strategies/**, /api/backtests/**, /api/nifty-trades/**, /api/portfolios/**, /api/users/**, /api/access-log/**, /api/trading/**, /api/notifications/**, /api/payments/**
 
 eureka:
   client:

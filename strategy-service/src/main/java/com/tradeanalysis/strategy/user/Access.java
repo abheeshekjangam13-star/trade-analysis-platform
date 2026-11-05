@@ -26,7 +26,7 @@ public final class Access {
                 || path.startsWith("/api/trading/runner/")
                 || (path.equals("/api/trading/controls") && !read))
             return "Only an ADMIN can do this";
-        if (read || path.startsWith("/api/auth/")) return null;
+        if (read || path.startsWith("/api/auth/") || path.startsWith("/api/payments/")) return null;   // FREE users may pay
         if (!plan.atLeast(Plan.GOLD))
             return "Your plan is " + plan + " (view only). Upgrade to GOLD (₹999/month) to create strategies, run backtests "
                     + "and paper trade: ask an admin.";

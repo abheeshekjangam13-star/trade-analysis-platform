@@ -254,6 +254,30 @@ retried up to 5 times (`GET /api/notifications/emails`, `POST /api/notifications
 | `MAIL_FROM` | `Trade Analysis <you@gmail.com>` | Sender; defaults to `MAIL_USERNAME` |
 | `APP_URL` | `https://trade.example.com` | UI address used in email links |
 
+### Payments (Razorpay)
+
+Users pay for one plan period (30 days of GOLD ₹999 or PREMIUM ₹1999) on **My account → Subscription**, including
+FREE users. The flow:
+
+1. `POST /api/payments/orders {"plan":"GOLD"}` creates a Razorpay order; the server sets the amount from the plan price.
+2. The UI opens Razorpay Checkout with that order.
+3. `POST /api/payments/verify` checks Razorpay's signature (`HMAC_SHA256(order_id|payment_id, key secret)`) and activates
+   the plan. Renewing the same plan before it ends extends it by 30 days; otherwise it starts today. Each order activates
+   at most once; a receipt email is sent.
+4. `POST /api/payments/webhook` (no login; checked with `X-Razorpay-Signature`) activates the plan too, in case the
+   browser closed before step 3. Handles `payment.captured`, `order.paid` and `payment.failed`; repeats are ignored.
+
+Downgrades (GOLD while PREMIUM is active) and payments for a plan without an expiry are refused.
+`GET /api/payments` lists your payments (admins: `?all=true`).
+
+| Env var | Meaning |
+|---|---|
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | API keys from Razorpay Dashboard → Account & Settings → API Keys (`rzp_test_…` for test mode). **Unset = payments off** |
+| `RAZORPAY_WEBHOOK_SECRET` | Secret you choose when adding the webhook (Dashboard → Webhooks → URL `https://<gateway>/api/payments/webhook`, events `payment.captured`, `order.paid`, `payment.failed`) |
+
+Turn on **automatic capture** in the Razorpay Dashboard (Payment Capture settings) so paid orders are captured.
+Test with test-mode keys and Razorpay's test cards/UPI before switching to live keys.
+
 ### Report and user APIs
 
 | Endpoint | Purpose |

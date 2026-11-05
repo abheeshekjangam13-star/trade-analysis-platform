@@ -1,0 +1,17 @@
+meta {
+  name: Create Payment Order
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{strategyUrl}}/api/payments/orders
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "plan": "GOLD"
+  }
+}

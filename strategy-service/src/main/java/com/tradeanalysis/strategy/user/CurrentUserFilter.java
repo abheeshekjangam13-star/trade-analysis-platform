@@ -25,7 +25,9 @@ import java.util.Set;
 public class CurrentUserFilter extends OncePerRequestFilter {
 
     public static final String HEADER = "X-User";
-    static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/setup", "/api/auth/login");
+    // The Razorpay webhook has no login; PaymentController verifies its HMAC signature instead.
+    static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/setup", "/api/auth/login",
+            "/api/payments/webhook");
 
     private final UserService users;
     private final TokenService tokens;

@@ -166,6 +166,17 @@ public class UserService {
         return u;
     }
 
+    /**
+     * System use, after a verified payment (no admin check): sets the paid plan until {@code until}.
+     * Call inside the payment transaction.
+     */
+    @Transactional
+    public AppUser activatePaidPlan(Long userId, Plan plan, Instant until) {
+        AppUser u = get(userId);
+        applyPlan(u, plan, until);
+        return u;
+    }
+
     /** Sets the plan and its role (VIEWER / TRADER / PREMIUM), keeping ADMIN. */
     private void applyPlan(AppUser u, Plan plan, Instant expiresAt) {
         if (expiresAt != null && plan != Plan.FREE && !expiresAt.isAfter(Instant.now()))

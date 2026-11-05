@@ -28,7 +28,7 @@ import java.util.Set;
 /**
  * Login check for every /api request: requires "Authorization: Bearer <token>" signed by strategy-service, then
  * passes the verified username on as X-User (any X-User a client sends is removed, so it cannot be faked).
- * Open without a token: /api/auth/status, /plans, /signup, /setup, /login. /api/market-data/admin/** needs ADMIN.
+ * Open without a token: /api/auth/status, /plans, /signup, /setup, /login, and the Razorpay webhook. /api/market-data/admin/** needs ADMIN.
  */
 @Component
 public class AuthFilter implements GlobalFilter, Ordered {
@@ -37,7 +37,9 @@ public class AuthFilter implements GlobalFilter, Ordered {
     static final String USER_HEADER = "X-User";
     static final String ROLES_HEADER = "X-User-Roles";
     static final String ISSUER = "trade-analysis";
-    static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/setup", "/api/auth/login");
+    // The Razorpay webhook has no token; strategy-service verifies its HMAC signature.
+    static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/setup", "/api/auth/login",
+            "/api/payments/webhook");
     /** Kite session and instrument admin in market-data-service, which has no user checks of its own. */
     static final String ADMIN_PREFIX = "/api/market-data/admin/";
     private static final Logger log = LoggerFactory.getLogger(AuthFilter.class);

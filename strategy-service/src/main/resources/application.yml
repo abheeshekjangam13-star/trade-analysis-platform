@@ -90,3 +90,10 @@ notifications:
   email:
     from: ${MAIL_FROM:}                          # e.g. "Trade Analysis <alerts@yourdomain.com>"; defaults to MAIL_USERNAME
     dispatch-ms: 15000
+
+# Razorpay one-time plan payments (see README "Payments"). Unset keys = online payments off.
+razorpay:
+  key-id: ${RAZORPAY_KEY_ID:}             # rzp_test_... or rzp_live_...
+  key-secret: ${RAZORPAY_KEY_SECRET:}
+  webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}   # set in Razorpay Dashboard → Webhooks
+  plan-days: 30

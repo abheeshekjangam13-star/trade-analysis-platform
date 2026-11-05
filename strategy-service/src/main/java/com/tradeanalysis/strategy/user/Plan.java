@@ -2,7 +2,7 @@ package com.tradeanalysis.strategy.user;
 
 import java.util.List;
 
-/** Subscription plans. Payment is confirmed by an admin outside the platform; the admin then sets the plan. */
+/** Subscription plans. Users pay online with Razorpay (PaymentService), or an admin confirms payment and sets the plan. */
 public enum Plan {
     FREE(0, "VIEWER", List.of("View strategies, backtests, reports and market data")),
     GOLD(999, "TRADER", List.of("Everything in Free", "Create strategies and portfolios", "Run backtests and reports",

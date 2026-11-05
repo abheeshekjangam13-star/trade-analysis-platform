@@ -1,0 +1,11 @@
+meta {
+  name: Email Notifications
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{strategyUrl}}/api/notifications/emails?limit=50
+  body: none
+  auth: none
+}
