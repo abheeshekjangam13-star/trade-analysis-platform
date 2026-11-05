@@ -231,6 +231,14 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
 shared master strategy) into a new strategy you own, changing only `lots` (1–50). The copy records
 `clonedFromStrategyId`; the default name is "<source> (5 lots)", numbered if you already have one. Needs the Gold plan.
 
+### Create a strategy from a description
+
+`POST /api/strategies/parse` with `{"description": "CE only on gap-up days above 0.2%, 3 lots, 1 trade per day, trail on
+5-min lows, target 80 points, no entry after 14:00, skip Thursdays"}` returns the strategy type, the parameters it read
+(each with the words it came from), warnings for out-of-range values, and sentences it did not understand. Nothing is
+saved: the UI shows the result, the user edits and confirms, then the strategy is created with `POST /api/strategies`.
+The parser is rule based (no AI); it knows every `NIFTY_OPENING_BREAKOUT` parameter plus the SMA, RSI and MACD types.
+
 ### Email notifications
 
 strategy-service emails users when they sign up (admins get an alert too), when an admin creates their account, and

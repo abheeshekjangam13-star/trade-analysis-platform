@@ -67,6 +67,9 @@ public class NiftyOpeningBreakoutEngine {
     public enum GapFilter { NONE, GAP_UP, GAP_DOWN, ANY_GAP, FLAT }
 
     /** openTrades: trades still open at {@code now} (live mode only; a backtest squares them off at the end of data). */
+    /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
+    public static void validateParams(Params params) { Settings.from(params); }
+
     public record BreakoutResult(List<Signal> signals, List<NiftyTradeLog> tradeLogs, List<DayReport> days,
                                  List<NiftyTradeLog> openTrades) {
         public BreakoutResult(List<Signal> signals, List<NiftyTradeLog> tradeLogs) { this(signals, tradeLogs, List.of(), List.of()); }

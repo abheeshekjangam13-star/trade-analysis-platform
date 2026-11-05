@@ -18,8 +18,22 @@ import java.util.Map;
 public class StrategyController {
 
     private final StrategyService svc;
+    private final com.tradeanalysis.strategy.describe.StrategyDescriptionParser parser;
 
-    public StrategyController(StrategyService svc) { this.svc = svc; }
+    public StrategyController(StrategyService svc, com.tradeanalysis.strategy.describe.StrategyDescriptionParser parser) {
+        this.svc = svc; this.parser = parser;
+    }
+
+    public record DescribeRequest(String description) {}
+
+    @PostMapping("/parse")
+    @Operation(summary = "Read strategy type and parameters from a plain-English description (nothing is saved); "
+            + "confirm the result, then POST /api/strategies to create it")
+    public com.tradeanalysis.strategy.describe.StrategyDescriptionParser.Result parse(@RequestBody DescribeRequest body) {
+        String d = body == null ? null : body.description();
+        if (d != null && d.length() > 4000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description is too long (max 4000 characters)");
+        return parser.parse(d);
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

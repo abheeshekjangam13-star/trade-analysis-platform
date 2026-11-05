@@ -1,0 +1,17 @@
+meta {
+  name: Parse Strategy Description
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies/parse
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "description": "CE only on gap-up days above 0.2%, 3 lots, lot size 65, max 1 trade per day. Trail SL on 5-min candle lows, target 80 points, no entry after 14:00, skip Thursdays, charges Rs 85 per trade."
+  }
+}
