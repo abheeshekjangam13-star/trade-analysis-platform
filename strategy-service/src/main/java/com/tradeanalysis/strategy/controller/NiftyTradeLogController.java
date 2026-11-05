@@ -19,6 +19,14 @@ public class NiftyTradeLogController {
 
     public NiftyTradeLogController(StrategyService svc) { this.svc = svc; }
 
+    @GetMapping
+    @Operation(summary = "Get trade logs with a trade date between from and to (yyyy-MM-dd, both inclusive and optional; neither = all)")
+    public List<NiftyTradeLog> between(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return svc.getNiftyTradeLogsBetween(from, to);
+    }
+
     @GetMapping("/backtest/{backtestResultId}")
     @Operation(summary = "Get all trade logs for a specific backtest run")
     public List<NiftyTradeLog> byBacktest(@PathVariable Long backtestResultId) {

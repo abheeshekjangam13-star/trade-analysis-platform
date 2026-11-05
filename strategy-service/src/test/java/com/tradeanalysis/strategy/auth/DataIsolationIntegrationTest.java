@@ -115,6 +115,11 @@ class DataIsolationIntegrationTest {
         assertThat(ids(call(get("/api/nifty-trades/date/2026-11-03"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
         assertThat(ids(call(get("/api/nifty-trades/strategy/56"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
         assertThat(ids(call(get("/api/nifty-trades/date/2026-11-03"), "admin", 200), "backtestResultId")).contains(ravisBacktest, sitasBacktest);
+        assertThat(ids(call(get("/api/nifty-trades"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
+        assertThat(ids(call(get("/api/nifty-trades?from=2026-11-01&to=2026-11-03"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
+        assertThat(ids(call(get("/api/nifty-trades?from=2026-11-04"), "ravi", 200), "backtestResultId")).isEmpty();
+        assertThat(ids(call(get("/api/nifty-trades?to=2026-11-03"), "admin", 200), "backtestResultId")).contains(ravisBacktest, sitasBacktest);
+        call(get("/api/nifty-trades?from=2026-11-05&to=2026-11-01"), "ravi", 400);
     }
 
     @Test @Order(4)

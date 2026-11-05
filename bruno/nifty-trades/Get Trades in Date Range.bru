@@ -1,0 +1,24 @@
+meta {
+  name: Get Trades in Date Range
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{strategyUrl}}/api/nifty-trades?from=2026-08-01&to=2026-11-04
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2026-08-01
+  to: 2026-11-04
+}
+
+docs {
+  Both from and to are optional and inclusive (yyyy-MM-dd). Leave both out to get every trade you can see.
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

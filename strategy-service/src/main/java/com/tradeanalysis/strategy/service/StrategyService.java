@@ -214,6 +214,16 @@ public class StrategyService {
         return mine(niftyRepo.findByTradeDate(date));
     }
 
+    /** Trades with a trade date in [from, to], both inclusive and optional; neither returns every trade. */
+    @Transactional(readOnly = true)
+    public List<NiftyTradeLog> getNiftyTradeLogsBetween(LocalDate from, LocalDate to) {
+        if (from != null && to != null && from.isAfter(to))
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "from (" + from + ") is after to (" + to + ")");
+        LocalDate lo = from == null ? LocalDate.of(1900, 1, 1) : from;
+        LocalDate hi = to == null ? LocalDate.of(9999, 12, 31) : to;
+        return mine(from == null && to == null ? niftyRepo.findAll() : niftyRepo.findByTradeDateBetween(lo, hi));
+    }
+
     private List<NiftyTradeLog> mine(List<NiftyTradeLog> trades) {
         if (CurrentUser.unrestricted()) return trades;
         java.util.Set<Long> own = new java.util.HashSet<>(btRepo.idsRunBy(CurrentUser.id().orElseThrow()));

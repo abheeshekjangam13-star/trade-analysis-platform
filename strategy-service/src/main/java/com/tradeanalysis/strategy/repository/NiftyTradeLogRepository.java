@@ -11,4 +11,5 @@ public interface NiftyTradeLogRepository extends JpaRepository<NiftyTradeLog, Lo
     List<NiftyTradeLog> findByStrategyId(Long strategyId);
     List<NiftyTradeLog> findByStrategyIdAndTradeDateBetween(Long strategyId, LocalDate from, LocalDate to);
     List<NiftyTradeLog> findByTradeDate(LocalDate tradeDate);
+    List<NiftyTradeLog> findByTradeDateBetween(LocalDate from, LocalDate to);
 }
