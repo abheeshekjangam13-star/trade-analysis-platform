@@ -147,6 +147,35 @@ public class StrategyService {
                 : btRepo.findByStrategyIdAndRunByUserId(strategyId, CurrentUser.id().orElseThrow());
     }
 
+    public static final List<Integer> PERFORMANCE_WINDOWS = List.of(30, 90, 180, 360);
+
+    public record WindowStat(Long backtestId, double returnPct, double netPnl, double capital, int trades, int wins,
+                             double maxDrawdown, Instant runAt) {}
+
+    public record Performance(Long strategyId, Map<Integer, WindowStat> windows) {}
+
+    /**
+     * For every strategy the caller can see: the latest backtest the caller ran (admins: anyone's) for each of the
+     * 30/90/180/360-day windows. Strategies without such backtests are left out.
+     */
+    @Transactional(readOnly = true)
+    public List<Performance> performance() {
+        Long runBy = CurrentUser.unrestricted() ? null : CurrentUser.id().orElseThrow();
+        java.util.Set<Long> visible = new java.util.HashSet<>(list().stream().map(Strategy::getId).toList());
+        Map<Long, Map<Integer, WindowStat>> out = new java.util.LinkedHashMap<>();
+        for (Object[] r : btRepo.summaries(PERFORMANCE_WINDOWS, runBy)) {
+            Long strategyId = (Long) r[0];
+            if (!visible.contains(strategyId)) continue;
+            Map<Integer, WindowStat> w = out.computeIfAbsent(strategyId, k -> new java.util.TreeMap<>());
+            Integer window = (Integer) r[1];
+            if (w.containsKey(window)) continue;   // rows are newest first: keep the latest per window
+            double capital = ((Number) r[4]).doubleValue(), end = ((Number) r[5]).doubleValue();
+            w.put(window, new WindowStat((Long) r[2], ((Number) r[3]).doubleValue(), end - capital, capital,
+                    ((Number) r[6]).intValue(), ((Number) r[7]).intValue(), ((Number) r[8]).doubleValue(), (Instant) r[9]));
+        }
+        return out.entrySet().stream().map(e -> new Performance(e.getKey(), e.getValue())).toList();
+    }
+
     /** A backtest the caller ran (admins: any), else 404. */
     @Transactional(readOnly = true)
     public BacktestResult getBacktest(Long backtestId) {

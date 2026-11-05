@@ -70,6 +70,10 @@ public class StrategyController {
     @Operation(summary = "List all strategies")
     public List<Strategy> list() { return svc.list(); }
 
+    @GetMapping("/performance")
+    @Operation(summary = "Latest 30/90/180/360-day backtest result per strategy (yours; admins: anyone's), for comparing profitability")
+    public List<StrategyService.Performance> performance() { return svc.performance(); }
+
     @GetMapping("/shared")
     @Operation(summary = "Ids of the master strategies every user may see (read-only); all others are private to their creator")
     public java.util.Set<Long> shared() { return svc.sharedIds(); }
