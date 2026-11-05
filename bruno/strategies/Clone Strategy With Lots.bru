@@ -1,0 +1,17 @@
+meta {
+  name: Clone Strategy With Lots
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies/56/clone
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "lots": 5
+  }
+}

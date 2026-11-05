@@ -35,6 +35,9 @@ public class Strategy {
     /** User who created the strategy (null for strategies created before users existed or without X-User). */
     private Long createdByUserId;
 
+    /** Strategy this one was cloned from (null when created from scratch). */
+    private Long clonedFromStrategyId;
+
     protected Strategy() {}
 
     public Strategy(String name, String description, String type, Map<String, String> parameters) {
@@ -50,4 +53,6 @@ public class Strategy {
     public Instant getCreatedAt() { return createdAt; }
     public Long getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(Long userId) { this.createdByUserId = userId; }
+    public Long getClonedFromStrategyId() { return clonedFromStrategyId; }
+    public void setClonedFromStrategyId(Long id) { this.clonedFromStrategyId = id; }
 }

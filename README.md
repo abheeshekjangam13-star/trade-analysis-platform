@@ -225,6 +225,12 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
   optionally `AUTH_AUTO_REGISTER_USERS=true`) on strategy-service restores the old trusted `X-User` header. Never do
   this on a reachable machine.
 
+### Clone a strategy with your own lots
+
+`POST /api/strategies/{id}/clone` with `{"lots": 5, "name": "optional"}` copies a strategy you can see (your own or a
+shared master strategy) into a new strategy you own, changing only `lots` (1–50). The copy records
+`clonedFromStrategyId`; the default name is "<source> (5 lots)", numbered if you already have one. Needs the Gold plan.
+
 ### Email notifications
 
 strategy-service emails users when they sign up (admins get an alert too), when an admin creates their account, and

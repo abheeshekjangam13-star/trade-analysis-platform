@@ -61,6 +61,40 @@ public class StrategyService {
         return stratRepo.save(strategy);
     }
 
+    public static final int MAX_LOTS = 50;
+
+    /**
+     * Copies a strategy the caller can see (their own or a shared master strategy) into a new strategy owned by the
+     * caller, with their own number of lots. Everything else stays the same. The name defaults to
+     * "&lt;source&gt; (N lots)", made unique among the caller's strategies.
+     */
+    @Transactional
+    public Strategy cloneWithLots(Long sourceId, int lots, String name) {
+        Strategy src = get(sourceId);
+        if (!"NIFTY_OPENING_BREAKOUT".equals(src.getType()))
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Only NIFTY_OPENING_BREAKOUT strategies trade in lots");
+        if (lots < 1 || lots > MAX_LOTS)
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Lots must be between 1 and " + MAX_LOTS);
+        Long owner = CurrentUser.id().orElse(null);
+        String wanted = name == null || name.isBlank() ? src.getName() + " (" + lots + " lots)" : name.trim();
+        if (name != null && !name.isBlank() && owner != null && stratRepo.existsByNameAndCreatedByUserId(wanted, owner))
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
+                    "You already have a strategy named '" + wanted + "'");
+        String unique = wanted;
+        for (int n = 2; owner != null && stratRepo.existsByNameAndCreatedByUserId(unique, owner); n++) unique = wanted + " #" + n;
+
+        Map<String, String> params = new java.util.LinkedHashMap<>(src.getParameters() == null ? Map.of() : src.getParameters());
+        params.put("lots", String.valueOf(lots));
+        String description = (src.getDescription() == null || src.getDescription().isBlank() ? "" : src.getDescription() + "\n\n")
+                + "Cloned from #" + src.getId() + " (" + src.getName() + ") with " + lots + " lots.";
+        Strategy copy = new Strategy(unique, description, src.getType(), params);
+        copy.setCreatedByUserId(owner);
+        copy.setClonedFromStrategyId(src.getId());
+        return stratRepo.save(copy);
+    }
+
     /** A strategy the caller may see: their own, a shared master strategy, or any for an admin (else 404). */
     @Transactional(readOnly = true)
     public Strategy get(Long id) {
