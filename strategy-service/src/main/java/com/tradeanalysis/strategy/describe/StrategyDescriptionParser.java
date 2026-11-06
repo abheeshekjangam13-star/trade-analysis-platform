@@ -36,7 +36,7 @@ public class StrategyDescriptionParser {
     private static final Pattern FILLER = Pattern.compile("^[\\s\\p{Punct}–—₹]*(and|with|then|also|only|the|a|an|on|for|of|in|at|to|use|strategy|nifty(\\s*50)?)?[\\s\\p{Punct}–—]*$", F);
 
     public Result parse(String description) {
-        String text = description == null ? "" : description;
+        String text = normalize(description == null ? "" : description);
         Scan scan = new Scan(text);
 
         String type = detectType(scan);
@@ -63,6 +63,15 @@ public class StrategyDescriptionParser {
         return new Result(type, detected, scan.params, scan.findings, scan.warnings, scan.leftovers(), suggestName(type, scan.params));
     }
 
+    /**
+     * Text copied from web pages often loses the space between a heading and the next sentence ("Trail the SLAfter
+     * every", "gapAt 9:20"): put it back before a capitalised word glued to the previous one. Arrows become spaces.
+     */
+    static String normalize(String text) {
+        return text.replaceAll("(?<=[\\p{L}?)%])(?=\\p{Lu}\\p{Ll}{2,})", " ")
+                .replaceAll("\\s*(→|->|=>|⇒)\\s*", " → ");
+    }
+
     // ── Type ─────────────────────────────────────────────────────────────────
 
     private String detectType(Scan s) {
@@ -77,6 +86,32 @@ public class StrategyDescriptionParser {
     // ── NIFTY opening breakout ───────────────────────────────────────────────
 
     private void breakout(Scan s) {
+        // Step-by-step write-ups: headings and flow words carry no rule of their own.
+        s.ignore("\\b(here'?s|here\\s+is|this\\s+is)\\b[^.\\n]{0,60}?\\b(strategy|setup|rules?|plan)\\b([^.\\n]{0,30}?\\bstep[- ]by[- ]step\\b)?\\s*:?");
+        s.ignore("\\bstep\\s*\\d{1,2}\\s*[—–:.)-]?");
+        s.ignore("\\b(all\\s+(\\d+|three|two|four)\\s+)?conditions?\\s+(are\\s+)?(met|passed|satisfied)\\b");
+        s.ignore("\\bif\\s+no\\s*→?\\s*$|\\bif\\s+(yes|no)\\s*(→|:|,)");
+        s.ignore("\\b(market\\s+opens?|at\\s+market\\s+open)\\s*(\\(?\\s*(at\\s+)?9[:.]15\\s*(am|ist)?\\s*\\)?)?");
+        s.ignore("\\benter\\s+the\\s+trade\\b");
+
+        // Initial stop at the reference candle's own low (CE) / high (PE) = the OPPOSITE side.
+        s.match("\\b(note|mark)\\s+its\\s+(low|high)\\b[^.;\\n]{0,40}\\binitial\\s+(sl|stop(?:[- ]loss)?)\\b"
+                + "|\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|below|above)\\s+(the\\s+)?(low|high)\\s+of\\s+(the\\s+)?(first|reference|opening|9[:.]15)\\b[^.;\\n]{0,40}?candle(\\s*\\(?\\s*9[:.]15\\s+candle\\s+(low|high)\\s*\\)?)?"
+                + "|\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|below|above)\\s+(the\\s+)?(9[:.]15|first|reference)\\s+candle'?s?\\s+(low|high)\\b",
+                m -> s.set("initialStop", "OPPOSITE", m, "Initial SL at the reference candle's low (CE) / high (PE)"));
+
+        // The entry is the engine's breakout: a 5-min candle crossing the reference candle.
+        s.builtin("\\b(watch|observe|check|see)?\\s*(if\\s+)?(the\\s+)?(9[:.]2[05]|next|second)\\s+candle\\s+(closes\\s+|breaks\\s+|crosses\\s+|barely\\s+crosses\\s+)(above|below|over)\\s+(the\\s+)?(9[:.]1?[05]|first|reference)\\s+candle('?s\\s+(high|low))?",
+                "Entry when a 5-min candle breaks the reference candle");
+        s.builtin("\\bif\\s+it\\s+(doesn'?t|does\\s+not)\\s+(cross|break)[^.;\\n]{0,20}?(→\\s*)?no\\s+trade\\b", "No breakout, no trade");
+        s.builtin("\\brepeat\\b[^.;\\n]{0,15}\\buntil\\b[^.;\\n]{0,40}\\b(target|stopped\\s+out|sl)\\b[^.;\\n]*", "Exit at the target, the stop or the 15:20 square-off");
+
+        // Rules this strategy type cannot apply: say so plainly instead of "not understood".
+        s.match("\\b(barely|marginal(ly)?|just|slightly)\\s+cross(es|ing)?\\b|\\bmarginal\\s+(cross|break(out)?)\\b|\\bstrong\\s+breakouts?\\s+(doesn'?t|does\\s+not|don'?t)\\s+qualify\\b|\\bit\\s+should\\s+be\\s+a\\s+marginal\\s+cross\\b",
+                m -> s.unsupported(m, "Breakout size is not checked: the engine enters on any breakout of the reference candle, strong or small"));
+        s.match("\\b(near|at|close\\s+to)\\s+(a\\s+)?(key\\s+)?(resistance|support)(\\s*(/|or|and)\\s*(resistance|support))?(\\s+level)?\\b|\\b(check\\s+)?(resistance|support)\\s*(/|or|and)\\s*(resistance|support)\\b|\\bavoid\\s+the\\s+trade\\b",
+                m -> s.unsupported(m, "Support/resistance is not part of this strategy type; check it yourself before trading"));
+
         // Rules the engine always applies: recognise them so they don't show up as "not understood".
         s.builtin("(first|opening|reference|ref)\\s*(5[- ]?min(ute)?)?\\s*candle(\\s*\\(?\\s*09[:.]15\\s*[-–]\\s*09[:.]20\\s*(ist)?\\s*\\)?)?", "Reference candle 09:15–09:20 IST");
         s.builtin("\\batm\\s*[-−]\\s*50\\b|\\batm\\s*\\+\\s*50\\b|\\bnearest\\s+50\\b", "Strikes: CE at ATM−50, PE at ATM+50");
@@ -89,7 +124,10 @@ public class StrategyDescriptionParser {
             s.match("\\b(sl|stop(?:[- ]loss)?)\\b[^.;\\n]{0,30}\\b(mid[- ]?point|middle|mid)\\b|\\bmid[- ]?point\\s+(sl|stop)", m -> s.set("initialStop", "MIDPOINT", m, "Initial SL at the reference-candle midpoint"));
 
         // Directions
-        boolean ceOnly = s.match("\\b(ce|calls?|bullish|long)\\s+(only|side only|trades only)\\b|\\bonly\\s+(ce|calls?|bullish|long)\\b|\\b(no|skip|without)\\s+(pe|puts?|bearish)\\b", m -> s.set("directions", "CE", m, null)) > 0;
+        if (!s.peek("\\b(pe|puts?|bearish|short)\\b"))
+            s.match("\\b(enter|go|take\\s+a|buy)\\s+long\\b|\\benter\\s+long\\b|\\b(go|going)\\s+long\\b|\\(\\s*buy\\s*\\)",
+                    m -> s.set("directions", "CE", m, "Long (buy) = CE (calls)"));
+        boolean ceOnly = s.params.containsKey("directions") || s.match("\\b(ce|calls?|bullish|long)\\s+(only|side only|trades only)\\b|\\bonly\\s+(ce|calls?|bullish|long)\\b|\\b(no|skip|without)\\s+(pe|puts?|bearish)\\b", m -> s.set("directions", "CE", m, null)) > 0;
         boolean peOnly = !ceOnly && s.match("\\b(pe|puts?|bearish|short)\\s+(only|side only|trades only)\\b|\\bonly\\s+(pe|puts?|bearish|short)\\b|\\b(no|skip|without)\\s+(ce|calls?|bullish)\\b", m -> s.set("directions", "PE", m, null)) > 0;
         if (!ceOnly && !peOnly) {
             boolean ce = s.peek("\\b(ce|calls?|bullish)\\b"), pe = s.peek("\\b(pe|puts?|bearish)\\b");
@@ -112,6 +150,11 @@ public class StrategyDescriptionParser {
         s.match("\\btrail(ing)?(\\s+(sl|stop(-loss)?))?[^.;\\n]{0,25}?\\b(\\d{1,2})\\s*[- ]?(min(ute)?s?|m)\\b", m -> s.setInt("trailMinutes", m.group(5), 1, 60, m));
         s.match("\\b(\\d{1,2})\\s*[- ]?(min(ute)?s?|m)\\s+(candle\\s+|block\\s+)?(lows?|highs?|low\\s*/\\s*high|trail(ing)?)\\b", m -> s.setInt("trailMinutes", m.group(1), 1, 60, m));
         s.match("\\btrail(ing)?\\s+(only\\s+)?(after|once)\\s+(\\+?" + NUM + ")\\s*(points?|pts?)(\\s+in\\s+(profit|favou?r))?", m -> s.setNum("trailAfterPoints", m.group(5), 0, 500, m));
+        s.match("\\b(after\\s+every\\s+(new\\s+)?(\\d{1,2})[- ]?min(ute)?\\s+candle\\s+closes,?\\s*)?move\\s+(your\\s+|the\\s+)?(sl|stop)\\s+(up\\s+|down\\s+)?to\\s+the\\s+(low|high)\\s+of\\s+(that|the|each)\\s+(just[- ]closed|completed|last|previous)\\s+candle\\b",
+                m -> {
+                    if (m.group(3) != null && !s.params.containsKey("trailMinutes")) s.setInt("trailMinutes", m.group(3), 1, 60, m);
+                    else s.note(m, "Trailing stop on each completed block's low (CE) / high (PE) (built in)");
+                });
         s.match("\\bdelayed\\s+trail\\b", m -> s.note(m, "Delayed trail: give the points with \"trail after N points\""));
 
         // Target
@@ -120,15 +163,15 @@ public class StrategyDescriptionParser {
         s.match("\\bno\\s+target\\b", m -> s.set("targetPoints", "0", m, "No target"));
 
         // Gap filter
-        boolean up = s.peek("\\bgaps?[- ]?ups?\\b|\\bopens?\\s+(higher|above)\\b|%\\s*(higher|above)\\s+(the\\s+)?(previous|prev|yesterday)"),
-                down = s.peek("\\bgaps?[- ]?downs?\\b|\\bopens?\\s+(lower|below)\\b|%\\s*(lower|below)\\s+(the\\s+)?(previous|prev|yesterday)");
+        boolean up = s.peek("\\bgap(?:s|ped)?[- ]?ups?\\b|\\bopens?\\s+(higher|above)\\b|%\\s*(higher|above)\\s+(the\\s+)?(previous|prev|yesterday)"),
+                down = s.peek("\\bgap(?:s|ped)?[- ]?downs?\\b|\\bopens?\\s+(lower|below)\\b|%\\s*(lower|below)\\s+(the\\s+)?(previous|prev|yesterday)");
         String gapMax = "(gap\\s*)?(below|under|less\\s+than|<|up\\s+to)\\s*" + NUM + "\\s*%";
         s.match("\\b(skip|avoid|no\\s+trades?\\s+(on|when))[^.;\\n]{0,20}\\bgaps?\\s*(above|over|more\\s+than|>|≥|>=|of)?\\s*" + NUM + "\\s*%", m -> s.setNum("maxGapPct", m.group(4), 0.05, 10, m));
         s.match("\\bgap\\s*(<|below|under|less\\s+than)\\s*" + NUM + "\\s*%", m -> s.setNum("maxGapPct", m.group(2), 0.05, 10, m));
         if (s.match("\\b(flat|no[- ]gap)\\s+(open(s|ing)?|days?)\\b", m -> s.set("gapFilter", "FLAT", m, null)) == 0) {
             String filter = up && down ? "ANY_GAP" : up ? "GAP_UP" : down ? "GAP_DOWN" : null;
             if (filter != null) {
-                s.match("\\b(gaps?[- ]?(ups?|downs?)|opens?\\s+(higher|lower|above|below))(\\s+days?)?(\\s+(of|by|above|over|more\\s+than|at\\s+least|≥|>=|>)?\\s*" + NUM + "\\s*%)?(\\s+(above|below)\\s+(the\\s+)?(previous|prev|yesterday'?s?)\\s+close)?",
+                s.match("\\b(gap(?:s|ped)?[- ]?(ups?|downs?)|opens?\\s+(higher|lower|above|below))(\\s+days?)?(\\s+(of|by|above|over|more\\s+than|at\\s+least|≥|>=|>)?\\s*" + NUM + "\\s*%)?(\\s+(above|below)\\s+(the\\s+)?(previous|prev|yesterday'?s?)\\s+close)?",
                         m -> {
                             s.set("gapFilter", filter, m, null);
                             if (m.group(7) != null) s.setNum("gapPct", m.group(7), 0.01, 5, m);
@@ -139,6 +182,12 @@ public class StrategyDescriptionParser {
                 s.match("\\b" + NUM + "\\s*%\\s*(\\+\\s*)?(gap|above\\s+(the\\s+)?(previous|prev)|below\\s+(the\\s+)?(previous|prev))", m -> s.setNum("gapPct", m.group(1), 0.01, 5, m));
             }
         }
+
+        // Gap sizes in words only: explain which number is used / needed.
+        s.match("\\b(there\\s+must\\s+be\\s+)?(a\\s+)?(minimum|min|small|modest|minimum\\s*/\\s*modest)\\s+gap([- ]up|[- ]down)?(\\s+to\\s+proceed)?\\b|\\bonly\\s+proceed\\s+if\\s+it'?s\\s+a\\s+(minimum|small|modest)(\\s*/\\s*(minimum|small|modest))?\\s+gap\\b",
+                m -> { if (!s.params.containsKey("gapPct")) s.note(m, "Minimum gap with no number: Gap % keeps its default 0.2% (write e.g. \"gap up above 0.3%\" to change it)"); else s.note(m, "Minimum gap"); });
+        s.match("\\b(is\\s+the\\s+gap\\s+too\\s+big|if\\s+the\\s+gap\\s+is\\s+(very\\s+|too\\s+)?(large|big|huge))\\b[^.;\\n]*?(skip\\s+the\\s+trade(\\s+entirely)?(\\s*\\([^)]*\\))?)?|\\bgap\\s+(is\\s+)?too\\s+big\\b",
+                m -> { if (!s.params.containsKey("maxGapPct")) s.unsupported(m, "Large-gap skip needs a number: write e.g. \"skip gaps above 1%\" to set Max gap % (not set)"); });
 
         // Entry window
         s.match("\\b(entr(y|ies)|enter|trades?)\\s+(only\\s+)?(from|between)\\s+" + TIME + "\\s*(until|till|to|and|-|–)\\s*" + TIME,
@@ -263,7 +312,18 @@ public class StrategyDescriptionParser {
         }
 
         void builtin(String regex, String note) {
-            match(regex, m -> findings.add(new Finding(null, null, text(m), note + " (built in)")));
+            match(regex, m -> {
+                String n = note + " (built in)";
+                if (findings.stream().noneMatch(f -> f.key() == null && n.equals(f.note()))) findings.add(new Finding(null, null, text(m), n));
+            });
+        }
+
+        /** Words that only structure the text (headings, "Step 3 —", "if yes →"): used, but no finding. */
+        void ignore(String regex) { match(regex, m -> { }); }
+
+        /** A rule the strategy type cannot apply: shown as a warning so nobody assumes it will be followed. */
+        void unsupported(Matcher m, String why) {
+            if (warnings.stream().noneMatch(w -> w.startsWith(why))) warnings.add(why + " (\"" + text(m) + "\")");
         }
 
         void note(Matcher m, String note) { findings.add(new Finding(null, null, text(m), note)); }
