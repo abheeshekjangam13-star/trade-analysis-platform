@@ -56,9 +56,28 @@ public class StrategyService {
         if (name != null && owner != null && stratRepo.existsByNameAndCreatedByUserId(name, owner))
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
                     "You already have a strategy named '" + name + "'");
+        params = cleanParams(type, params);
         Strategy strategy = new Strategy(name, description, type, params);
         strategy.setCreatedByUserId(owner);
         return stratRepo.save(strategy);
+    }
+
+    /**
+     * Drops empty values (an empty field means "use the default": e.g. no skipDays = trade every day) and, for
+     * NIFTY_OPENING_BREAKOUT, refuses parameters the engine would reject, so a strategy that cannot run is never saved.
+     */
+    static Map<String, String> cleanParams(String type, Map<String, String> params) {
+        Map<String, String> clean = new java.util.LinkedHashMap<>();
+        if (params != null) params.forEach((k, v) -> { if (k != null && v != null && !v.isBlank()) clean.put(k, v.trim()); });
+        if ("NIFTY_OPENING_BREAKOUT".equals(type)) {
+            try {
+                com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine.validateParams(new com.tradeanalysis.common.indicator.Params(new java.util.HashMap<>(clean)));
+            } catch (IllegalArgumentException e) {
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "Invalid parameters: " + e.getMessage());
+            }
+        }
+        return clean;
     }
 
     public static final int MAX_LOTS = 50;

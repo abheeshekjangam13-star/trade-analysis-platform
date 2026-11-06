@@ -50,6 +50,7 @@ public class LiveStrategyRunner {
     private final KiteApi kite;
     private final Clock clock;
     private final Duration maxEntryDelay;
+    private final Set<String> invalidWarned = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public LiveStrategyRunner(StrategyLiveConfigRepository configs, LivePositionRepository positions, TradeOrderRepository orders,
                               TradingControlRepository controls, OrderService orderService, StrategyService strategies,
@@ -123,6 +124,13 @@ public class LiveStrategyRunner {
         PriceSeries five = marketData.getRange(SYMBOL, Interval.MINUTE_5, today.minusDays(7).atStartOfDay(IST).toInstant(), now);
         PriceSeries one = marketData.getRange(SYMBOL, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
         Params params = new Params(new HashMap<>(s.getParameters()));
+        try {
+            NiftyOpeningBreakoutEngine.validateParams(params);
+        } catch (IllegalArgumentException e) {   // saved before parameters were checked: skip it, warn once a day
+            String problem = "#" + s.getId() + ": not traded, invalid parameters (" + e.getMessage() + "); fix or recreate the strategy";
+            if (invalidWarned.add(s.getId() + "|" + today + "|" + e.getMessage())) log.warn("RUNNER_SKIPPED {}", problem);
+            return new Evaluation(s, null, null, today, now, problem);
+        }
         return new Evaluation(s, params, engine.runLive(five, one, params, s.getId(), now, today), today, now, null);
     }
 
