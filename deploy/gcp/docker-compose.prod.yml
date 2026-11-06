@@ -1,0 +1,128 @@
+# Production on one GCP VM: the five services + Caddy (UI + HTTPS). PostgreSQL is Cloud SQL (private IP).
+# Only Caddy is reachable from the internet (ports 80/443); everything else talks on the internal network.
+#
+#   cd /opt/trade/trade-analysis-platform/deploy/gcp
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# Expects the UI repo next to this one: /opt/trade/trade-analysis-ui. Settings come from .env (see .env.example).
+
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-eureka: &eureka
+  EUREKA_URL: http://discovery-server:8761/eureka
+
+x-db: &db
+  DB_HOST: ${DB_HOST:?set DB_HOST (Cloud SQL private IP)}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_NAME: ${DB_NAME:-trade_analysis}
+  DB_USER: ${DB_USER:-trade}
+  DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+
+x-build: &build
+  context: ../..
+  dockerfile: deploy/gcp/services.Dockerfile
+
+services:
+  discovery-server:
+    <<: *service
+    build: { <<: *build, target: discovery-server }
+    image: trade/discovery-server
+    environment:
+      JAVA_OPTS: -Xmx192m -XX:+UseSerialGC
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8761' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  api-gateway:
+    <<: *service
+    build: { <<: *build, target: api-gateway }
+    image: trade/api-gateway
+    environment:
+      <<: [*eureka, *db]
+      EUREKA_INSTANCE_HOSTNAME: api-gateway
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET}
+      JAVA_OPTS: -Xmx384m
+    depends_on:
+      discovery-server: { condition: service_healthy }
+
+  market-data-service:
+    <<: *service
+    build: { <<: *build, target: market-data-service }
+    image: trade/market-data-service
+    environment:
+      <<: [*eureka, *db]
+      EUREKA_INSTANCE_HOSTNAME: market-data-service
+      KITE_API_KEY: ${KITE_API_KEY:?set KITE_API_KEY}
+      KITE_API_SECRET: ${KITE_API_SECRET:?set KITE_API_SECRET}
+      JAVA_OPTS: -Xmx640m
+    depends_on:
+      discovery-server: { condition: service_healthy }
+
+  indicator-service:
+    <<: *service
+    build: { <<: *build, target: indicator-service }
+    image: trade/indicator-service
+    environment:
+      <<: *eureka
+      EUREKA_INSTANCE_HOSTNAME: indicator-service
+      JAVA_OPTS: -Xmx256m
+    depends_on:
+      discovery-server: { condition: service_healthy }
+
+  strategy-service:
+    <<: *service
+    build: { <<: *build, target: strategy-service }
+    image: trade/strategy-service
+    environment:
+      <<: [*eureka, *db]
+      EUREKA_INSTANCE_HOSTNAME: strategy-service
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET}
+      KITE_ENCRYPTION_KEY: ${KITE_ENCRYPTION_KEY:?set KITE_ENCRYPTION_KEY}
+      APP_URL: https://${DOMAIN:?set DOMAIN}
+      TRADING_LIVE_ENABLED: ${TRADING_LIVE_ENABLED:-false}
+      TRADING_RUNNER_ENABLED: ${TRADING_RUNNER_ENABLED:-true}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      JAVA_OPTS: -Xmx1g
+    depends_on:
+      discovery-server: { condition: service_healthy }
+      market-data-service: { condition: service_started }
+      indicator-service: { condition: service_started }
+
+  web:
+    <<: *service
+    build:
+      context: .
+      dockerfile: web.Dockerfile
+      additional_contexts:
+        ui: ../../../trade-analysis-ui
+    image: trade/web
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data        # the HTTPS certificate (kept across restarts)
+      - caddy_config:/config
+    depends_on:
+      - api-gateway
+
+volumes:
+  caddy_data:
+  caddy_config:

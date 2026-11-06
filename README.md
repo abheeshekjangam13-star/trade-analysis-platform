@@ -55,6 +55,11 @@ java -jar indicator-service/target/indicator-service-1.0.0-SNAPSHOT.jar &
 java -jar strategy-service/target/strategy-service-1.0.0-SNAPSHOT.jar &
 ```
 
+## Deploying on Google Cloud
+
+One VM (Docker: the five services + Caddy for the UI and HTTPS) with a static IP for Kite, and Cloud SQL for
+PostgreSQL. Step-by-step guide and scripts: [deploy/gcp/README.md](deploy/gcp/README.md).
+
 ## Database (PostgreSQL)
 
 All services share one PostgreSQL database, `trade_analysis`, in one schema. Tables are created and
@@ -140,6 +145,27 @@ strategy-service can trade with it). One-click login: run the UI with `npm run d
 redirect URL to `https://localhost:5173/kite/callback` (or `http://…` with plain `npm run dev`) and use
 **Connect to Kite** in the UI. Tokens are never returned by the API and
 are masked in the access log.
+
+**Users' own Kite accounts (GOLD / PREMIUM).** Each paying user can connect the Kite Connect app from their own
+Zerodha developer console (**My account → Your Kite account**): create an app at developers.kite.trade with the
+redirect URL `<UI origin>/kite/callback`, paste its API key and secret, then **Log in to Kite** each trading day. The
+secret and the daily access token are stored encrypted in `kite_account` (AES-GCM; set `KITE_ENCRYPTION_KEY` to
+`openssl rand -base64 32` in production, otherwise a random key is kept in `kite_account_key`) and are never returned
+by the API. One Kite account can be linked to one user only.
+- **GOLD:** sees their own Kite margins, positions and orders on the Trading page; paper trading as before.
+- **PREMIUM:** can also place LIVE orders and switch strategies to LIVE; those orders, cancels and order syncs go to
+  their own Kite account. If the plan expires, new live entries are refused (exits still go through).
+- **Admins** without their own account keep trading on the platform session.
+- Quotes, option contracts and paper fills always use the platform session (`marketData` in `/api/trading/status`).
+- Limits (orders per day, daily loss) count per user.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/trading/kite-account` | Your Kite account: saved, logged in today, Kite user id |
+| `PUT /api/trading/kite-account/app` | Save your app's `apiKey` and `apiSecret` (blank secret keeps the saved one) |
+| `GET /api/trading/kite-account/login-url` | Kite login for your app (redirects back with `account=me`) |
+| `POST /api/trading/kite-account/session` | Exchange the `requestToken` for today's session |
+| `DELETE /api/trading/kite-account` | Disconnect (refused while you have LIVE strategies) |
 
 **Before going live:** Zerodha requires API orders to come from a static IP registered with them (SEBI retail-algo
 rules); enable the F&O segment; log in to Kite every trading day; run strategies in PAPER first and compare with
