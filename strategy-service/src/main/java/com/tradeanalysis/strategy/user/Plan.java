@@ -6,8 +6,8 @@ import java.util.List;
 public enum Plan {
     FREE(0, "VIEWER", List.of("View strategies, backtests, reports and market data")),
     GOLD(999, "TRADER", List.of("Everything in Free", "Create strategies and portfolios", "Run backtests and reports",
-            "Paper trading (simulated orders)")),
-    PREMIUM(1999, "PREMIUM", List.of("Everything in Gold", "Live trading on your own Kite account (coming soon)"));
+            "Paper trading (simulated orders)", "Connect your own Kite account (positions, margins, orders)")),
+    PREMIUM(1999, "PREMIUM", List.of("Everything in Gold", "Live trading on your own Kite account"));
 
     private final int pricePerMonth;
     private final String role;

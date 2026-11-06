@@ -26,39 +26,45 @@ public class TradingController {
     private final OrderService orders;
     private final TradeOrderRepository orderRepo;
     private final LivePositionRepository positionRepo;
-    private final KiteApi kite;
+    private final KiteAccounts accounts;
+    private final KiteApi platform;
     private final NiftyOptions options;
     private final ObjectProvider<LiveStrategyRunner> runner;
     private final Clock clock;
     private final QuoteCache quoteCache;
 
     public TradingController(TradingService trading, OrderService orders, TradeOrderRepository orderRepo,
-                             LivePositionRepository positionRepo, KiteApi kite, NiftyOptions options,
+                             LivePositionRepository positionRepo, KiteAccounts accounts, KiteApi platform, NiftyOptions options,
                              ObjectProvider<LiveStrategyRunner> runner, Clock clock, QuoteCache quoteCache) {
         this.quoteCache = quoteCache;
         this.trading = trading; this.orders = orders; this.orderRepo = orderRepo; this.positionRepo = positionRepo;
-        this.kite = kite; this.options = options; this.runner = runner; this.clock = clock;
+        this.accounts = accounts; this.platform = platform; this.options = options; this.runner = runner; this.clock = clock;
     }
 
     @GetMapping("/status")
-    @Operation(summary = "Kite connection, live switch, controls and today's order counts / realized P&L")
+    @Operation(summary = "Your Kite connection, live switch, controls and today's order counts / realized P&L")
     public Map<String, Object> status() {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<String, Object> k = new LinkedHashMap<>();
+        Long me = CurrentUser.id().orElse(null);
+        k.put("ownAccount", accounts.hasOwnAccount(me));   // false: admins use the platform account
         try {
-            KiteApi.Profile p = kite.profile();
+            KiteApi.Profile p = accounts.forUser(me).profile();
             k.put("connected", true); k.put("userId", p.userId()); k.put("userName", p.userName());
         } catch (RuntimeException e) {
             k.put("connected", false); k.put("message", e.getMessage());
         }
-        if (!trading.isAdmin()) { k.remove("userId"); k.remove("userName"); }   // whose broker account is private
         out.put("kite", k);
+        boolean market;   // the platform session (quotes, option contracts, paper fills) works for everyone
+        try { platform.profile(); market = true; } catch (RuntimeException e) { market = false; }
+        out.put("marketData", Map.of("connected", market));
         out.put("liveTradingEnabled", orders.liveEnabled());
+        out.put("liveAllowed", trading.liveAllowed());
         out.put("runnerEnabled", runner.getIfAvailable() != null);
         out.put("marketOpen", LiveStrategyRunner.marketOpen(clock.instant()));
         out.put("controls", trading.controls());
-        Long who = trading.isAdmin() ? null : CurrentUser.id().orElse(null);   // non-admins: their own paper numbers
-        for (TradingMode m : who == null ? List.of(TradingMode.PAPER, TradingMode.LIVE) : List.of(TradingMode.PAPER))
+        Long who = trading.isAdmin() ? null : me;   // non-admins: their own numbers
+        for (TradingMode m : who == null || trading.liveAllowed() ? List.of(TradingMode.PAPER, TradingMode.LIVE) : List.of(TradingMode.PAPER))
             out.put(m.name().toLowerCase(), Map.of("ordersToday", orders.ordersToday(m, who), "realizedToday", orders.realizedToday(m, who)));
         return out;
     }
@@ -84,7 +90,7 @@ public class TradingController {
     public List<TradingService.StrategyMode> strategies() { return trading.strategyModes(); }
 
     @PutMapping("/strategies/{id}")
-    @Operation(summary = "Set a strategy to OFF, PAPER or LIVE (LIVE: ADMIN and server switch)")
+    @Operation(summary = "Set a strategy to OFF, PAPER or LIVE (LIVE: PREMIUM with your own Kite account or ADMIN, and the server switch)")
     public TradingService.StrategyMode setMode(@PathVariable Long id, @RequestBody ModeRequest r) {
         if (r.mode() == null) throw new TradingException("Missing mode");
         return trading.setMode(id, r.mode(), r.product());
@@ -108,10 +114,10 @@ public class TradingController {
 
     @PostMapping("/orders")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Place a manual order (confirm=true required; LIVE needs ADMIN)")
+    @Operation(summary = "Place a manual order (confirm=true required; LIVE needs PREMIUM with your own Kite account, or ADMIN)")
     public TradeOrder place(@RequestBody ManualOrder m) {
         if (!Boolean.TRUE.equals(m.confirm())) throw new TradingException("Set confirm=true to place the order");
-        if (m.mode() == TradingMode.LIVE) trading.requireAdmin("place live orders");
+        if (m.mode() == TradingMode.LIVE) trading.requireLive();
         OrderRequest r = new OrderRequest(m.exchange() == null ? "NFO" : m.exchange(), m.tradingsymbol(), m.transactionType(),
                 m.quantity() == null ? 0 : m.quantity(), m.product() == null ? "MIS" : m.product(),
                 m.orderType() == null ? "MARKET" : m.orderType(), m.price(), m.triggerPrice());
@@ -122,7 +128,7 @@ public class TradingController {
     public TradeOrder cancel(@PathVariable Long id) {
         if (!trading.isAdmin()) {
             TradeOrder o = orderRepo.findById(id).orElseThrow(() -> new TradingException(HttpStatus.NOT_FOUND, "Order not found: " + id));
-            if (o.getMode() != TradingMode.PAPER || !java.util.Objects.equals(o.getUserId(), CurrentUser.id().orElse(null)))
+            if (!java.util.Objects.equals(o.getUserId(), CurrentUser.id().orElse(null)))
                 throw new TradingException(HttpStatus.NOT_FOUND, "Order not found: " + id);   // other users' orders don't exist for you
         }
         return orders.cancel(id);
@@ -136,9 +142,12 @@ public class TradingController {
                 : positionRepo.findByTradeDateAndUserIdOrderByOpenedAtDesc(day, CurrentUser.id().orElseThrow());
     }
 
-    @GetMapping("/broker/margins")   public KiteApi.Margins brokerMargins() { return kite.margins(); }
-    @GetMapping("/broker/positions") public List<KiteApi.BrokerPosition> brokerPositions() { return kite.positions(); }
-    @GetMapping("/broker/orders")    public List<KiteApi.BrokerOrder> brokerOrders() { return kite.orders(); }
+    /** Your own Kite account (admins without one: the platform account). */
+    private KiteApi myKite() { return accounts.forUser(CurrentUser.id().orElse(null)); }
+
+    @GetMapping("/broker/margins")   public KiteApi.Margins brokerMargins() { return myKite().margins(); }
+    @GetMapping("/broker/positions") public List<KiteApi.BrokerPosition> brokerPositions() { return myKite().positions(); }
+    @GetMapping("/broker/orders")    public List<KiteApi.BrokerOrder> brokerOrders() { return myKite().orders(); }
 
     @GetMapping("/options/expiries")
     @Operation(summary = "NIFTY option expiries from today")

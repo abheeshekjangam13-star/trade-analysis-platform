@@ -97,3 +97,8 @@ razorpay:
   key-secret: ${RAZORPAY_KEY_SECRET:}
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}   # set in Razorpay Dashboard → Webhooks
   plan-days: 30
+
+# Users' own Kite Connect accounts (GOLD/PREMIUM). Secrets and tokens are stored encrypted with this key:
+# base64 of 32 bytes (openssl rand -base64 32). Unset = a random key kept in table kite_account_key.
+kite:
+  encryption-key: ${KITE_ENCRYPTION_KEY:}

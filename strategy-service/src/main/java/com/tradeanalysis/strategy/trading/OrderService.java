@@ -13,11 +13,13 @@ import java.util.*;
 
 /**
  * The only way the platform sends orders. Validates, applies the safety rules and records every order (rejected ones
- * included) in trade_order. PAPER orders fill at once at the option's last traded price; LIVE orders go to Kite and
- * require trading.live.enabled=true on the server.
+ * included) in trade_order. PAPER orders fill at once at the option's last traded price; LIVE orders go to the order
+ * owner's own Kite account ({@link KiteAccounts#forUser}: admins without one use the platform account) and require
+ * trading.live.enabled=true on the server.
  *
  * Safety rules for orders that open or add risk (exits are always allowed, so positions can always be closed):
- * kill switch off, quantity ≤ max per order, orders today < max per day, today's realized loss < daily loss limit.
+ * kill switch off, quantity ≤ max per order, orders today < max per day, today's realized loss < daily loss limit
+ * (all per user), and for LIVE: the user may trade live (PREMIUM with their own Kite account, or an admin).
  */
 @Service
 public class OrderService {
@@ -33,13 +35,14 @@ public class OrderService {
     private final TradeOrderRepository orders;
     private final TradingControlRepository controls;
     private final LivePositionRepository positions;
-    private final KiteApi kite;
+    private final KiteApi kite;          // platform session: quotes for paper fills
+    private final KiteAccounts accounts; // the order owner's own account: live orders
     private final Clock clock;
     private final boolean liveEnabled;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
-                        KiteApi kite, Clock clock, @Value("${trading.live.enabled:false}") boolean liveEnabled) {
-        this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite;
+                        KiteApi kite, KiteAccounts accounts, Clock clock, @Value("${trading.live.enabled:false}") boolean liveEnabled) {
+        this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
         this.clock = clock; this.liveEnabled = liveEnabled;
     }
 
@@ -69,7 +72,7 @@ public class OrderService {
                                                       : "Paper fill at last traded price");
         } else {
             try {
-                String id = kite.placeOrder(new KiteApi.PlaceOrder(r.exchange(), r.tradingsymbol(), r.transactionType(), r.quantity(),
+                String id = accounts.forUser(userId).placeOrder(new KiteApi.PlaceOrder(r.exchange(), r.tradingsymbol(), r.transactionType(), r.quantity(),
                         r.product(), r.orderType(), r.price(), r.triggerPrice(), "TAP" + (strategyId == null ? "M" : strategyId)));
                 order.placed(id, "Sent to Kite");
                 log.info("ORDER_LIVE id={} kite={} {} {} x{}", order.getId(), id, r.transactionType(), r.tradingsymbol(), r.quantity());
@@ -83,7 +86,7 @@ public class OrderService {
     public TradeOrder cancel(Long id) {
         TradeOrder o = orders.findById(id).orElseThrow(() -> new TradingException(HttpStatus.NOT_FOUND, "Order not found: " + id));
         if (o.getStatus() != TradeOrder.Status.OPEN) throw new TradingException("Order " + id + " is already " + o.getStatus());
-        if (o.getMode() == TradingMode.LIVE && o.getBrokerOrderId() != null) kite.cancelOrder(o.getBrokerOrderId());
+        if (o.getMode() == TradingMode.LIVE && o.getBrokerOrderId() != null) accounts.forUser(o.getUserId()).cancelOrder(o.getBrokerOrderId());
         o.update(TradeOrder.Status.CANCELLED, o.getFilledQuantity(), null, "Cancelled");
         return orders.save(o);
     }
@@ -93,7 +96,7 @@ public class OrderService {
         for (TradeOrder o : orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN)) {
             if (o.getBrokerOrderId() == null) continue;
             try {
-                KiteApi.BrokerOrder b = kite.order(o.getBrokerOrderId());
+                KiteApi.BrokerOrder b = accounts.forUser(o.getUserId()).order(o.getBrokerOrderId());
                 o.update(mapStatus(b.status()), b.filledQuantity(), b.averagePrice(), b.statusMessage());
                 orders.save(o);
             } catch (RuntimeException e) {
@@ -148,11 +151,15 @@ public class OrderService {
         return strategies + manual;
     }
 
-    /** Paper limits count each user's own orders and P&L; live limits are for the whole (admin's) account. */
+    /** Limits count each user's own orders and P&L (each user trades live on their own Kite account). */
     private String refusal(OrderRequest r, TradingMode mode, Long userId) {
-        Long who = mode == TradingMode.PAPER ? userId : null;
+        Long who = userId;
         TradingControl c = controls.get();
         if (c.isKillSwitch()) return "Kill switch is on: no new orders";
+        if (mode == TradingMode.LIVE) {
+            String live = accounts.liveRefusal(userId);
+            if (live != null) return live;
+        }
         if (r.quantity() > c.getMaxQuantityPerOrder())
             return "Quantity " + r.quantity() + " is above the limit of " + c.getMaxQuantityPerOrder() + " per order";
         if (ordersToday(mode, who) >= c.getMaxOrdersPerDay()) return "Daily limit of " + c.getMaxOrdersPerDay() + " " + mode + " orders reached";

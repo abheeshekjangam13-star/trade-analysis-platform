@@ -22,12 +22,14 @@ public class TradingService {
     private final StrategyService strategies;
     private final AppUserRepository users;
     private final ObjectProvider<LiveStrategyRunner> runner;
+    private final KiteAccounts accounts;
 
     public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
                           LivePositionRepository positions, OrderService orderService, StrategyService strategies,
-                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner) {
+                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, KiteAccounts accounts) {
         this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
         this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
+        this.accounts = accounts;
     }
 
     public record StrategyMode(Long strategyId, String name, String type, String direction, TradingMode mode, String product) {}
@@ -46,14 +48,14 @@ public class TradingService {
         return out;
     }
 
-    /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs an ADMIN and live trading enabled. */
+    /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs PREMIUM + their own Kite account (or ADMIN) and live trading enabled. */
     public StrategyMode setMode(Long strategyId, TradingMode mode, String product) {
         Strategy s = strategies.get(strategyId);
         if (mode != TradingMode.OFF && !"NIFTY_OPENING_BREAKOUT".equals(s.getType()))
             throw new TradingException("Only NIFTY_OPENING_BREAKOUT strategies can trade live");
         if (product != null && !Set.of("MIS", "NRML").contains(product)) throw new TradingException("Product must be MIS or NRML");
         if (mode == TradingMode.LIVE) {
-            requireAdmin("switch a strategy to LIVE");
+            requireLive();
             if (!orderService.liveEnabled())
                 throw new TradingException("Live trading is disabled on this server (start strategy-service with TRADING_LIVE_ENABLED=true)");
         }
@@ -115,6 +117,16 @@ public class TradingService {
 
     /** Whether the caller is an ADMIN (non-admins only see paper trading). */
     public boolean isAdmin() { return CurrentUser.admin(); }
+
+    /** The caller may trade live: an ADMIN, or a PREMIUM user who connected their own Kite account. */
+    public void requireLive() {
+        Long id = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.FORBIDDEN, "Log in to trade live"));
+        String refusal = accounts.liveRefusal(id);
+        if (refusal != null) throw new TradingException(HttpStatus.FORBIDDEN, refusal);
+    }
+
+    /** Whether the caller may trade live (see {@link #requireLive}). */
+    public boolean liveAllowed() { return CurrentUser.id().map(id -> accounts.liveRefusal(id) == null).orElse(false); }
 
     public void requireAdmin(String action) {
         Long id = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.FORBIDDEN, "Only an ADMIN can " + action + " (send X-User)"));

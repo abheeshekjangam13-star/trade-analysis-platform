@@ -1,6 +1,7 @@
 package com.tradeanalysis.strategy.trading;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -14,20 +15,33 @@ import java.io.StringReader;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
-/** Kite Connect v3 over REST (https://kite.trade/docs/connect/v3/). */
+/**
+ * Kite Connect v3 over REST (https://kite.trade/docs/connect/v3/). The Spring bean uses the platform session
+ * (kite_session, the admin's login: market data, quotes, instruments); {@link #of} makes a client for one user's own
+ * Kite account (see {@link KiteAccounts}).
+ */
 @Component
 public class KiteRestApi implements KiteApi {
 
     private final RestClient http;
-    private final KiteSession session;
+    private final Supplier<KiteSession.Credentials> credentials;
     private final ObjectMapper json;
 
+    @Autowired
     public KiteRestApi(RestClient.Builder builder, KiteSession session, ObjectMapper json,
                        @Value("${kite.base-url:https://api.kite.trade}") String baseUrl) {
-        this.http = builder.baseUrl(baseUrl).defaultHeader("X-Kite-Version", "3").build();
-        this.session = session;
-        this.json = json;
+        this(builder.baseUrl(baseUrl).defaultHeader("X-Kite-Version", "3").build(), session::require, json);
+    }
+
+    private KiteRestApi(RestClient http, Supplier<KiteSession.Credentials> credentials, ObjectMapper json) {
+        this.http = http; this.credentials = credentials; this.json = json;
+    }
+
+    /** A client signed with these credentials (one user's own Kite account); http must have the Kite base URL. */
+    public static KiteApi of(RestClient http, KiteSession.Credentials creds, ObjectMapper json) {
+        return new KiteRestApi(http, () -> creds, json);
     }
 
     @Override public Profile profile() {
@@ -98,7 +112,7 @@ public class KiteRestApi implements KiteApi {
     }
 
     @Override public List<OptionInstrument> niftyOptions() {
-        KiteSession.Credentials creds = session.require();
+        KiteSession.Credentials creds = credentials.get();
         String csv;
         try {
             csv = http.get().uri("/instruments/NFO").header("Authorization", creds.authHeader()).retrieve().body(String.class);
@@ -135,7 +149,7 @@ public class KiteRestApi implements KiteApi {
     private static String unquote(String s) { return s.trim().replace("\"", ""); }
 
     private Object call(Function<RestClient, RestClient.RequestHeadersSpec<?>> request) {
-        KiteSession.Credentials creds = session.require();
+        KiteSession.Credentials creds = credentials.get();
         try {
             Map<?, ?> body = request.apply(http).header("Authorization", creds.authHeader()).retrieve().body(Map.class);
             return body == null ? null : body.get("data");

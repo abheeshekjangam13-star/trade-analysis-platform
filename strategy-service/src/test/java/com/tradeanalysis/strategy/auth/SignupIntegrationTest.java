@@ -100,10 +100,10 @@ class SignupIntegrationTest {
         call(post("/api/auth/login").content("{\"username\":\"ravi\",\"password\":\"Pass1234\"}"), null, 200);
         call(post("/api/strategies").content(STRATEGY.formatted("ravi gold strategy")), "ravi", 201);
         call(put("/api/trading/strategies/56").content("{\"mode\":\"PAPER\"}"), "ravi", 200);      // paper trading
-        call(put("/api/trading/strategies/56").content("{\"mode\":\"LIVE\"}"), "ravi", 403);       // live stays admin-only
+        call(put("/api/trading/strategies/56").content("{\"mode\":\"LIVE\"}"), "ravi", 403);       // live needs PREMIUM
         call(get("/api/users"), "ravi", 403);
         call(get("/api/users/" + id("admin")), "ravi", 403);
-        call(get("/api/trading/broker/margins"), "ravi", 403);
+        call(get("/api/trading/broker/margins"), "ravi", 400);                       // no own Kite account connected yet
         call(post("/api/trading/kill-switch"), "ravi", 403);
         assertThat(call(get("/api/users/me"), "ravi", 200).get("phone").asText()).isEqualTo("+919876543210");
     }
