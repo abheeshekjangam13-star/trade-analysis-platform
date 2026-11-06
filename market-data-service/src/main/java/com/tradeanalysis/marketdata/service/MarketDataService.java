@@ -9,12 +9,12 @@ import com.tradeanalysis.marketdata.model.CandleEntity;
 import com.tradeanalysis.marketdata.repository.CandleRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
-import java.time.Instant;
+import java.time.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,12 +29,26 @@ public class MarketDataService {
     // Symbols that have been requested at least once — auto-refreshed.
     private final Set<String> watchedSymbols = ConcurrentHashMap.newKeySet();
 
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+    /** How often the latest intraday candles may be re-fetched from Kite per symbol and interval. */
+    static final Duration TOP_UP_MARKET = Duration.ofSeconds(10);
+    static final Duration TOP_UP_CLOSED = Duration.ofMinutes(10);
+
+    private final Clock clock;
+    private final Map<String, Instant> lastTopUp = new ConcurrentHashMap<>();
+
+    @Autowired
     public MarketDataService(CandleRepository repo, KiteConnectClient client) {
-        this.repo = repo;
-        this.client = client;
+        this(repo, client, Clock.systemUTC());
     }
 
-    /** Returns a PriceSeries, fetching from upstream if the DB is empty. */
+    MarketDataService(CandleRepository repo, KiteConnectClient client, Clock clock) {
+        this.repo = repo;
+        this.client = client;
+        this.clock = clock;
+    }
+
+    /** Returns the latest candles, fetching from upstream if the DB is empty and topping up intraday candles to now. */
     @Transactional
     public PriceSeries getSeries(String symbol, Interval interval, int limit) {
         watchedSymbols.add(symbol.toUpperCase());
@@ -46,6 +60,9 @@ public class MarketDataService {
             List<Candle> fetched = client.fetch(sym, interval, limit);
             if (fetched.isEmpty()) throw new NotFoundException("No data found for symbol: " + sym);
             persist(sym, interval, fetched);
+            lastTopUp.put(sym + "|" + interval, clock.instant());
+            entities = repo.findBySymbolAndIntervalCodeOrderByTimestampAsc(sym, interval.name());
+        } else if (topUp(sym, interval, entities.get(entities.size() - 1).getTimestamp())) {
             entities = repo.findBySymbolAndIntervalCodeOrderByTimestampAsc(sym, interval.name());
         }
 
@@ -110,6 +127,35 @@ public class MarketDataService {
             // Re-fetch the last stored bar too: it may have been saved while still forming.
             persist(symbol, interval, client.fetchRange(symbol, interval, last, to));
         }
+    }
+
+    /**
+     * Intraday candles after the last stored one (and the last one again: it may have been saved while still forming)
+     * are fetched from Kite, at most every {@link #TOP_UP_MARKET} in market hours and {@link #TOP_UP_CLOSED} outside
+     * them. A Kite failure keeps the stored candles. Returns whether it fetched.
+     */
+    private boolean topUp(String symbol, Interval interval, Instant lastStored) {
+        if (!isIntraday(interval)) return false;
+        Instant now = clock.instant();
+        String key = symbol + "|" + interval;
+        Instant prev = lastTopUp.get(key);
+        if (prev != null && now.isBefore(prev.plus(marketOpen(now) ? TOP_UP_MARKET : TOP_UP_CLOSED))) return false;
+        lastTopUp.put(key, now);
+        try {
+            persist(symbol, interval, client.fetchRange(symbol, interval, lastStored, now));
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("Could not top up {} {} from Kite: {}", symbol, interval, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Weekdays 09:15–15:31 IST (holidays aside). */
+    static boolean marketOpen(Instant t) {
+        ZonedDateTime z = t.atZone(IST);
+        if (z.getDayOfWeek() == DayOfWeek.SATURDAY || z.getDayOfWeek() == DayOfWeek.SUNDAY) return false;
+        LocalTime lt = z.toLocalTime();
+        return !lt.isBefore(LocalTime.of(9, 15)) && lt.isBefore(LocalTime.of(15, 31));
     }
 
     private boolean isIntraday(Interval interval) {
