@@ -66,6 +66,20 @@ exit                       # log out and back in so docker works without sudo
 (If the repository is private, the `curl` line needs a token too; or paste the script's contents into
 `nano 02-setup-vm.sh` instead.)
 
+**Private UI repository: let the VM pull it with a read-only deploy key**, so `03-deploy.sh` always gets the
+latest UI from GitHub (no tokens on the VM, no copying bundles):
+
+```bash
+# on the VM
+ssh-keygen -t ed25519 -N "" -C "trade-app VM read-only" -f ~/.ssh/github_ui
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts   # fingerprint must be SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
+cat ~/.ssh/github_ui.pub   # GitHub → trade-analysis-ui → Settings → Deploy keys → Add (leave "Allow write access" off)
+cd /opt/trade/trade-analysis-ui
+git config core.sshCommand "ssh -i ~/.ssh/github_ui -o IdentitiesOnly=yes"
+git remote set-url origin git@github.com:abheeshekjangam13-star/trade-analysis-ui.git
+git pull --ff-only
+```
+
 ## 4. Settings (.env on the VM)
 
 ```bash
