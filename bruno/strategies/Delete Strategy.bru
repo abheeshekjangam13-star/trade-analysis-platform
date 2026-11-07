@@ -1,0 +1,24 @@
+meta {
+  name: Delete Strategy
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{strategyUrl}}/api/strategies/:id
+  body: none
+  auth: none
+}
+
+params:path {
+  id: 43
+}
+
+docs {
+  Deletes your strategy with its backtests and reports (204). 409 while it is in a portfolio, PAPER/LIVE, or has
+  paper/live trades on record. Shared strategies: admins only.
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

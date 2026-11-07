@@ -56,12 +56,13 @@ public class CurrentUserFilter extends OncePerRequestFilter {
                 if (username.isPresent()) {
                     try {
                         AppUser user = users.resolve(username.get(), autoRegister && trustHeader);
-                        String denied = Access.deny(user, user.effectivePlan(java.time.Instant.now()), request.getMethod(), request.getRequestURI());
+                        Plan plan = user.effectivePlan(java.time.Instant.now());
+                        String denied = Access.deny(user, plan, request.getMethod(), request.getRequestURI());
                         if (denied != null) {
                             response.sendError(403, denied);
                             return;
                         }
-                        CurrentUser.set(user.getId(), user.isAdmin());
+                        CurrentUser.set(user.getId(), user.isAdmin(), plan);
                     } catch (ResponseStatusException e) {
                         response.sendError(e.getStatusCode().value(), e.getReason());
                         return;

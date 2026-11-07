@@ -22,9 +22,72 @@ public class PortfolioService {
     private final PortfolioRepository portfolios;
     private final PortfolioReportRepository reports;
     private final StrategyService strategies;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
-    public PortfolioService(PortfolioRepository portfolios, PortfolioReportRepository reports, StrategyService strategies) {
-        this.portfolios = portfolios; this.reports = reports; this.strategies = strategies;
+    public PortfolioService(PortfolioRepository portfolios, PortfolioReportRepository reports, StrategyService strategies,
+                            org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this.portfolios = portfolios; this.reports = reports; this.strategies = strategies; this.jdbc = jdbc;
+    }
+
+    /** What an update did: the portfolio, and how many stored reports were deleted (strategies changed = start fresh). */
+    public record UpdateResult(Portfolio portfolio, int reportsDeleted, boolean strategiesChanged) {}
+
+    /**
+     * Renames a portfolio, changes its description and/or its strategies (null = keep). Changing the strategies deletes
+     * every stored report of the portfolio and the backtests those reports ran, since they no longer match: run a fresh
+     * report afterwards.
+     */
+    @Transactional
+    public UpdateResult update(Long id, String name, String description, Collection<Long> strategyIds) {
+        Portfolio p = get(id);
+        if (name != null) {
+            String n = name.trim();
+            if (n.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Name can't be empty");
+            if (!n.equalsIgnoreCase(p.getName()) && portfolios.existsByNameIgnoreCaseAndCreatedByUserId(n, p.getCreatedByUserId()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "You already have a portfolio named '" + n + "'");
+            p.setName(n);
+        }
+        if (description != null) p.setDescription(description);
+        int deleted = 0;
+        boolean changed = false;
+        if (strategyIds != null) {
+            if (strategyIds.isEmpty())
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A portfolio needs at least one strategy");
+            java.util.Set<Long> wanted = new LinkedHashSet<>(strategyIds);
+            wanted.forEach(strategies::get);   // 404 for unknown strategies and other users' strategies
+            if (!wanted.equals(new java.util.HashSet<>(p.getStrategyIds()))) {
+                deleted = deleteReportData(id);
+                p.setStrategyIds(wanted);
+                changed = true;
+            }
+        }
+        return new UpdateResult(portfolios.save(p), deleted, changed);
+    }
+
+    /** Deletes a portfolio with all its stored reports and the backtests they ran. Its strategies stay. */
+    @Transactional
+    public void delete(Long id) {
+        Portfolio p = get(id);
+        deleteReportData(id);
+        portfolios.delete(p);
+    }
+
+    /**
+     * Deletes every stored report of the portfolio (their items cascade) and the backtests those reports ran (with their
+     * daily/monthly reports and trade logs), unless another portfolio's report also uses them. Returns the reports deleted.
+     */
+    private int deleteReportData(Long portfolioId) {
+        List<Long> backtests = jdbc.queryForList(
+                "SELECT DISTINCT i.backtest_result_id FROM portfolio_report_item i JOIN portfolio_report r ON r.id = i.portfolio_report_id "
+                        + "WHERE r.portfolio_id = ?", Long.class, portfolioId);
+        int deleted = jdbc.update("DELETE FROM portfolio_report WHERE portfolio_id = ?", portfolioId);
+        for (Long bt : backtests) {
+            Integer elsewhere = jdbc.queryForObject("SELECT COUNT(*) FROM portfolio_report_item WHERE backtest_result_id = ?", Integer.class, bt);
+            if (elsewhere != null && elsewhere > 0) continue;
+            jdbc.update("DELETE FROM nifty_trade_log WHERE backtest_result_id = ?", bt);
+            jdbc.update("DELETE FROM backtest_result WHERE id = ?", bt);   // daily/monthly reports cascade
+        }
+        return deleted;
     }
 
     @Transactional

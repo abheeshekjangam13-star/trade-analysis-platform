@@ -51,6 +51,9 @@ public class TradingService {
     /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs PREMIUM + their own Kite account (or ADMIN) and live trading enabled. */
     public StrategyMode setMode(Long strategyId, TradingMode mode, String product) {
         Strategy s = strategies.get(strategyId);
+        if (mode != TradingMode.OFF && CurrentUser.limitedPlan().map(p -> !p.paperTrading()).orElse(false))
+            throw new TradingException(HttpStatus.FORBIDDEN, "Your plan is " + CurrentUser.limitedPlan().get()
+                    + ". Upgrade to GOLD for paper trading (you can always turn trading off).");
         if (mode != TradingMode.OFF && !"NIFTY_OPENING_BREAKOUT".equals(s.getType()))
             throw new TradingException("Only NIFTY_OPENING_BREAKOUT strategies can trade live");
         if (product != null && !Set.of("MIS", "NRML").contains(product)) throw new TradingException("Product must be MIS or NRML");

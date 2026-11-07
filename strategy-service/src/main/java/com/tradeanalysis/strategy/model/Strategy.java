@@ -54,5 +54,13 @@ public class Strategy {
     public Long getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(Long userId) { this.createdByUserId = userId; }
     public Long getClonedFromStrategyId() { return clonedFromStrategyId; }
+    public void setName(String name) { this.name = name; }
+    public void setDescription(String description) { this.description = description; }
+    /** Replaces the parameters in place (the collection is Hibernate-managed). */
+    public void setParameters(Map<String, String> params) {
+        if (this.parameters == null) this.parameters = new java.util.HashMap<>();
+        this.parameters.clear();
+        this.parameters.putAll(params);
+    }
     public void setClonedFromStrategyId(Long id) { this.clonedFromStrategyId = id; }
 }

@@ -89,10 +89,10 @@ class PaymentIntegrationTest {
         assertThat(call(get("/api/payments/config"), "ravi", 200).get("keyId").asText()).isEqualTo("rzp_test_key");
 
         JsonNode order = call(post("/api/payments/orders").content("{\"plan\":\"GOLD\"}"), "ravi", 201);
-        assertThat(order.get("amountPaise").asLong()).isEqualTo(99900);
+        assertThat(order.get("amountPaise").asLong()).isEqualTo(149900);
         assertThat(order.get("keyId").asText()).isEqualTo("rzp_test_key");
         assertThat(order.get("email").asText()).isEqualTo("ravi@example.com");
-        verify(razorpay).createOrder(eq(99900L), eq("INR"), startsWith("u" + id("ravi") + "-GOLD-"), anyMap());
+        verify(razorpay).createOrder(eq(149900L), eq("INR"), startsWith("u" + id("ravi") + "-GOLD-"), anyMap());
         String orderId = order.get("orderId").asText();
 
         call(post("/api/payments/verify").content(verifyBody(orderId, "pay_1", "forged")), "ravi", 400);
@@ -113,7 +113,7 @@ class PaymentIntegrationTest {
         assertThat(emails.findByUserIdOrderByCreatedAtDesc(id("ravi"), PageRequest.of(0, 10)))
                 .anySatisfy(e -> {
                     assertThat(e.getKind()).isEqualTo(EmailNotification.Kind.PAYMENT_RECEIVED);
-                    assertThat(e.getBody()).contains("₹999.00", "pay_1");
+                    assertThat(e.getBody()).contains("₹1499.00", "pay_1");
                 });
     }
 
@@ -132,7 +132,7 @@ class PaymentIntegrationTest {
     void webhookRenewsFromTheCurrentExpiryWithoutALogin() throws Exception {
         Instant before = expiry("ravi");
         String orderId = call(post("/api/payments/orders").content("{\"plan\":\"GOLD\"}"), "ravi", 201).get("orderId").asText();
-        String body = webhook("payment.captured", orderId, "pay_2", 99900);
+        String body = webhook("payment.captured", orderId, "pay_2", 149900);
 
         mvc.perform(post("/api/payments/webhook").contentType(MediaType.APPLICATION_JSON).content(body)
                 .header("X-Razorpay-Signature", "bad")).andExpect(status().isBadRequest());

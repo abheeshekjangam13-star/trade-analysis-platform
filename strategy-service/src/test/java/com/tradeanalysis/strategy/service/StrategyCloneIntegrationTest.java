@@ -82,13 +82,15 @@ class StrategyCloneIntegrationTest {
     }
 
     @Test @Order(3)
-    void othersPrivateStrategiesCantBeClonedAndFreeUsersCantClone() throws Exception {
+    void othersPrivateStrategiesCantBeClonedAndFreeUsersCloneUpToTheirLimit() throws Exception {
         user("sita", "GOLD");
         long ravisClone = call(post("/api/strategies/56/clone").content("{\"lots\":4}"), "ravi", 201).get("id").asLong();
         call(post("/api/strategies/" + ravisClone + "/clone").content("{\"lots\":2}"), "sita", 404);
         call(post("/api/strategies/" + ravisClone + "/clone").content("{\"lots\":2}"), "ravi", 201);   // own clone is fine
 
-        user("free", "FREE");
-        call(post("/api/strategies/56/clone").content("{\"lots\":2}"), "free", 403);
+        user("free", "FREE");                                                                   // FREE: up to 2 strategies
+        call(post("/api/strategies/56/clone").content("{\"lots\":2}"), "free", 201);
+        call(post("/api/strategies/56/clone").content("{\"lots\":3}"), "free", 201);
+        call(post("/api/strategies/56/clone").content("{\"lots\":4}"), "free", 403);
     }
 }

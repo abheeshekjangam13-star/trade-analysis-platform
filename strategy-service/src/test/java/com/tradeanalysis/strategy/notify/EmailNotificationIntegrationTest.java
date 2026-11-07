@@ -75,7 +75,7 @@ class EmailNotificationIntegrationTest {
             assertThat(e.getKind()).isEqualTo(EmailNotification.Kind.SIGNUP_RECEIVED);
             assertThat(e.getRecipient()).isEqualTo("ravi@example.com");
             assertThat(e.getStatus()).isEqualTo(EmailNotification.Status.PENDING);
-            assertThat(e.getBody()).contains("Hi RAVI", "GOLD", "₹999");
+            assertThat(e.getBody()).contains("Hi RAVI", "GOLD", "₹1499");
         });
         assertThat(emailsFor("admin")).singleElement().satisfies(e -> {
             assertThat(e.getKind()).isEqualTo(EmailNotification.Kind.SIGNUP_ADMIN_ALERT);

@@ -163,14 +163,22 @@ public class StrategyDescriptionParser {
         s.match("\\bno\\s+target\\b", m -> s.set("targetPoints", "0", m, "No target"));
 
         // Gap filter
-        boolean up = s.peek("\\bgap(?:s|ped)?[- ]?ups?\\b|\\bopens?\\s+(higher|above)\\b|%\\s*(higher|above)\\s+(the\\s+)?(previous|prev|yesterday)"),
-                down = s.peek("\\bgap(?:s|ped)?[- ]?downs?\\b|\\bopens?\\s+(lower|below)\\b|%\\s*(lower|below)\\s+(the\\s+)?(previous|prev|yesterday)");
+        boolean up = s.peek("\\bgap(?:s|ped)?[- ]?ups?\\b|\\bopens?\\s+(higher|above)\\b|(%|\\bpoints?|\\bpts?)\\s*(higher|above)\\s+(the\\s+)?(previous|prev|yesterday)"),
+                down = s.peek("\\bgap(?:s|ped)?[- ]?downs?\\b|\\bopens?\\s+(lower|below)\\b|(%|\\bpoints?|\\bpts?)\\s*(lower|below)\\s+(the\\s+)?(previous|prev|yesterday)");
         String gapMax = "(gap\\s*)?(below|under|less\\s+than|<|up\\s+to)\\s*" + NUM + "\\s*%";
+        // Gap sizes in points (NIFTY points) come first: matches consume text, and "%" patterns don't take points.
+        String PTS = "\\s*(points?|pts?)\\b";
+        s.match("\\b(skip|avoid|no\\s+trades?\\s+(on|when))[^.;\\n]{0,20}\\bgaps?\\s*(above|over|more\\s+than|>|≥|>=|of)?\\s*" + NUM + PTS, m -> s.setNum("maxGapPoints", m.group(4), 1, 2000, m));
+        s.match("\\bgap\\s*(<|below|under|less\\s+than)\\s*" + NUM + PTS, m -> s.setNum("maxGapPoints", m.group(2), 1, 2000, m));
         s.match("\\b(skip|avoid|no\\s+trades?\\s+(on|when))[^.;\\n]{0,20}\\bgaps?\\s*(above|over|more\\s+than|>|≥|>=|of)?\\s*" + NUM + "\\s*%", m -> s.setNum("maxGapPct", m.group(4), 0.05, 10, m));
         s.match("\\bgap\\s*(<|below|under|less\\s+than)\\s*" + NUM + "\\s*%", m -> s.setNum("maxGapPct", m.group(2), 0.05, 10, m));
         if (s.match("\\b(flat|no[- ]gap)\\s+(open(s|ing)?|days?)\\b", m -> s.set("gapFilter", "FLAT", m, null)) == 0) {
             String filter = up && down ? "ANY_GAP" : up ? "GAP_UP" : down ? "GAP_DOWN" : null;
             if (filter != null) {
+                s.match("\\b(gap(?:s|ped)?[- ]?(ups?|downs?)|opens?\\s+(higher|lower|above|below))(\\s+days?)?\\s+(of|by|above|over|more\\s+than|at\\s+least|≥|>=|>)?\\s*" + NUM + PTS + "(\\s+(above|below)\\s+(the\\s+)?(previous|prev|yesterday'?s?)\\s+close)?",
+                        m -> { s.set("gapFilter", filter, m, null); s.setNum("gapPoints", m.group(6), 1, 1000, m); });
+                s.match("\\b(opens?\\s+)?(at\\s+least\\s+|≥\\s*|>=\\s*)?" + NUM + PTS + "\\s*(higher|above|lower|below)(\\s+(the\\s+)?(previous|prev|yesterday'?s?)('?s)?\\s+close)?",
+                        m -> { s.params.putIfAbsent("gapFilter", filter); s.setNum("gapPoints", m.group(3), 1, 1000, m); });
                 s.match("\\b(gap(?:s|ped)?[- ]?(ups?|downs?)|opens?\\s+(higher|lower|above|below))(\\s+days?)?(\\s+(of|by|above|over|more\\s+than|at\\s+least|≥|>=|>)?\\s*" + NUM + "\\s*%)?(\\s+(above|below)\\s+(the\\s+)?(previous|prev|yesterday'?s?)\\s+close)?",
                         m -> {
                             s.set("gapFilter", filter, m, null);

@@ -66,6 +66,22 @@ public class StrategyController {
         return v.toString();
     }
 
+    public record UpdateRequest(String name, String description, Map<String, String> parameters) {}
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Edit your strategy: name, description and/or parameters (omitted = unchanged; the type can't change). "
+            + "Parameters are locked while it trades PAPER/LIVE or has an open position. Shared strategies: admins only")
+    public Strategy update(@PathVariable Long id, @RequestBody UpdateRequest body) {
+        if (body == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nothing to change");
+        return svc.update(id, body.name(), body.description(), body.parameters());
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Delete your strategy with its backtests and reports. Refused while it is in a portfolio, being "
+            + "traded, or has paper/live trades on record. Shared strategies: admins only")
+    public void delete(@PathVariable Long id) { svc.delete(id); }
+
     @GetMapping
     @Operation(summary = "List all strategies")
     public List<Strategy> list() { return svc.list(); }

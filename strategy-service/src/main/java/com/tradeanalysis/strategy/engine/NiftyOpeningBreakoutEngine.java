@@ -36,12 +36,13 @@ import java.util.stream.Collectors;
  *
  * Parameters (defaults reproduce the original rules):
  *   lots (2), lotSize (75), directions BOTH|CE|PE (BOTH), maxTradesPerDay (2), trailMinutes (1),
- *   targetPoints (0 = none), gapFilter NONE|GAP_UP|GAP_DOWN|ANY_GAP|FLAT (NONE), gapPct (0.2),
+ *   targetPoints (0 = none), gapFilter NONE|GAP_UP|GAP_DOWN|ANY_GAP|FLAT (NONE), gap threshold as gapPct (0.2) in %
+ *   of the previous close, or gapPoints in NIFTY points (set one, not both),
  *   costPerTrade in ₹ per round trip for the whole quantity (0),
  *   entryFrom HH:mm IST (unset = no limit): only 5-min candles starting at or after this time may open a
  *   trade; the breakout must still be fresh (previous close ≤ refHigh) on that candle,
  *   entryUntil HH:mm IST (unset = no limit): only 5-min candles starting before this time may open a trade,
- *   maxGapPct (0 = off): skip the day when |gap| ≥ this many %,
+ *   maxGapPct (0 = off): skip the day when |gap| ≥ this many %, or maxGapPoints: ≥ this many points (one, not both),
  *   trailAfterPoints (0 = trail from the start): keep the stop at the reference midpoint until spot has
  *   moved this many points in favour of the entry, then trail as usual,
  *   breakevenOnTrail (false): when that happens, also lift the stop to the entry price,
@@ -84,8 +85,8 @@ public class NiftyOpeningBreakoutEngine {
     private record Exit(Candle bar, double price, String reason) {}
 
     private record Settings(int lots, int lotSize, boolean allowCe, boolean allowPe, int maxTradesPerDay,
-                            int trailMinutes, double targetPoints, GapFilter gapFilter, double gapPct,
-                            double costPerTrade, LocalTime entryFrom, LocalTime entryUntil, double maxGapPct,
+                            int trailMinutes, double targetPoints, GapFilter gapFilter, Threshold gap,
+                            double costPerTrade, LocalTime entryFrom, LocalTime entryUntil, Threshold maxGap,
                             double trailAfterPoints, boolean breakevenOnTrail,
                             double failedBreakoutPoints, double maxStopPoints, double breakevenLockPoints,
                             Set<DayOfWeek> skipDays, LocalTime referenceTime, boolean oppositeStop, LocalDate onlyOn) {
@@ -97,10 +98,10 @@ public class NiftyOpeningBreakoutEngine {
                     !dirs.equals("PE"), !dirs.equals("CE"),
                     p.intOr("maxTradesPerDay", 2), p.intOr("trailMinutes", 1),
                     p.doubleOr("targetPoints", 0), GapFilter.valueOf(p.stringOr("gapFilter", "NONE").toUpperCase()),
-                    p.doubleOr("gapPct", 0.2), p.doubleOr("costPerTrade", 0),
+                    Threshold.from(p, "gapPct", "gapPoints", 0.2), p.doubleOr("costPerTrade", 0),
                     parseTime("entryFrom", p.stringOr("entryFrom", "")),
                     parseTime("entryUntil", p.stringOr("entryUntil", "")),
-                    p.doubleOr("maxGapPct", 0), p.doubleOr("trailAfterPoints", 0),
+                    Threshold.from(p, "maxGapPct", "maxGapPoints", 0), p.doubleOr("trailAfterPoints", 0),
                     Boolean.parseBoolean(p.stringOr("breakevenOnTrail", "false").trim()),
                     p.doubleOr("failedBreakoutPoints", 0), p.doubleOr("maxStopPoints", 0),
                     p.doubleOr("breakevenLockPoints", 0),
@@ -150,23 +151,42 @@ public class NiftyOpeningBreakoutEngine {
             return (entryFrom == null || !t.isBefore(entryFrom)) && (entryUntil == null || t.isBefore(entryUntil));
         }
 
-        boolean dayAllowed(Double gap) { return dayBlockReason(gap) == null; }
-
-        /** Why the gap rules keep this day from trading, or null if it may trade. */
-        String dayBlockReason(Double gap) {
-            if (maxGapPct > 0 && gap != null && Math.abs(gap) >= maxGapPct)
-                return String.format("Gap %.2f%% beyond maxGapPct %.2f%%", gap, maxGapPct);
+        /**
+         * Why the gap rules keep this day from trading, or null if it may trade. {@code gapPct} is the 09:15 open vs
+         * the previous close in %, {@code gapPoints} the same in points; each rule uses the unit it was set in.
+         */
+        String dayBlockReason(Double gapPct, Double gapPoints) {
+            Double big = maxGap.of(gapPct, gapPoints);
+            if (maxGap.value() > 0 && big != null && Math.abs(big) >= maxGap.value())
+                return String.format("Gap %s beyond max gap %s", maxGap.show(big), maxGap.show(maxGap.value()));
             if (gapFilter == GapFilter.NONE) return null;
-            if (gap == null) return "No previous close to measure the gap";
+            Double g = gap.of(gapPct, gapPoints);
+            if (g == null) return "No previous close to measure the gap";
+            double t = gap.value();
             boolean ok = switch (gapFilter) {
-                case GAP_UP   -> gap >= gapPct;
-                case GAP_DOWN -> gap <= -gapPct;
-                case ANY_GAP  -> Math.abs(gap) >= gapPct;
-                case FLAT     -> Math.abs(gap) < gapPct;
+                case GAP_UP   -> g >= t;
+                case GAP_DOWN -> g <= -t;
+                case ANY_GAP  -> Math.abs(g) >= t;
+                case FLAT     -> Math.abs(g) < t;
                 case NONE     -> true;
             };
-            return ok ? null : String.format("Gap %.2f%% does not meet %s %.2f%%", gap, gapFilter, gapPct);
+            return ok ? null : String.format("Gap %s does not meet %s %s", gap.show(g), gapFilter, gap.show(t));
         }
+    }
+
+    /** A gap threshold in % of the previous close or in NIFTY points, from whichever of the two keys is set. */
+    record Threshold(double value, boolean points) {
+        static Threshold from(Params p, String pctKey, String pointsKey, double defaultPct) {
+            boolean hasPct = !p.stringOr(pctKey, "").isBlank();
+            boolean hasPts = !p.stringOr(pointsKey, "").isBlank();
+            if (hasPct && hasPts)
+                throw new IllegalArgumentException("Set " + pctKey + " or " + pointsKey + ", not both");
+            double v = hasPts ? p.doubleOr(pointsKey, 0) : p.doubleOr(pctKey, defaultPct);
+            if (v < 0) throw new IllegalArgumentException((hasPts ? pointsKey : pctKey) + " can't be negative: " + v);
+            return new Threshold(v, hasPts);
+        }
+        Double of(Double pct, Double pts) { return points ? pts : pct; }
+        String show(double v) { return points ? String.format("%.2f pts", v) : String.format("%.2f%%", v); }
     }
 
     /**
@@ -232,8 +252,8 @@ public class NiftyOpeningBreakoutEngine {
             Candle openCandle = dayCandles.stream()
                     .filter(c -> c.timestamp().atZone(IST).toLocalTime().equals(REF_CANDLE_TIME))
                     .findFirst().orElse(refCandle);
-            Double gap = openCandle == null || prevClose0 == null ? null
-                    : (openCandle.open().doubleValue() - prevClose0) / prevClose0 * 100;
+            Double gapPoints = openCandle == null || prevClose0 == null ? null : openCandle.open().doubleValue() - prevClose0;
+            Double gap = gapPoints == null ? null : gapPoints / prevClose0 * 100;
 
             if (cfg.onlyOn() != null && !cfg.onlyOn().equals(date)) {
                 days.add(new DayReport(date, gap, "SKIPPED", "Strategy trades only on " + cfg.onlyOn(), 0));
@@ -248,7 +268,7 @@ public class NiftyOpeningBreakoutEngine {
                 days.add(new DayReport(date, null, "NO_DATA", "No " + cfg.referenceTime() + " reference candle", 0));
                 continue;
             }
-            String blocked = cfg.dayBlockReason(gap);
+            String blocked = cfg.dayBlockReason(gap, gapPoints);
             if (blocked != null) {
                 days.add(new DayReport(date, gap, "NO_TRADE", blocked, 0));
                 continue;

@@ -1,0 +1,32 @@
+meta {
+  name: Edit Strategy
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{strategyUrl}}/api/strategies/:id
+  body: json
+  auth: none
+}
+
+params:path {
+  id: 43
+}
+
+body:json {
+  {
+    "name": "SMA 5/30",
+    "description": "Faster crossover",
+    "parameters": { "fast": "5", "slow": "30" }
+  }
+}
+
+docs {
+  Your own strategy (any plan); shared ones: admins only. Omitted fields stay unchanged; the type can't change.
+  Parameters are locked (409) while the strategy is PAPER/LIVE or has an open position.
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

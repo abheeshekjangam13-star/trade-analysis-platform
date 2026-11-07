@@ -33,6 +33,7 @@ public class StrategyService {
     private final BacktestDailyReportRepository dailyRepo;
     private final BacktestMonthlyStatRepository monthlyRepo;
     private final com.tradeanalysis.strategy.user.SharedStrategies shared;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public StrategyService(StrategyRepository stratRepo,
                            BacktestResultRepository btRepo,
@@ -40,8 +41,10 @@ public class StrategyService {
                            BacktestEngine engine,
                            BacktestDailyReportRepository dailyRepo,
                            BacktestMonthlyStatRepository monthlyRepo,
-                           com.tradeanalysis.strategy.user.SharedStrategies shared) {
+                           com.tradeanalysis.strategy.user.SharedStrategies shared,
+                           org.springframework.jdbc.core.JdbcTemplate jdbc) {
         this.shared = shared;
+        this.jdbc = jdbc;
         this.stratRepo = stratRepo;
         this.btRepo    = btRepo;
         this.niftyRepo = niftyRepo;
@@ -56,10 +59,42 @@ public class StrategyService {
         if (name != null && owner != null && stratRepo.existsByNameAndCreatedByUserId(name, owner))
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
                     "You already have a strategy named '" + name + "'");
+        checkStrategyLimit(owner);
         params = cleanParams(type, params);
         Strategy strategy = new Strategy(name, description, type, params);
         strategy.setCreatedByUserId(owner);
         return stratRepo.save(strategy);
+    }
+
+    /** Refuses a new strategy when the caller already owns as many as their plan allows (admins: no limit). */
+    private void checkStrategyLimit(Long owner) {
+        if (owner == null) return;
+        CurrentUser.limitedPlan().ifPresent(plan -> {
+            if (stratRepo.countByCreatedByUserId(owner) >= plan.maxStrategies())
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        "You've reached the limit of your " + plan + " plan: " + plan.maxStrategies() + " strategies."
+                                + upgradeFor(plan));
+        });
+    }
+
+    private static String upgradeFor(com.tradeanalysis.strategy.user.Plan plan) {
+        var next = java.util.Arrays.stream(com.tradeanalysis.strategy.user.Plan.values())
+                .filter(p -> p.maxStrategies() > plan.maxStrategies()).findFirst();
+        return next.map(p -> " Upgrade your account to " + p + " (₹" + p.pricePerMonth() + "/month) to create up to "
+                + p.maxStrategies() + " strategies.").orElse("");
+    }
+
+    /** Refuses a look-back longer than the caller's plan allows (admins and scheduled jobs: no limit). */
+    private static void checkBacktestDays(int lookbackDays) {
+        if (lookbackDays < 1)
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "lookbackDays must be at least 1");
+        CurrentUser.limitedPlan().ifPresent(plan -> {
+            if (lookbackDays > plan.maxBacktestDays())
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        "Your " + plan + " plan backtests up to the last " + plan.maxBacktestDays() + " days"
+                                + (plan == com.tradeanalysis.strategy.user.Plan.PREMIUM ? "." : ": upgrade for longer backtests."));
+        });
     }
 
     /**
@@ -97,6 +132,7 @@ public class StrategyService {
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
                     "Lots must be between 1 and " + MAX_LOTS);
         Long owner = CurrentUser.id().orElse(null);
+        checkStrategyLimit(owner);
         String wanted = name == null || name.isBlank() ? src.getName() + " (" + lots + " lots)" : name.trim();
         if (name != null && !name.isBlank() && owner != null && stratRepo.existsByNameAndCreatedByUserId(wanted, owner))
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
@@ -112,6 +148,100 @@ public class StrategyService {
         copy.setCreatedByUserId(owner);
         copy.setClonedFromStrategyId(src.getId());
         return stratRepo.save(copy);
+    }
+
+    /**
+     * A strategy the caller may change or delete: their own (any plan), or any for an admin. Shared master strategies
+     * are admin-only; someone else's private strategy is 404, as for reading it.
+     */
+    private Strategy editable(Long id) {
+        Strategy s = get(id);
+        if (!CurrentUser.unrestricted() && (shared.contains(s.getId()) || !CurrentUser.owns(s.getCreatedByUserId())))
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
+                    "Shared strategies can't be changed: clone it to make your own copy");
+        return s;
+    }
+
+    /**
+     * Refuses when the strategy is being traded: an open position first (it must exit before trading is turned off,
+     * or nothing would manage it), then a PAPER/LIVE setting (the caller's own, or someone else's).
+     */
+    private void requireNotTrading(Strategy s, String action) {
+        Long id = s.getId();
+        Integer open = jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ? AND status = 'OPEN'", Integer.class, id);
+        if (open != null && open > 0)
+            throw new StrategyBlockedException(StrategyBlockedException.Reason.OPEN_POSITION,
+                    "'" + s.getName() + "' has an open trade, so you can't " + action + " it yet. Let the trade finish "
+                            + "(it exits at its stop loss, target, or the 15:20 square-off), then turn trading off and try again.");
+        Long me = CurrentUser.id().orElse(null);
+        Integer mine = me == null ? 0 : jdbc.queryForObject(
+                "SELECT COUNT(*) FROM strategy_user_mode WHERE strategy_id = ? AND user_id = ? AND mode <> 'OFF'", Integer.class, id, me);
+        if (mine != null && mine > 0)
+            throw new StrategyBlockedException(StrategyBlockedException.Reason.TRADING_ON,
+                    "'" + s.getName() + "' is switched on for paper/live trading, so you can't " + action + " it yet. "
+                            + "Turn its trading off first, then try again.");
+        Integer others = jdbc.queryForObject("SELECT COUNT(*) FROM strategy_user_mode WHERE strategy_id = ? AND mode <> 'OFF'", Integer.class, id);
+        if (others != null && others > 0)
+            throw new StrategyBlockedException(StrategyBlockedException.Reason.TRADING_ON_BY_OTHERS,
+                    "'" + s.getName() + "' is being traded by an admin, so you can't " + action + " it yet. Ask the admin to turn it off.");
+    }
+
+    /**
+     * Renames a strategy, changes its description and/or replaces its parameters (null = keep). The type can't change.
+     * Parameters can't change while the strategy is being traded. Past backtests keep the results of the old parameters.
+     */
+    @Transactional
+    public Strategy update(Long id, String name, String description, Map<String, String> params) {
+        Strategy s = editable(id);
+        if (name != null) {
+            String n = name.trim();
+            if (n.isEmpty())
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Name can't be empty");
+            if (!n.equals(s.getName()) && stratRepo.existsByNameAndCreatedByUserIdAndIdNot(n, s.getCreatedByUserId(), id))
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
+                        "You already have a strategy named '" + n + "'");
+            s.setName(n);
+        }
+        if (description != null) s.setDescription(description);
+        if (params != null) {
+            Map<String, String> clean = cleanParams(s.getType(), params);
+            if (!clean.equals(s.getParameters())) {
+                requireNotTrading(s, "change the parameters of");
+                s.setParameters(clean);
+            }
+        }
+        return stratRepo.save(s);
+    }
+
+    /**
+     * Deletes a strategy with its backtests (and their reports and trade logs) and its paper-trading history. Refused
+     * while it is being traded or is in a portfolio, and when it has real (LIVE) trades on record, which are kept.
+     */
+    @Transactional
+    public void delete(Long id) {
+        Strategy s = editable(id);
+        requireNotTrading(s, "delete");
+        java.util.List<String> portfolios = jdbc.queryForList(
+                "SELECT DISTINCT p.name FROM portfolio p JOIN portfolio_strategy ps ON ps.portfolio_id = p.id WHERE ps.strategy_id = ? "
+                        + "UNION SELECT DISTINCT p.name FROM portfolio p JOIN portfolio_report r ON r.portfolio_id = p.id "
+                        + "JOIN portfolio_report_item i ON i.portfolio_report_id = r.id WHERE i.strategy_id = ?", String.class, id, id);
+        if (!portfolios.isEmpty())
+            throw new StrategyBlockedException(StrategyBlockedException.Reason.IN_PORTFOLIO,
+                    "'" + s.getName() + "' is part of " + (portfolios.size() == 1 ? "the portfolio '" + portfolios.get(0) + "'"
+                            : "the portfolios " + String.join(", ", portfolios.stream().map(n -> "'" + n + "'").toList()))
+                            + ". Delete " + (portfolios.size() == 1 ? "that portfolio" : "those portfolios") + " first, then try again.");
+        Integer live = jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ? AND mode = 'LIVE'", Integer.class, id);
+        if (live != null && live > 0)
+            throw new StrategyBlockedException(StrategyBlockedException.Reason.HAS_LIVE_TRADES,
+                    "'" + s.getName() + "' has placed real (live) trades, and their records must be kept, so it can't be "
+                            + "deleted. You can rename it, or leave its trading off.");
+        // Paper (simulated) trading history goes with it; the orders themselves stay in the order log.
+        jdbc.update("DELETE FROM live_position WHERE strategy_id = ? AND mode = 'PAPER'", id);
+        // Backtest daily reports and monthly stats go with their backtest (ON DELETE CASCADE).
+        jdbc.update("DELETE FROM nifty_trade_log WHERE strategy_id = ? OR backtest_result_id IN (SELECT id FROM backtest_result WHERE strategy_id = ?)", id, id);
+        jdbc.update("DELETE FROM nifty_position_state WHERE strategy_id = ?", id);
+        jdbc.update("DELETE FROM backtest_result WHERE strategy_id = ?", id);
+        stratRepo.delete(s);
     }
 
     /** A strategy the caller may see: their own, a shared master strategy, or any for an admin (else 404). */
@@ -139,6 +269,7 @@ public class StrategyService {
 
     @Transactional
     public BacktestResult backtest(Long strategyId, String symbol, int lookbackDays, double capital) {
+        checkBacktestDays(lookbackDays);
         Strategy strategy = get(strategyId);
         BacktestEngine.BacktestOutput out = engine.run(strategy, symbol, lookbackDays, capital);
         BacktestResult result = new BacktestResult(
