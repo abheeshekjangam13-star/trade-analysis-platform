@@ -43,4 +43,8 @@ public class Portfolio {
     public Set<Long> getStrategyIds() { return strategyIds; }
     public Long getCreatedByUserId()  { return createdByUserId; }
     public Instant getCreatedAt()     { return createdAt; }
+    public void setName(String name)  { this.name = name; }
+    public void setDescription(String description) { this.description = description; }
+    /** Replaces the strategies in place (the collection is Hibernate-managed). */
+    public void setStrategyIds(java.util.Collection<Long> ids) { strategyIds.clear(); strategyIds.addAll(ids); }
 }

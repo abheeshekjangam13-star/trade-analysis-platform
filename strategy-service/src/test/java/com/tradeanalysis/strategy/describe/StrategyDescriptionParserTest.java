@@ -80,6 +80,17 @@ class StrategyDescriptionParserTest {
     }
 
     @Test
+    void gapSizesInPoints() {
+        var up = parse("CE only, gap up above 50 points, skip gaps above 300 points, 2 lots");
+        assertThat(up.parameters()).containsEntry("gapFilter", "GAP_UP").containsEntry("gapPoints", "50")
+                .containsEntry("maxGapPoints", "300").doesNotContainKeys("gapPct", "maxGapPct");
+        var opens = parse("PE only when nifty opens 40 pts below the previous close");
+        assertThat(opens.parameters()).containsEntry("gapFilter", "GAP_DOWN").containsEntry("gapPoints", "40");
+        var mixed = parse("Gap up above 0.3%, gap < 250 points");
+        assertThat(mixed.parameters()).containsEntry("gapPct", "0.3").containsEntry("maxGapPoints", "250");
+    }
+
+    @Test
     void opensAbovePreviousCloseIsAGapUp() {
         var r = parse("Buy calls only when nifty opens 0.25% above the previous close, 1 lot");
         assertThat(r.parameters()).containsEntry("gapFilter", "GAP_UP").containsEntry("gapPct", "0.25")

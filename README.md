@@ -205,11 +205,15 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
   an ADMIN approves it on the Users page (`POST /api/users/{id}/approve`) or rejects it (`/reject`).
 - **Plans** (`app_user.plan`, role kept in step):
 
-  | Plan | Price | May do | Role |
-  |---|---|---|---|
-  | FREE | ₹0 | View strategies, backtests, reports, trades, market data | VIEWER |
-  | GOLD | ₹999/month | + create strategies and portfolios, run backtests/reports, paper trading | TRADER |
-  | PREMIUM | ₹1,999/month | + live trading on the user's own Kite account (**not built yet**: LIVE stays admin-only) | PREMIUM |
+  | Plan | Price | Strategies | Backtest look-back | May do | Role |
+  |---|---|---|---|---|---|
+  | FREE | ₹0 | up to 2 | last 3 months (90 days) | View everything, create strategies, run backtests | VIEWER |
+  | GOLD | ₹1,499/month (30% off ₹2,142) | up to 6 | last 1 year (365 days) | + portfolios and reports, paper trading | TRADER |
+  | PREMIUM | ₹2,499/month (50% off ₹4,998) | up to 12 | last 2 years (730 days) | + live trading on the user's own Kite account | PREMIUM |
+
+  Limits live in `Plan.java`. Clones count towards the strategy limit; shared master strategies don't. Portfolio
+  reports run backtests too, so their windows obey the same look-back limit. ADMINs have no limits.
+  At the limit, the UI shows "You've reached your strategy limit" with a link to upgrade, and the API refuses with 403.
 
   There is no payment gateway: the admin confirms payment (UPI etc.), then approves with the plan and a *paid until*
   date (default one month; blank = no expiry). After that date the user counts as FREE until the admin renews it
@@ -217,7 +221,9 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
 - **Admin-only whatever the plan:** user management (`/api/users/**` except `/me`), the access log
   (`/api/access-log`: who called what, from which IP; hidden from everyone else in the UI), the Kite broker account
   (`/api/trading/broker/**`), trading limits, kill switch, running the live runner, LIVE strategies and live orders,
-  and Kite session/instrument admin (`/api/market-data/admin/**`, checked at the gateway). Non-admins see only PAPER
+  and all market data and indicators (`/api/market-data/**`, `/api/indicators/**`, checked at the gateway;
+  the Market data and Indicators pages are hidden from non-admins). Backtests and trading still work for every plan,
+  since strategy-service calls those services directly. Non-admins see only PAPER
   orders and positions, can cancel only their own paper orders, and don't see whose Kite account is connected.
 - **Whose data:** every user sees only their own data; ADMINs see everyone's (with an Owner/User column in the UI).
   Private per user: strategies they created, backtests they ran (with daily/monthly reports and trades), portfolios
@@ -255,7 +261,34 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
 
 `POST /api/strategies/{id}/clone` with `{"lots": 5, "name": "optional"}` copies a strategy you can see (your own or a
 shared master strategy) into a new strategy you own, changing only `lots` (1–50). The copy records
-`clonedFromStrategyId`; the default name is "<source> (5 lots)", numbered if you already have one. Needs the Gold plan.
+`clonedFromStrategyId`; the default name is "<source> (5 lots)", numbered if you already have one. Clones count
+towards the plan's strategy limit.
+
+### Edit or delete a strategy
+
+Every user (any plan) may change or delete their own strategies; shared master strategies only ADMINs (others get 403
+and should clone instead). In the UI: **Edit** / **Delete** on the strategy page and in the Strategies list.
+
+- `PUT /api/strategies/{id}` with any of `{"name", "description", "parameters"}` (omitted = unchanged; the type can't
+  change). Parameters are checked like on create, and can't change while the strategy is set to PAPER/LIVE for anyone
+  or has an open position (409). Past backtests keep the results of the old parameters.
+- `DELETE /api/strategies/{id}` removes it with its backtests, their daily/monthly reports and trade logs, and its
+  paper-trading history (204), which frees a place under the plan limit.
+- Refusals are 409 with a `code` the UI turns into next steps: `OPEN_POSITION` (let the trade exit, then turn trading
+  off), `TRADING_ON` (turn it OFF; the dialog has a button), `TRADING_ON_BY_OTHERS` (an admin trades it),
+  `IN_PORTFOLIO` (names the portfolio to delete), `HAS_LIVE_TRADES` (real trades are kept, so it can't be deleted).
+- Any plan may set a strategy to OFF (`PUT /api/trading/strategies/{id}`), e.g. after a paid plan expired; PAPER needs
+  GOLD and LIVE needs PREMIUM.
+
+### Edit or delete a portfolio
+
+- `PUT /api/portfolios/{id}` with any of `{"name", "description", "strategyIds"}` (omitted = unchanged; at least one
+  strategy). Returns `{portfolio, reportsDeleted, strategiesChanged}`. **Adding or removing strategies starts the
+  portfolio afresh:** every stored report of it, and the backtests those reports ran, are deleted, since they no longer
+  match. The UI warns before saving, then runs a fresh report automatically and says the old reports were deleted.
+  A rename or description change keeps the reports. Needs GOLD.
+- `DELETE /api/portfolios/{id}` removes the portfolio with all its reports (and their backtests); its strategies stay
+  and can then be deleted too. Any plan may delete their own portfolio (e.g. after a paid plan expired).
 
 ### Create a strategy from a description
 
@@ -282,7 +315,7 @@ retried up to 5 times (`GET /api/notifications/emails`, `POST /api/notifications
 
 ### Payments (Razorpay)
 
-Users pay for one plan period (30 days of GOLD ₹999 or PREMIUM ₹1999) on **My account → Subscription**, including
+Users pay for one plan period (30 days of GOLD ₹1,499 or PREMIUM ₹2,499) on **My account → Subscription**, including
 FREE users. The flow:
 
 1. `POST /api/payments/orders {"plan":"GOLD"}` creates a Razorpay order; the server sets the amount from the plan price.
@@ -393,11 +426,13 @@ Strategy parameters (defaults reproduce the rules above):
 | `trailMinutes` | 1 | Trail on N-minute blocks of 1-min candles, aligned to 09:15 |
 | `targetPoints` | 0 | Exit when spot moves this many points in favour (0 = no target; SL checked first) |
 | `gapFilter` | `NONE` | Trade only on `GAP_UP`, `GAP_DOWN`, `ANY_GAP` or `FLAT` days (09:15 open vs previous close) |
-| `gapPct` | 0.2 | Gap threshold in % |
+| `gapPct` | 0.2 | Gap threshold in % of the previous close |
+| `gapPoints` | – | Gap threshold in NIFTY points instead (set `gapPct` or `gapPoints`, not both) |
 | `costPerTrade` | 0 | ₹ per round trip for the whole quantity, deducted from estimated P&L |
 | `entryFrom` | unset | `HH:mm` IST. Only 5-min candles starting at or after this time may open a trade; the breakout must still be fresh on that candle (a day whose breakout happened earlier trades only if spot dips back to ≤ refHigh and breaks out again). Unset = no limit |
 | `entryUntil` | unset | `HH:mm` IST. Only 5-min candles starting before this time may open a trade. Unset = no limit |
 | `maxGapPct` | 0 (off) | Skip the day when the absolute gap is ≥ this many % (e.g. `2.0` skips crash/blow-off opens) |
+| `maxGapPoints` | – | The same in NIFTY points (e.g. `400`); set `maxGapPct` or `maxGapPoints`, not both. The two gap rules may use different units |
 | `trailAfterPoints` | 0 (off) | Keep the stop at the reference midpoint until spot has moved this many points in favour of the entry (checked on 1-min highs/lows after the order); only then trail on completed blocks |
 | `breakevenOnTrail` | `false` | With `trailAfterPoints`, also lift the stop to the entry price at that moment |
 | `breakevenLockPoints` | 0 | With `breakevenOnTrail`, put that stop this many points beyond entry in the trade's favour (CE entry + x, PE entry − x), so a trade that comes back still closes in profit. Must be below `trailAfterPoints` |

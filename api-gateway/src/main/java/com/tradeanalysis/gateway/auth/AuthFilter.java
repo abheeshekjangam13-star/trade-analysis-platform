@@ -28,7 +28,8 @@ import java.util.Set;
 /**
  * Login check for every /api request: requires "Authorization: Bearer <token>" signed by strategy-service, then
  * passes the verified username on as X-User (any X-User a client sends is removed, so it cannot be faked).
- * Open without a token: /api/auth/status, /plans, /signup, /setup, /login, and the Razorpay webhook. /api/market-data/admin/** needs ADMIN.
+ * Open without a token: /api/auth/status, /plans, /signup, /setup, /login, and the Razorpay webhook. Market data
+ * (/api/market-data/**) and indicators (/api/indicators/**) need ADMIN.
  */
 @Component
 public class AuthFilter implements GlobalFilter, Ordered {
@@ -40,8 +41,16 @@ public class AuthFilter implements GlobalFilter, Ordered {
     // The Razorpay webhook has no token; strategy-service verifies its HMAC signature.
     static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/setup", "/api/auth/login",
             "/api/payments/webhook");
-    /** Kite session and instrument admin in market-data-service, which has no user checks of its own. */
-    static final String ADMIN_PREFIX = "/api/market-data/admin/";
+    /**
+     * market-data-service (candles, symbols, Kite session, instruments) and indicator-service: ADMIN only. Neither has
+     * user checks of its own. strategy-service calls them directly (not through the gateway), so backtests and trading
+     * still work for every plan.
+     */
+    static final List<String> ADMIN_PREFIXES = List.of("/api/market-data", "/api/indicators");
+
+    static boolean adminOnly(String path) {
+        return ADMIN_PREFIXES.stream().anyMatch(p -> path.equals(p) || path.startsWith(p + "/"));
+    }
     private static final Logger log = LoggerFactory.getLogger(AuthFilter.class);
 
     private final GatewayAuthKey key;
@@ -74,7 +83,7 @@ public class AuthFilter implements GlobalFilter, Ordered {
                     Verified v = verify(token, k);
                     if (v == null) return reject(exchange, "Session expired or invalid: log in again");
                     exchange.getAttributes().put(USER_ATTR, v.username());
-                    if (path.startsWith(ADMIN_PREFIX) && !v.roles().contains("ADMIN"))
+                    if (adminOnly(path) && !v.roles().contains("ADMIN"))
                         return respond(exchange, HttpStatus.FORBIDDEN, "Only an ADMIN can do this");
                     return chain.filter(withUser(exchange, v));
                 })

@@ -80,17 +80,25 @@ class AuthFilterTest {
     }
 
     @Test
-    void signUpIsOpenAndKiteAdminNeedsAnAdminToken() throws Exception {
+    void signUpIsOpenAndMarketDataAndIndicatorsNeedAnAdminToken() throws Exception {
         run(MockServerHttpRequest.post("/api/auth/signup"));
         assertThat(passed.get()).isNotNull();
         String trader = token("ravi", SECRET, Instant.now().plusSeconds(600), "trade-analysis", List.of("TRADER"));
         MockServerWebExchange ex = run(MockServerHttpRequest.post("/api/market-data/admin/generate-token").header("Authorization", "Bearer " + trader));
         assertThat(passed.get()).isNull();
         assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-        run(MockServerHttpRequest.get("/api/market-data/candles").header("Authorization", "Bearer " + trader));
+        for (String path : List.of("/api/market-data/symbols", "/api/market-data/NIFTY%2050", "/api/indicators", "/api/indicators/compute")) {
+            ex = run(MockServerHttpRequest.get(path).header("Authorization", "Bearer " + trader));
+            assertThat(passed.get()).as(path).isNull();
+            assertThat(ex.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.FORBIDDEN);
+        }
+        run(MockServerHttpRequest.get("/api/strategies").header("Authorization", "Bearer " + trader));
         assertThat(passed.get()).isNotNull();
         String admin = token("abheeshek", SECRET, Instant.now().plusSeconds(600), "trade-analysis");
-        run(MockServerHttpRequest.post("/api/market-data/admin/generate-token").header("Authorization", "Bearer " + admin));
-        assertThat(passed.get()).isNotNull();
+        for (String path : List.of("/api/market-data/admin/generate-token", "/api/market-data/symbols", "/api/indicators")) {
+            run(MockServerHttpRequest.get(path).header("Authorization", "Bearer " + admin));
+            assertThat(passed.get()).as(path).isNotNull();
+        }
+        assertThat(AuthFilter.adminOnly("/api/market-datax")).isFalse();
     }
 }

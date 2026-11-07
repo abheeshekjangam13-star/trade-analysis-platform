@@ -27,10 +27,34 @@ class SignupValidationTest {
     }
 
     @Test
+    void planLimitsAndPrices() {
+        assertThat(Plan.FREE.maxStrategies()).isEqualTo(2);
+        assertThat(Plan.FREE.maxBacktestDays()).isEqualTo(90);
+        assertThat(Plan.FREE.paperTrading()).isFalse();
+        assertThat(Plan.GOLD.maxStrategies()).isEqualTo(6);
+        assertThat(Plan.GOLD.maxBacktestDays()).isEqualTo(365);
+        assertThat(Plan.GOLD.paperTrading()).isTrue();
+        assertThat(Plan.GOLD.liveTrading()).isFalse();
+        assertThat(Plan.GOLD.pricePerMonth()).isEqualTo(1499);
+        assertThat(Plan.GOLD.discountPercent()).isEqualTo(30);
+        assertThat(Plan.PREMIUM.maxStrategies()).isEqualTo(12);
+        assertThat(Plan.PREMIUM.maxBacktestDays()).isEqualTo(730);
+        assertThat(Plan.PREMIUM.liveTrading()).isTrue();
+        assertThat(Plan.PREMIUM.pricePerMonth()).isEqualTo(2499);
+        assertThat(Plan.PREMIUM.discountPercent()).isEqualTo(50);
+        for (Plan p : Plan.values())   // the discount shown matches the price charged (to the rupee)
+            assertThat(Math.round(p.listPricePerMonth() * (100 - p.discountPercent()) / 100.0)).isEqualTo(p.pricePerMonth());
+    }
+
+    @Test
     void accessRules() {
         AppUser u = new AppUser("u", null, null);
         assertThat(Access.deny(u, Plan.FREE, "GET", "/api/strategies")).isNull();
-        assertThat(Access.deny(u, Plan.FREE, "POST", "/api/backtests")).contains("GOLD");
+        assertThat(Access.deny(u, Plan.FREE, "POST", "/api/backtests")).isNull();         // limited in StrategyService
+        assertThat(Access.deny(u, Plan.FREE, "POST", "/api/strategies")).isNull();
+        assertThat(Access.deny(u, Plan.FREE, "POST", "/api/portfolios")).contains("GOLD");
+        assertThat(Access.deny(u, Plan.FREE, "PUT", "/api/trading/strategies/1")).isNull();   // OFF for anyone; PAPER needs GOLD (TradingService)
+        assertThat(Access.deny(u, Plan.FREE, "POST", "/api/trading/orders")).contains("GOLD");
         assertThat(Access.deny(u, Plan.GOLD, "POST", "/api/backtests")).isNull();
         assertThat(Access.deny(u, Plan.FREE, "POST", "/api/auth/change-password")).isNull();
         assertThat(Access.deny(u, Plan.PREMIUM, "GET", "/api/users")).isNotNull();

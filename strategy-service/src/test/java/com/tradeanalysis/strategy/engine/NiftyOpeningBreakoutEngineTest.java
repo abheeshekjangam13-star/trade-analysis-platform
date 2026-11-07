@@ -290,6 +290,38 @@ class NiftyOpeningBreakoutEngineTest {
     }
 
     @Test
+    void gapThresholdsCanBeInPoints() {
+        LocalDate d1 = LocalDate.of(2026, 10, 26), d2 = LocalDate.of(2026, 10, 27);
+        List<Candle> candles = List.of(
+                barOn(d1, 9, 15, 23900, 24000, 23880, 23950),
+                barOn(d1, 15, 25, 24000, 24010, 23990, 24000),   // close 24000
+                barOn(d2, 9, 15, 24600, 24650, 24580, 24620),    // +600 points (+2.5%)
+                barOn(d2, 9, 20, 24620, 24700, 24610, 24690));   // CE breakout
+        Instant now = d2.atTime(9, 25).atZone(IST).toInstant();
+
+        // minimum gap in points
+        assertThat(run(params("gapFilter", "GAP_UP", "gapPoints", "500"), candles, List.of(), now, d2).tradeLogs()).hasSize(1);
+        var tooSmall = run(params("gapFilter", "GAP_UP", "gapPoints", "700"), candles, List.of(), now, d2);
+        assertThat(tooSmall.tradeLogs()).isEmpty();
+        assertThat(tooSmall.days()).anySatisfy(d -> assertThat(d.reason()).contains("600.00 pts", "700.00 pts"));
+        // max gap in points (the % threshold alone would allow this day)
+        assertThat(run(params("gapFilter", "GAP_UP", "maxGapPoints", "500"), candles, List.of(), now, d2).tradeLogs()).isEmpty();
+        assertThat(run(params("gapFilter", "GAP_UP", "maxGapPoints", "700"), candles, List.of(), now, d2).tradeLogs()).hasSize(1);
+        // units can differ: min gap in %, max gap in points
+        assertThat(run(params("gapFilter", "GAP_UP", "gapPct", "0.2", "maxGapPoints", "550"), candles, List.of(), now, d2).tradeLogs()).isEmpty();
+    }
+
+    @Test
+    void aGapThresholdIsSetInOneUnitOnly() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("gapPct", "0.2", "gapPoints", "50")))
+                .hasMessageContaining("gapPct or gapPoints");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("maxGapPct", "2", "maxGapPoints", "400")))
+                .hasMessageContaining("maxGapPct or maxGapPoints");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("gapPoints", "-5")))
+                .hasMessageContaining("negative");
+    }
+
+    @Test
     void maxGapPctSkipsExtremeGapDays() {
         LocalDate d1 = LocalDate.of(2026, 10, 26), d2 = LocalDate.of(2026, 10, 27);
         List<Candle> candles = List.of(

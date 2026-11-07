@@ -1,0 +1,23 @@
+meta {
+  name: Delete Portfolio
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{strategyUrl}}/api/portfolios/:id
+  body: none
+  auth: none
+}
+
+params:path {
+  id: 1
+}
+
+docs {
+  Deletes the portfolio with all its stored reports (and the backtests they ran). Its strategies stay. 204.
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

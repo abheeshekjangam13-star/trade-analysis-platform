@@ -1,0 +1,31 @@
+meta {
+  name: Edit Portfolio
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{strategyUrl}}/api/portfolios/:id
+  body: json
+  auth: none
+}
+
+params:path {
+  id: 1
+}
+
+body:json {
+  {
+    "name": "CE 56 + PE 55",
+    "strategyIds": [55, 56]
+  }
+}
+
+docs {
+  Omitted fields stay unchanged. Changing strategyIds deletes every stored report of the portfolio (and the backtests
+  they ran): run a fresh report afterwards. Returns {portfolio, reportsDeleted, strategiesChanged}.
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

@@ -3,8 +3,9 @@ package com.tradeanalysis.strategy.user;
 import java.util.Set;
 
 /**
- * What each plan may call. Admins may call everything. FREE: read (GET) only. GOLD and PREMIUM: also create
- * strategies, portfolios, backtests, reports and paper trading. Some calls are admin-only whatever the plan
+ * What each plan may call. Admins may call everything. FREE: read (GET), plus creating strategies and running
+ * backtests (within the plan's limits, checked in StrategyService). GOLD and PREMIUM: also portfolios, reports and
+ * paper trading. Some calls are admin-only whatever the plan
  * (user management, the access log, email notifications, trading limits, kill switch, running the live runner). Live orders and
  * LIVE strategies are checked again in the trading service (PREMIUM with their own Kite account, or admins). The broker
  * views (/api/trading/broker/**) show the caller's own Kite account.
@@ -27,9 +28,15 @@ public final class Access {
                 || (path.equals("/api/trading/controls") && !read))
             return "Only an ADMIN can do this";
         if (read || path.startsWith("/api/auth/") || path.startsWith("/api/payments/")) return null;   // FREE users may pay
+        // Every plan may create strategies and run backtests; the counts and look-back are limited by plan.
+        if (path.startsWith("/api/strategies") || path.startsWith("/api/backtests")) return null;
+        // Anyone may switch a strategy's trading OFF (e.g. after a paid plan expired); TradingService needs GOLD for PAPER/LIVE.
+        if (method.equalsIgnoreCase("PUT") && path.startsWith("/api/trading/strategies/")) return null;
+        // Anyone may delete their own portfolio (e.g. after a paid plan expired); creating, editing and reports need GOLD.
+        if (method.equalsIgnoreCase("DELETE") && path.matches("/api/portfolios/\\d+")) return null;
         if (!plan.atLeast(Plan.GOLD))
-            return "Your plan is " + plan + " (view only). Upgrade to GOLD (₹999/month) to create strategies, run backtests "
-                    + "and paper trade: ask an admin.";
+            return "Your plan is " + plan + ". Upgrade to GOLD (₹" + Plan.GOLD.pricePerMonth() + "/month) for portfolios, "
+                    + "reports and paper trading.";
         return null;
     }
 }

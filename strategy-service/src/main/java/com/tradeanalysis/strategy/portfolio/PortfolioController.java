@@ -33,6 +33,19 @@ public class PortfolioController {
     @Operation(summary = "Get a portfolio")
     public Portfolio get(@PathVariable Long id) { return svc.get(id); }
 
+    @PutMapping("/{id}")
+    @Operation(summary = "Edit a portfolio: name, description and/or strategyIds (omitted = unchanged). Changing the "
+            + "strategies deletes all its stored reports (and the backtests they ran): run a fresh report afterwards")
+    public PortfolioService.UpdateResult update(@PathVariable Long id, @RequestBody PortfolioRequest body) {
+        if (body == null) throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Nothing to change");
+        return svc.update(id, body.name(), body.description(), body.strategyIds());
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Delete a portfolio with all its stored reports (and the backtests they ran); its strategies stay")
+    public void delete(@PathVariable Long id) { svc.delete(id); }
+
     @PostMapping("/{id}/reports")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Backtest every strategy for each window and store the combined report per window")

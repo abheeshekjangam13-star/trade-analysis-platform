@@ -61,7 +61,7 @@ class SignupIntegrationTest {
     @Test @Order(1)
     void signUpNeedsEmailAndPhoneAndWaitsForApproval() throws Exception {
         call(post("/api/auth/setup").content("{\"username\":\"admin\",\"password\":\"Secret123\"}"), null, 200);
-        assertThat(call(get("/api/auth/plans"), null, 200).toString()).contains("GOLD", "999", "PREMIUM", "1999");
+        assertThat(call(get("/api/auth/plans"), null, 200).toString()).contains("GOLD", "1499", "2142", "PREMIUM", "2499", "4998", "maxStrategies", "maxBacktestDays");
 
         call(post("/api/auth/signup").content(signup("ravi", null, "9876543210", "GOLD")), null, 400);
         call(post("/api/auth/signup").content(signup("ravi", "ravi@example.com", null, "GOLD")), null, 400);
@@ -109,12 +109,19 @@ class SignupIntegrationTest {
     }
 
     @Test @Order(3)
-    void freeIsViewOnlyAndAnExpiredPlanFallsBackToFree() throws Exception {
+    void freeHasLimitsAndAnExpiredPlanFallsBackToFree() throws Exception {
         call(post("/api/auth/signup").content(signup("sita", "sita@example.com", "9123456789", "FREE")), null, 201);
         call(post("/api/users/" + id("sita") + "/approve").content("{}"), "admin", 200);
         call(get("/api/strategies"), "sita", 200);
-        JsonNode denied = call(post("/api/strategies").content(STRATEGY.formatted("sita strategy")), "sita", 403);
-        assertThat(denied.get("message").asText()).contains("FREE").contains("GOLD");
+        call(post("/api/strategies").content(STRATEGY.formatted("sita strategy 1")), "sita", 201);
+        call(post("/api/strategies").content(STRATEGY.formatted("sita strategy 2")), "sita", 201);
+        JsonNode full = call(post("/api/strategies").content(STRATEGY.formatted("sita strategy 3")), "sita", 403);
+        assertThat(full.get("message").asText()).contains("reached the limit", "FREE", "2 strategies", "Upgrade", "GOLD", "6 strategies");
+        call(post("/api/strategies/56/clone").content("{\"lots\":2}"), "sita", 403);              // clones count too
+        JsonNode tooLong = call(post("/api/backtests?strategyId=56&symbol=NIFTY%2050&lookbackDays=91"), "sita", 403);
+        assertThat(tooLong.get("message").asText()).contains("90 days");
+        JsonNode paper = call(put("/api/trading/strategies/56").content("{\"mode\":\"PAPER\"}"), "sita", 403);
+        assertThat(paper.get("message").asText()).contains("FREE").contains("GOLD");
         call(post("/api/auth/change-password").content("{\"currentPassword\":\"Pass1234\",\"newPassword\":\"Pass12345\"}"), "sita", 204);
 
         call(put("/api/users/" + id("sita") + "/plan").content("{\"plan\":\"GOLD\",\"expiresAt\":\"2020-01-01T00:00:00Z\"}"), "admin", 400);
@@ -124,7 +131,8 @@ class SignupIntegrationTest {
 
         jdbc.update("UPDATE app_user SET plan_expires_at = ? WHERE username = 'sita'", java.sql.Timestamp.from(Instant.now().minusSeconds(60)));
         assertThat(call(get("/api/users/me"), "sita", 200).get("effectivePlan").asText()).isEqualTo("FREE");
-        call(post("/api/strategies").content(STRATEGY.formatted("sita expired strategy")), "sita", 403);
+        call(post("/api/strategies").content(STRATEGY.formatted("sita expired strategy")), "sita", 403);   // 3 > FREE's 2
+        call(post("/api/backtests?strategyId=56&symbol=NIFTY%2050&lookbackDays=365"), "sita", 403);
     }
 
     @Test @Order(4)
