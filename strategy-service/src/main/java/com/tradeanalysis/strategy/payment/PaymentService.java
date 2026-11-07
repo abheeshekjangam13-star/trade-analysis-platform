@@ -66,6 +66,24 @@ public class PaymentService {
         if (current == plan && me.getPlanExpiresAt() == null)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Your " + plan + " plan has no expiry; nothing to pay");
 
+        return newOrder(me, plan);
+    }
+
+    /**
+     * A GOLD/PREMIUM sign-up that hasn't paid yet (no login: the caller has checked the password or just created the
+     * account). Checkout opens with this order; once paid, the sign-up goes to the admin.
+     */
+    @Transactional
+    public Checkout signupOrder(Long userId) {
+        requireEnabled();
+        AppUser u = users.get(userId);
+        if (!u.awaitingSignupPayment())
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This sign-up is not waiting for a payment");
+        return newOrder(u, u.getRequestedPlan());
+    }
+
+    private Checkout newOrder(AppUser me, Plan plan) {
+        Instant now = clock.instant();
         long amount = plan.pricePerMonth() * 100L;
         String receipt = "u" + me.getId() + "-" + plan + "-" + now.getEpochSecond();
         RazorpayApi.Order o;
@@ -97,6 +115,26 @@ public class PaymentService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown order: " + orderId);
         if (!RazorpaySignature.checkoutValid(props.keySecret(), orderId, paymentId, signature)) {
             log.warn("PAYMENT bad checkout signature order={} payment={}", orderId, paymentId);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment signature is invalid");
+        }
+        return markPaid(o, paymentId);
+    }
+
+    /**
+     * Checkout success for a sign-up (no login yet). The Razorpay signature proves the payment, and only orders of
+     * PENDING sign-ups are accepted here.
+     */
+    @Transactional
+    public Outcome verifySignupCheckout(String orderId, String paymentId, String signature) {
+        requireEnabled();
+        if (orderId == null || paymentId == null || signature == null)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orderId, paymentId and signature are required");
+        PaymentOrder o = orders.lockByRazorpayOrderId(orderId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown order: " + orderId));
+        if (users.get(o.getUserId()).getStatus() != AppUser.Status.PENDING && o.getStatus() != PaymentOrder.Status.PAID)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown order: " + orderId);
+        if (!RazorpaySignature.checkoutValid(props.keySecret(), orderId, paymentId, signature)) {
+            log.warn("PAYMENT bad sign-up checkout signature order={} payment={}", orderId, paymentId);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment signature is invalid");
         }
         return markPaid(o, paymentId);
@@ -156,6 +194,15 @@ public class PaymentService {
             return new Outcome(o.getStatus(), o.getPlan(), o.getPlanValidUntil(), "Already activated");
         Instant now = clock.instant();
         AppUser u = users.get(o.getUserId());
+        if (u.getStatus() == AppUser.Status.PENDING) {   // paid at sign-up: the days start when the admin approves
+            o.paid(paymentId, now, null);
+            users.signupPaid(u.getId(), o.getPlan(), o.getDays(), o.getAmountPaise(), paymentId);
+            log.info("PAYMENT paid at sign-up order={} payment={} user={} plan={}", o.getRazorpayOrderId(), paymentId,
+                    u.getUsername(), o.getPlan());
+            return new Outcome(PaymentOrder.Status.PAID, o.getPlan(), null,
+                    "Payment received. Your sign-up is now with an admin for approval; your " + o.getPlan()
+                    + " plan starts when it is approved.");
+        }
         // Renewing the same plan before it ends extends it; anything else starts today.
         Instant base = u.getPlan() == o.getPlan() && u.getPlanExpiresAt() != null && u.getPlanExpiresAt().isAfter(now)
                 ? u.getPlanExpiresAt() : now;

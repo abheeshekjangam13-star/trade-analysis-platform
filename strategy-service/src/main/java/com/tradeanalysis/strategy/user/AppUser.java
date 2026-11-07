@@ -57,6 +57,12 @@ public class AppUser {
     @Column(length = 500)
     private String reviewNote;
 
+    /** Paid at sign-up and waiting for approval: the plan and days start when an admin approves. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private Plan prepaidPlan;
+    private Integer prepaidDays;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "app_user_role",
             joinColumns = @JoinColumn(name = "user_id"),
@@ -87,6 +93,13 @@ public class AppUser {
     public void setPlan(Plan p, Instant expiresAt) { this.plan = p; this.planExpiresAt = p == Plan.FREE ? null : expiresAt; }
     public void approved(Long byUserId, Instant at) { this.approvedByUserId = byUserId; this.approvedAt = at; }
     public void setReviewNote(String note)  { this.reviewNote = note; }
+    public void prepaid(Plan p, int days)   { this.prepaidPlan = p; this.prepaidDays = days; }
+    public void clearPrepaid()              { this.prepaidPlan = null; this.prepaidDays = null; }
+
+    /** A GOLD/PREMIUM sign-up that hasn't paid yet (it reaches the admin only after paying). */
+    public boolean awaitingSignupPayment() {
+        return status == Status.PENDING && requestedPlan != null && requestedPlan != Plan.FREE && prepaidPlan == null;
+    }
 
     /** What the user may do now: admins everything; a paid plan whose expiry has passed counts as FREE. */
     public Plan effectivePlan(Instant now) {
@@ -103,6 +116,8 @@ public class AppUser {
     public Instant getApprovedAt()          { return approvedAt; }
     public Long getApprovedByUserId()       { return approvedByUserId; }
     public String getReviewNote()           { return reviewNote; }
+    public Plan getPrepaidPlan()            { return prepaidPlan; }
+    public Integer getPrepaidDays()         { return prepaidDays; }
 
     public Long getId()             { return id; }
     public String getUsername()     { return username; }

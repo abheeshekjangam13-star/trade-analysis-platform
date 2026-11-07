@@ -144,4 +144,19 @@ class SignupIntegrationTest {
         assertThat(r.get("message").asText()).contains("not approved");
         assertThat(call(get("/api/users/pending"), "admin", 200)).isEmpty();
     }
+
+    @Test @Order(5)
+    void onlyAdminsDeleteUsersAndUsersWithDataAreKept() throws Exception {
+        call(post("/api/auth/signup").content(signup("temp", "temp@example.com", "9876500077", "FREE")), null, 201);
+        long temp = id("temp");
+        call(delete("/api/users/" + temp), "ravi", 403);                       // not an admin
+        call(delete("/api/users/" + id("admin")), "admin", 409);               // not yourself
+        JsonNode keep = call(delete("/api/users/" + id("ravi")), "admin", 409); // owns strategies: disable instead
+        assertThat(keep.get("message").asText()).contains("DISABLED");
+        assertThat(users.findByUsernameIgnoreCase("ravi")).isPresent();
+
+        call(delete("/api/users/" + temp), "admin", 204);
+        assertThat(users.findByUsernameIgnoreCase("temp")).isEmpty();
+        call(delete("/api/users/" + temp), "admin", 404);
+    }
 }

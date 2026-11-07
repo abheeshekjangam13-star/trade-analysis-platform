@@ -39,7 +39,8 @@ public class AuthFilter implements GlobalFilter, Ordered {
     static final String ROLES_HEADER = "X-User-Roles";
     static final String ISSUER = "trade-analysis";
     // The Razorpay webhook has no token; strategy-service verifies its HMAC signature.
-    static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/setup", "/api/auth/login",
+    static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/signup/payment", "/api/auth/signup/verify",
+            "/api/auth/setup", "/api/auth/login",
             "/api/payments/webhook");
     /**
      * market-data-service (candles, symbols, Kite session, instruments) and indicator-service: ADMIN only. Neither has

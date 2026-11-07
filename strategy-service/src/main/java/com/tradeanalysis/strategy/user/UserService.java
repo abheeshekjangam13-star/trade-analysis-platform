@@ -23,10 +23,17 @@ public class UserService {
     private final AppRoleRepository roles;
     private final AccessLogRepository accessLogs;
     private final com.tradeanalysis.strategy.notify.EmailService emails;
+    private final com.tradeanalysis.strategy.payment.RazorpayProperties razorpay;
 
     public UserService(AppUserRepository users, AppRoleRepository roles, AccessLogRepository accessLogs,
-                       com.tradeanalysis.strategy.notify.EmailService emails) {
-        this.users = users; this.roles = roles; this.accessLogs = accessLogs; this.emails = emails;
+                       com.tradeanalysis.strategy.notify.EmailService emails,
+                       com.tradeanalysis.strategy.payment.RazorpayProperties razorpay) {
+        this.users = users; this.roles = roles; this.accessLogs = accessLogs; this.emails = emails; this.razorpay = razorpay;
+    }
+
+    /** With online payments on, GOLD/PREMIUM sign-ups pay in Checkout first and reach the admin only after paying. */
+    public boolean payAtSignup(Plan requested) {
+        return razorpay.enabled() && requested != null && requested != Plan.FREE;
     }
 
     /**
@@ -117,15 +124,47 @@ public class UserService {
         u.setStatus(AppUser.Status.PENDING);
         u.setPasswordHash(passwordHash);
         users.save(u);
+        Plan p = u.getRequestedPlan();
+        if (payAtSignup(p))   // the admin hears about it once the payment goes through (see signupPaid)
+            return new SignupResult(u.getId(), u.getUsername(), u.getStatus(), p,
+                    "Complete the payment for " + p + " (₹" + p.pricePerMonth() + "/month) to send your sign-up to the admin."
+                    + " If you close the payment window, log in later to pay.");
         emails.signupReceived(u);
-        return new SignupResult(u.getId(), u.getUsername(), u.getStatus(), u.getRequestedPlan(),
-                "Thanks! An admin will review your sign-up" + (u.getRequestedPlan() == Plan.FREE ? "" :
-                " and confirm payment for " + u.getRequestedPlan() + " (₹" + u.getRequestedPlan().pricePerMonth() + "/month)")
+        return new SignupResult(u.getId(), u.getUsername(), u.getStatus(), p,
+                "Thanks! An admin will review your sign-up" + (p == Plan.FREE ? "" :
+                " and confirm payment for " + p + " (₹" + p.pricePerMonth() + "/month)")
                 + ". You can log in once it is approved.");
     }
 
+    /** A PENDING GOLD/PREMIUM sign-up chose FREE instead of paying: it goes to the admin now. */
+    @Transactional
+    public void switchSignupToFree(Long id) {
+        AppUser u = get(id);
+        if (!u.awaitingSignupPayment())
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This sign-up is not waiting for a payment");
+        u.requestPlan(Plan.FREE);
+        emails.signupReceived(u);
+    }
+
+    /**
+     * System use, after a verified payment by a PENDING sign-up: the paid days are held until an admin approves, and the
+     * admin hears about the sign-up now. Call inside the payment transaction.
+     */
+    @Transactional
+    public void signupPaid(Long userId, Plan plan, int days, long amountPaise, String paymentId) {
+        AppUser u = get(userId);
+        u.requestPlan(plan);
+        u.prepaid(plan, days);
+        emails.signupPaid(u, plan, amountPaise, paymentId);
+    }
+
     @Transactional(readOnly = true)
-    public List<AppUser> pending() { requireAdmin(); return users.findByStatusOrderByCreatedAtAsc(AppUser.Status.PENDING); }
+    public List<AppUser> pending() {
+        requireAdmin();
+        // Unpaid GOLD/PREMIUM sign-ups stay hidden while online payments are on: they reach the admin after paying.
+        return users.findByStatusOrderByCreatedAtAsc(AppUser.Status.PENDING).stream()
+                .filter(u -> !(razorpay.enabled() && u.awaitingSignupPayment())).toList();
+    }
 
     /** ADMIN: approve a sign-up (PENDING or REJECTED) with a plan; paid plans may have an expiry date. */
     @Transactional
@@ -135,12 +174,35 @@ public class UserService {
         if (u.getStatus() != AppUser.Status.PENDING && u.getStatus() != AppUser.Status.REJECTED)
             throw new ResponseStatusException(HttpStatus.CONFLICT, u.getUsername() + " is already " + u.getStatus());
         Plan p = plan != null ? plan : u.getRequestedPlan() != null ? u.getRequestedPlan() : Plan.FREE;
+        // Paid at sign-up: the paid days start today, at approval (unless the admin set another expiry).
+        if (expiresAt == null && p == u.getPrepaidPlan() && u.getPrepaidDays() != null)
+            expiresAt = Instant.now().plus(Duration.ofDays(u.getPrepaidDays()));
         applyPlan(u, p, expiresAt);
+        u.clearPrepaid();
         u.setStatus(AppUser.Status.ACTIVE);
         u.approved(admin, Instant.now());
         u.setReviewNote(note);
         emails.approved(u);
         return u;
+    }
+
+    /**
+     * ADMIN: delete a user. Not yourself and not another admin. Their payments, emails, access log and Kite link go
+     * with them; a user who owns strategies, backtests, portfolios or trades can't be deleted (disable them instead).
+     */
+    @Transactional
+    public void delete(Long id) {
+        Long admin = requireAdminId();
+        AppUser u = get(id);
+        if (u.getId().equals(admin)) throw new ResponseStatusException(HttpStatus.CONFLICT, "You can't delete your own account");
+        if (u.isAdmin()) throw new ResponseStatusException(HttpStatus.CONFLICT, u.getUsername() + " is an admin: remove the ADMIN role first");
+        try {
+            users.delete(u);
+            users.flush();
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, u.getUsername()
+                    + " has strategies, backtests, portfolios or trades, so it can't be deleted. Set the status to DISABLED instead.");
+        }
     }
 
     /** ADMIN: refuse a PENDING sign-up. */

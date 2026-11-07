@@ -78,8 +78,57 @@ class PaymentIntegrationTest {
 
     private void signupAndApprove(String user, String phone) throws Exception {
         call(post("/api/auth/signup").content("{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + user
-                + "@example.com\",\"phone\":\"" + phone + "\",\"plan\":\"GOLD\"}"), null, 201);
+                + "@example.com\",\"phone\":\"" + phone + "\",\"plan\":\"FREE\"}"), null, 201);
         call(post("/api/users/" + id(user) + "/approve").content("{\"plan\":\"FREE\"}"), "admin", 200);
+    }
+
+    private JsonNode signup(String user, String phone, String plan) throws Exception {
+        return call(post("/api/auth/signup").content("{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + user
+                + "@example.com\",\"phone\":\"" + phone + "\",\"plan\":\"" + plan + "\"}"), null, 201);
+    }
+
+    private boolean pendingForAdmin(String user) throws Exception {
+        for (JsonNode u : call(get("/api/users/pending"), "admin", 200)) if (u.get("username").asText().equals(user)) return true;
+        return false;
+    }
+
+    @Test @Order(7)
+    void goldSignupPaysFirstAndReachesTheAdminOnlyAfterPaying() throws Exception {
+        JsonNode r = signup("meena", "9000000001", "GOLD");
+        String orderId = r.get("checkout").get("orderId").asText();
+        assertThat(r.get("checkout").get("amountPaise").asLong()).isEqualTo(149900);
+        assertThat(pendingForAdmin("meena")).isFalse();                         // not paid: the admin doesn't see it
+        assertThat(emails.findByUserIdOrderByCreatedAtDesc(id("meena"), PageRequest.of(0, 10))).isEmpty();
+
+        // Logging in before paying asks for the payment
+        call(post("/api/auth/login").content("{\"username\":\"meena\",\"password\":\"Pass1234\"}"), null, 402);
+
+        String sig = RazorpaySignature.hmacHex("test_secret", orderId + "|pay_s1");
+        call(post("/api/auth/signup/verify").content(verifyBody(orderId, "pay_s1", "forged")), null, 400);
+        JsonNode ok = call(post("/api/auth/signup/verify").content(verifyBody(orderId, "pay_s1", sig)), null, 200);
+        assertThat(ok.get("status").asText()).isEqualTo("PAID");
+        assertThat(plan("meena")).isEqualTo("FREE");                            // held until approval
+        assertThat(pendingForAdmin("meena")).isTrue();
+        call(post("/api/auth/login").content("{\"username\":\"meena\",\"password\":\"Pass1234\"}"), null, 403);
+
+        call(post("/api/users/" + id("meena") + "/approve").content("{\"plan\":\"GOLD\"}"), "admin", 200);
+        assertThat(plan("meena")).isEqualTo("GOLD");                            // paid days start at approval
+        assertThat(Duration.between(Instant.now(), expiry("meena")).toHours()).isCloseTo(30 * 24, within(1L));
+        assertThat(users.findByUsernameIgnoreCase("meena").orElseThrow().getPrepaidPlan()).isNull();
+    }
+
+    @Test @Order(8)
+    void anUnpaidSignupCanPayLaterOrSwitchToFree() throws Exception {
+        signup("arun", "9000000002", "PREMIUM");
+        call(post("/api/auth/signup/payment").content("{\"username\":\"arun\",\"password\":\"wrong1234\"}"), null, 401);
+        JsonNode again = call(post("/api/auth/signup/payment").content("{\"username\":\"arun\",\"password\":\"Pass1234\"}"), null, 200);
+        assertThat(again.get("checkout").get("plan").asText()).isEqualTo("PREMIUM");
+        assertThat(pendingForAdmin("arun")).isFalse();
+
+        call(post("/api/auth/signup/payment").content("{\"username\":\"arun\",\"password\":\"Pass1234\",\"plan\":\"FREE\"}"), null, 200);
+        assertThat(pendingForAdmin("arun")).isTrue();
+        assertThat(users.findByUsernameIgnoreCase("arun").orElseThrow().getRequestedPlan().name()).isEqualTo("FREE");
+        call(post("/api/auth/signup/payment").content("{\"username\":\"arun\",\"password\":\"Pass1234\"}"), null, 409);
     }
 
     @Test @Order(1)

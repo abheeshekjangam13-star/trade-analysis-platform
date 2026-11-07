@@ -24,6 +24,11 @@ public class AuthService {
 
     public record LoginResult(String token, Instant expiresAt, AppUser user) {}
 
+    /** Sign-up result; {@code checkout} is set when a GOLD/PREMIUM sign-up should pay in Razorpay Checkout now. */
+    public record SignupResponse(Long id, String username, AppUser.Status status,
+                                 com.tradeanalysis.strategy.user.Plan requestedPlan, String message,
+                                 com.tradeanalysis.strategy.payment.PaymentService.Checkout checkout) {}
+
     private final AppUserRepository users;
     private final AppRoleRepository roles;
     private final PasswordEncoder encoder;
@@ -32,11 +37,14 @@ public class AuthService {
     private final String dummyHash;
     private final com.tradeanalysis.strategy.notify.EmailService emails;
     private final com.tradeanalysis.strategy.user.UserService userService;   // checked for unknown users so timing doesn't reveal which usernames exist
+    private final com.tradeanalysis.strategy.payment.PaymentService payments;
 
     public AuthService(AppUserRepository users, AppRoleRepository roles, PasswordEncoder encoder, TokenService tokens,
                        LoginAttempts attempts, com.tradeanalysis.strategy.user.UserService userService,
-                       com.tradeanalysis.strategy.notify.EmailService emails) {
+                       com.tradeanalysis.strategy.notify.EmailService emails,
+                       com.tradeanalysis.strategy.payment.PaymentService payments) {
         this.userService = userService;
+        this.payments = payments;
         this.emails = emails;
         this.users = users; this.roles = roles; this.encoder = encoder; this.tokens = tokens; this.attempts = attempts;
         this.dummyHash = encoder.encode("not-a-real-password-1");
@@ -70,6 +78,18 @@ public class AuthService {
 
     @Transactional
     public LoginResult login(String username, String password) {
+        AppUser user = checkCredentials(username, password);
+        if (user.awaitingSignupPayment() && userService.payAtSignup(user.getRequestedPlan()))
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, "Complete the payment for "
+                    + user.getRequestedPlan() + " to send your sign-up to the admin");
+        if (user.getStatus() != AppUser.Status.ACTIVE)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, com.tradeanalysis.strategy.user.UserService.statusMessage(user.getStatus()));
+        attempts.succeeded(user.getUsername());
+        return issue(user);
+    }
+
+    /** Username and password check shared by login and sign-up payment; same message either way. */
+    private AppUser checkCredentials(String username, String password) {
         String name = username == null ? "" : username.trim();
         long locked = attempts.lockedFor(name);
         if (locked > 0) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
@@ -83,19 +103,55 @@ public class AuthService {
             log.warn("AUTH_LOGIN_FAILED user={}", name);
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Wrong username or password");
         }
-        if (user.getStatus() != AppUser.Status.ACTIVE)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, com.tradeanalysis.strategy.user.UserService.statusMessage(user.getStatus()));
-        attempts.succeeded(name);
-        return issue(user);
+        return user;
     }
 
-    /** Self sign-up (see UserService.signup): checks and hashes the password; no token until an admin approves. */
-    public com.tradeanalysis.strategy.user.UserService.SignupResult signup(String username, String password, String email,
+    /**
+     * Self sign-up (see UserService.signup): checks and hashes the password; no token until an admin approves. A
+     * GOLD/PREMIUM sign-up gets a Razorpay order to pay right away; the admin sees it only after the payment.
+     */
+    public SignupResponse signup(String username, String password, String email,
             String phone, String fullName, com.tradeanalysis.strategy.user.Plan plan) {
         checkPassword(password);
         var r = userService.signup(username, email, phone, fullName, plan, encoder.encode(password));
         log.info("AUTH_SIGNUP user={} plan={}", r.username(), r.requestedPlan());
-        return r;
+        com.tradeanalysis.strategy.payment.PaymentService.Checkout checkout = null;
+        String message = r.message();
+        if (userService.payAtSignup(r.requestedPlan())) {
+            try {
+                checkout = payments.signupOrder(r.id());
+            } catch (ResponseStatusException e) {   // the account exists; they can pay when they next log in
+                log.warn("AUTH_SIGNUP payment not started user={}: {}", r.username(), e.getReason());
+                message = "Your account is created, but the payment couldn't start (" + e.getReason()
+                        + "). Log in in a minute to pay and send your sign-up to the admin.";
+            }
+        }
+        return new SignupResponse(r.id(), r.username(), r.status(), r.requestedPlan(), message, checkout);
+    }
+
+    /**
+     * A GOLD/PREMIUM sign-up that hasn't paid (Checkout closed or failed): with the right password, starts a new
+     * payment, or with {@code plan} FREE sends the sign-up to the admin as FREE instead.
+     */
+    public SignupResponse signupPayment(String username, String password, com.tradeanalysis.strategy.user.Plan plan) {
+        AppUser user = checkCredentials(username, password);
+        if (!user.awaitingSignupPayment() || !userService.payAtSignup(user.getRequestedPlan()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, user.getStatus() == AppUser.Status.PENDING
+                    ? "Your sign-up is already with the admin for approval" : "Your account is already set up: log in");
+        attempts.succeeded(user.getUsername());
+        if (plan == com.tradeanalysis.strategy.user.Plan.FREE) {
+            userService.switchSignupToFree(user.getId());
+            log.info("AUTH_SIGNUP_FREE user={}", user.getUsername());
+            return new SignupResponse(user.getId(), user.getUsername(), user.getStatus(), plan,
+                    "Your sign-up is sent to the admin with the FREE plan. You can log in once it is approved.", null);
+        }
+        return new SignupResponse(user.getId(), user.getUsername(), user.getStatus(), user.getRequestedPlan(),
+                "Complete the payment to send your sign-up to the admin.", payments.signupOrder(user.getId()));
+    }
+
+    /** Checkout success for a sign-up: verifies Razorpay's signature; the sign-up then goes to the admin. */
+    public com.tradeanalysis.strategy.payment.PaymentService.Outcome signupPaid(String orderId, String paymentId, String signature) {
+        return payments.verifySignupCheckout(orderId, paymentId, signature);
     }
 
     @Transactional

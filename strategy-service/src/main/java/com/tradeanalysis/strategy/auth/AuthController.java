@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/** Login and sign-up. /api/auth/status, /plans, /signup, /setup and /login are the only calls open without a token. */
+/** Login and sign-up. /api/auth/status, /plans, /signup (+ /signup/payment, /signup/verify), /setup and /login are the only calls open without a token. */
 @RestController
 @Tag(name = "Auth", description = "Login, first-admin setup and passwords")
 public class AuthController {
@@ -18,6 +18,8 @@ public class AuthController {
     public record SetPassword(String password) {}
     public record SignupRequest(String username, String password, String email, String phone, String fullName,
                                 com.tradeanalysis.strategy.user.Plan plan) {}
+    public record SignupPaymentRequest(String username, String password, com.tradeanalysis.strategy.user.Plan plan) {}
+    public record SignupVerifyRequest(String orderId, String paymentId, String signature) {}
 
     private final AuthService auth;
 
@@ -39,9 +41,22 @@ public class AuthController {
 
     @PostMapping("/api/auth/signup")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Sign up (email and phone required); the account waits for admin approval")
-    public com.tradeanalysis.strategy.user.UserService.SignupResult signup(@RequestBody SignupRequest r) {
+    @Operation(summary = "Sign up (email and phone required). GOLD/PREMIUM: pay in Checkout with the returned order; "
+            + "the sign-up reaches the admin after paying. FREE: waits for admin approval")
+    public AuthService.SignupResponse signup(@RequestBody SignupRequest r) {
         return auth.signup(r.username(), r.password(), r.email(), r.phone(), r.fullName(), r.plan());
+    }
+
+    @PostMapping("/api/auth/signup/payment")
+    @Operation(summary = "Unpaid GOLD/PREMIUM sign-up: start the payment again (or plan FREE to go to the admin as FREE)")
+    public AuthService.SignupResponse signupPayment(@RequestBody SignupPaymentRequest r) {
+        return auth.signupPayment(r.username(), r.password(), r.plan());
+    }
+
+    @PostMapping("/api/auth/signup/verify")
+    @Operation(summary = "After a sign-up's Checkout succeeds: check Razorpay's signature; the sign-up then goes to the admin")
+    public com.tradeanalysis.strategy.payment.PaymentService.Outcome signupVerify(@RequestBody SignupVerifyRequest r) {
+        return auth.signupPaid(r.orderId(), r.paymentId(), r.signature());
     }
 
     @PostMapping("/api/auth/login")

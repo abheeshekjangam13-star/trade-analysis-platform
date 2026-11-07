@@ -33,8 +33,21 @@ final class UserEmails {
                 + "Name: " + orDash(u.getFullName()) + "\n"
                 + "Email: " + orDash(u.getEmail()) + "\n"
                 + "Phone: " + orDash(u.getPhone()) + "\n"
-                + "Requested plan: " + (u.getRequestedPlan() == null ? Plan.FREE : u.getRequestedPlan()) + "\n\n"
+                + "Requested plan: " + (u.getRequestedPlan() == null ? Plan.FREE : u.getRequestedPlan()) + "\n"
+                + (u.getPrepaidPlan() == null ? "" : "Paid: " + u.getPrepaidPlan() + " for " + u.getPrepaidDays()
+                   + " days (starts when you approve)\n")
+                + "\n"
                 + "Review it here: " + appUrl + "/users" + SIGNATURE);
+    }
+
+    static Message signupPaymentReceived(AppUser u, Plan plan, long amountPaise, String paymentId) {
+        return new Message("Payment received: sign-up sent for approval",
+                greeting(u) + "We received your payment of ₹" + String.format("%.2f", amountPaise / 100.0)
+                + " for the " + plan + " plan.\n\n"
+                + "Payment id: " + paymentId + "\n\n"
+                + "Your sign-up '" + u.getUsername() + "' is now with an admin for approval. Your " + plan
+                + " plan starts on the day it is approved, so you don't lose any paid days while you wait."
+                + " We'll email you as soon as it is approved." + SIGNATURE);
     }
 
     static Message approved(AppUser u, String appUrl) {

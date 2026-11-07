@@ -74,6 +74,11 @@ public class UserController {
         return svc.update(id, body.email(), body.fullName(), body.roles(), body.status(), body.phone());
     }
 
+    @DeleteMapping("/api/users/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "ADMIN: delete a user (not yourself or another admin; users with strategies/trades: disable instead)")
+    public void delete(@PathVariable Long id) { svc.delete(id); }
+
     @GetMapping("/api/users/roles")
     @Operation(summary = "List roles")
     public List<AppRole> roles() { return svc.roles(); }

@@ -36,6 +36,16 @@ public class EmailService {
                 .forEach(a -> queue(a, EmailNotification.Kind.SIGNUP_ADMIN_ALERT, alert));
     }
 
+    /** A GOLD/PREMIUM sign-up paid: the user hears it is waiting for approval, and the admins get the sign-up now. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void signupPaid(AppUser u, Plan plan, long amountPaise, String paymentId) {
+        queue(u, EmailNotification.Kind.PAYMENT_RECEIVED, UserEmails.signupPaymentReceived(u, plan, amountPaise, paymentId));
+        UserEmails.Message alert = UserEmails.signupAdminAlert(u, appUrl);
+        users.findAll().stream()
+                .filter(a -> a.isAdmin() && a.getStatus() == AppUser.Status.ACTIVE && hasEmail(a))
+                .forEach(a -> queue(a, EmailNotification.Kind.SIGNUP_ADMIN_ALERT, alert));
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void approved(AppUser u) { queue(u, EmailNotification.Kind.ACCOUNT_APPROVED, UserEmails.approved(u, appUrl)); }
 
