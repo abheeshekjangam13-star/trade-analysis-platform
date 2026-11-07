@@ -28,3 +28,9 @@
 		file_server
 	}
 }
+
+# www.<domain> → <domain> (needs a DNS record for www too: CNAME www → <domain>, or A www → the static IP).
+# Without that record Caddy can't get a certificate for www; the main site still works, Caddy just keeps retrying.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

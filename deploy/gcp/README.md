@@ -50,6 +50,8 @@ It prints three things — **save them**:
 - the **database password** (shown only once).
 
 Then, at your domain registrar, add a DNS record: **`A`  `trade` → the static IP** (TTL 300).
+Using the bare domain (e.g. `DOMAIN=sysgrow.in`)? Add **`A` `@` → the static IP** and **`CNAME` `www` → the
+domain**; Caddy redirects `www.` to the bare domain.
 
 ## 3. Set up the VM
 
