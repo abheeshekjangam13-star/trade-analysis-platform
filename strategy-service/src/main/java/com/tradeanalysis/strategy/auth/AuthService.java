@@ -30,11 +30,14 @@ public class AuthService {
     private final TokenService tokens;
     private final LoginAttempts attempts;
     private final String dummyHash;
+    private final com.tradeanalysis.strategy.notify.EmailService emails;
     private final com.tradeanalysis.strategy.user.UserService userService;   // checked for unknown users so timing doesn't reveal which usernames exist
 
     public AuthService(AppUserRepository users, AppRoleRepository roles, PasswordEncoder encoder, TokenService tokens,
-                       LoginAttempts attempts, com.tradeanalysis.strategy.user.UserService userService) {
+                       LoginAttempts attempts, com.tradeanalysis.strategy.user.UserService userService,
+                       com.tradeanalysis.strategy.notify.EmailService emails) {
         this.userService = userService;
+        this.emails = emails;
         this.users = users; this.roles = roles; this.encoder = encoder; this.tokens = tokens; this.attempts = attempts;
         this.dummyHash = encoder.encode("not-a-real-password-1");
     }
@@ -102,6 +105,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Current password is wrong");
         checkPassword(next);
         user.setPasswordHash(encoder.encode(next));
+        emails.passwordChanged(user, false);
     }
 
     /** ADMIN: set someone's password (new users, forgotten passwords). */
@@ -110,7 +114,9 @@ public class AuthService {
         requireAdmin();
         checkPassword(password);
         AppUser user = users.findById(userId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found: " + userId));
+        boolean firstPassword = !user.isPasswordSet();
         user.setPasswordHash(encoder.encode(password));
+        if (!firstPassword) emails.passwordChanged(user, true);
     }
 
     @Transactional(readOnly = true)

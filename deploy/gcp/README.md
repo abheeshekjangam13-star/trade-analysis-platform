@@ -100,11 +100,74 @@ Caddy gets the HTTPS certificate automatically once the DNS record points at the
   `https://trade.yourdomain.com/kite/callback` (or create a separate app for production, so your local setup
   keeps working). Users' own Kite apps need the same redirect URL.
 - **Log in to Kite** from Market data (admin) each trading day, as before.
-- **Razorpay** (if used): webhook URL `https://trade.yourdomain.com/api/payments/webhook`, then set the three
-  `RAZORPAY_*` values in `.env` and run `03-deploy.sh`.
+- **Email and Razorpay:** see section 8.
 - **Live trading** stays off (`TRADING_LIVE_ENABLED=false`). To turn it on: register the static IP with Zerodha
   (Kite developer console → your app → IP whitelist), run strategies in PAPER first, then set it to `true` and
   redeploy.
+
+## 8. Email and payments (Razorpay)
+
+Every message to users goes out by email:
+- **Sign-up and account:** sign-up received (plus an alert to admins), approved or rejected (with your remarks),
+  account created.
+- **Payments:** payment received, payment failed.
+- **Plan:** plan changed by an admin, a reminder 3 days before a paid plan ends, and a notice when it has ended.
+- **Security:** password changed.
+
+Until email is set up, emails are only written to the log. Check the setup any time under **Users → Email and
+payments** (admins only): it shows what is on, what is missing, and has a **Send test email** button. The deploy
+script prints the same at the end.
+
+Every change below is made in `~/trade/trade-analysis-platform/deploy/gcp/.env` on the VM, followed by
+`./03-deploy.sh`.
+
+### Email (SMTP)
+
+GCP blocks outgoing port 25, so use port **587** (STARTTLS), which works. Pick one provider:
+
+| Provider | MAIL_HOST | MAIL_USERNAME / MAIL_PASSWORD | Notes |
+|---|---|---|---|
+| Gmail / Google Workspace | `smtp.gmail.com` | your address / an **app password** (Google Account → Security → 2-Step Verification → App passwords) | ~500 emails/day; fine to start |
+| Brevo (Sendinblue) | `smtp-relay.brevo.com` | your Brevo login / the SMTP key (Brevo → SMTP & API) | free 300/day; verify your domain |
+| Zoho Mail | `smtp.zoho.in` | your address / an app password | |
+
+```bash
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USERNAME=alerts@yourdomain.com
+MAIL_PASSWORD=the-app-password          # not your normal password
+MAIL_FROM=Trade Analysis <alerts@yourdomain.com>
+```
+
+Then:
+1. Run `./03-deploy.sh`.
+2. Open **Users → Email and payments → Send test email**. It goes to your admin account's address, so set one
+   on your user first.
+3. If it fails, the error is shown there, and every email's status is listed below it, with **Retry** for failed
+   ones.
+
+For good delivery (not spam), send from your own domain and add the SPF/DKIM records your provider gives you.
+
+### Razorpay
+
+1. Sign up at razorpay.com and finish KYC (needed for live payments; test mode works before that).
+2. **Test mode first:** Dashboard → Account & Settings → API Keys → *Generate test key*. Put the key id
+   (`rzp_test_…`) and secret in `.env` as `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
+3. **Webhook:** Dashboard → Account & Settings → Webhooks → *Add new webhook*.
+   - URL: `https://trade.yourdomain.com/api/payments/webhook`
+   - Secret: any long random string (`openssl rand -hex 24`); put the same value in `RAZORPAY_WEBHOOK_SECRET`.
+   - Active events: `payment.captured`, `payment.failed`, `order.paid`.
+
+   The webhook activates a plan even if the user closes the browser mid-payment, and emails them if a payment fails.
+4. Run `./03-deploy.sh`. Then, as a test user, use **My account → Subscription → Pay** with Razorpay's test card
+   `4111 1111 1111 1111` (any future expiry, any CVV) and check that the plan activates and the "Payment received"
+   email arrives.
+5. **Go live:** switch the Dashboard to Live mode, generate live keys (`rzp_live_…`), add the same webhook again in
+   Live mode (it has its own secret), update the three `RAZORPAY_*` values, and redeploy. The admin panel then shows
+   *Razorpay live*.
+
+Prices come from the app (`Plan.java`: Gold ₹1,499, Premium ₹2,499 for 30 days); the server sets the amount, so
+nothing to configure in Razorpay for plans.
 
 ## Everyday commands (on the VM, in `deploy/gcp`)
 

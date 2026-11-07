@@ -44,6 +44,8 @@ public class EmailDispatcher {
     }
 
     public boolean smtpConfigured() { return mail != null; }
+    /** The From address used (empty when neither MAIL_FROM nor MAIL_USERNAME is set). */
+    public String from() { return from == null ? "" : from; }
 
     @Scheduled(fixedDelayString = "${notifications.email.dispatch-ms:15000}", initialDelayString = "${notifications.email.dispatch-ms:15000}")
     public void dispatchPending() {

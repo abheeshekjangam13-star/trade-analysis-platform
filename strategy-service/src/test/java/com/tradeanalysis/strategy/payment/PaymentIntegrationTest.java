@@ -167,4 +167,21 @@ class PaymentIntegrationTest {
         call(post("/api/payments/orders").content("{\"plan\":\"GOLD\"}"), "sita", 409);     // would be a downgrade
         call(post("/api/payments/orders").content("{\"plan\":\"GOLD\"}"), "admin", 409);
     }
+
+    @Test @Order(6)
+    void aFailedPaymentIsEmailedOnce() throws Exception {
+        String orderId = call(post("/api/payments/orders").content("{\"plan\":\"PREMIUM\"}"), "ravi", 201).get("orderId").asText();
+        String body = "{\"event\":\"payment.failed\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_9\",\"order_id\":\""
+                + orderId + "\",\"amount\":249900,\"currency\":\"INR\",\"status\":\"failed\","
+                + "\"error_description\":\"Your bank declined the payment\"}}}}";
+        for (int i = 0; i < 2; i++)   // Razorpay retries webhooks
+            mvc.perform(post("/api/payments/webhook").contentType(MediaType.APPLICATION_JSON).content(body)
+                    .header("X-Razorpay-Signature", RazorpaySignature.hmacHex("hook_secret", body))).andExpect(status().isOk());
+        var failed = emails.findByUserIdOrderByCreatedAtDesc(id("ravi"), PageRequest.of(0, 50)).stream()
+                .filter(e -> e.getKind() == EmailNotification.Kind.PAYMENT_FAILED).toList();
+        assertThat(failed).singleElement().satisfies(e -> {
+            assertThat(e.getSubject()).contains("PREMIUM");
+            assertThat(e.getBody()).contains("₹2499.00", "Your bank declined the payment", "/account");
+        });
+    }
 }

@@ -146,4 +146,61 @@ class EmailNotificationIntegrationTest {
         call(get("/api/notifications/emails"), "ravi", 403);
         assertThat(call(get("/api/notifications/email/status"), "admin", 200).get("smtpConfigured").asBoolean()).isTrue();
     }
+
+    @Autowired EmailService emailService;
+
+    private EmailNotification latest(String user, EmailNotification.Kind kind) {
+        return emailsFor(user).stream().filter(e -> e.getKind() == kind).findFirst().orElse(null);
+    }
+
+    @Test @Order(8)
+    void planChangesAndPasswordChangesAreEmailed() throws Exception {
+        java.time.Instant in2Days = java.time.Instant.now().plus(java.time.Duration.ofDays(2));
+        call(put("/api/users/" + id("ravi") + "/plan").content("{\"plan\":\"PREMIUM\",\"expiresAt\":\"" + in2Days + "\"}"), "admin", 200);
+        assertThat(latest("ravi", EmailNotification.Kind.PLAN_CHANGED)).satisfies(e -> {
+            assertThat(e.getSubject()).isEqualTo("Your plan is now PREMIUM");
+            assertThat(e.getBody()).contains("from GOLD to PREMIUM", "Valid until", "12 strategies", "paper and live trading");
+        });
+
+        call(post("/api/auth/change-password").content("{\"currentPassword\":\"Pass1234\",\"newPassword\":\"Pass5678\"}"), "ravi", 204);
+        assertThat(latest("ravi", EmailNotification.Kind.PASSWORD_CHANGED).getBody()).contains("was changed", "If this wasn't you");
+        call(post("/api/users/" + id("ravi") + "/password").content("{\"password\":\"Reset9999\"}"), "admin", 204);
+        assertThat(emailsFor("ravi").stream().filter(e -> e.getKind() == EmailNotification.Kind.PASSWORD_CHANGED)).hasSize(2);
+        assertThat(latest("ravi", EmailNotification.Kind.PASSWORD_CHANGED).getBody()).contains("An admin set a new password")
+                .doesNotContain("Reset9999");
+    }
+
+    @Test @Order(9)
+    void planRemindersGoOutOncePerExpiry() {
+        java.time.Instant now = java.time.Instant.now();
+        java.time.Instant until = users.findByUsernameIgnoreCase("ravi").orElseThrow().getPlanExpiresAt();
+
+        assertThat(emailService.planReminders(now)).isEqualTo(1);    // ends in 2 days
+        assertThat(latest("ravi", EmailNotification.Kind.PLAN_EXPIRING).getBody()).contains("PREMIUM plan ends on", "/account");
+        assertThat(emailService.planReminders(now)).isZero();        // not twice
+
+        java.time.Instant after = until.plus(java.time.Duration.ofHours(1));
+        assertThat(emailService.planReminders(after)).isEqualTo(1);
+        assertThat(latest("ravi", EmailNotification.Kind.PLAN_EXPIRED).getBody()).contains("now on the Free plan", "strategies and reports are kept");
+        assertThat(emailService.planReminders(after)).isZero();
+        assertThat(emailService.planReminders(until.plus(java.time.Duration.ofDays(30)))).isZero();   // long gone: no email
+    }
+
+    @Test @Order(10)
+    void adminsCanSendATestEmailAndSeeTheSetup() throws Exception {
+        org.mockito.Mockito.reset(mail);
+        JsonNode sent = call(post("/api/notifications/email/test"), "admin", 200);
+        assertThat(sent.get("status").asText()).isEqualTo("SENT");
+        assertThat(sent.get("recipient").asText()).isEqualTo("admin@test.local");
+        verify(mail).send(any(SimpleMailMessage.class));
+        call(post("/api/notifications/email/test"), "ravi", 403);
+
+        JsonNode setup = call(get("/api/notifications/setup"), "admin", 200);
+        assertThat(setup.get("emailConfigured").asBoolean()).isTrue();
+        assertThat(setup.get("emailFrom").asText()).isEqualTo("alerts@test.local");
+        assertThat(setup.get("paymentsMode").asText()).isEqualTo("OFF");
+        assertThat(setup.get("webhookUrl").asText()).isEqualTo("https://app.test/api/payments/webhook");
+        assertThat(setup.get("problems").toString()).contains("RAZORPAY_KEY_ID").doesNotContain("MAIL_HOST");
+        call(get("/api/notifications/setup"), "ravi", 403);
+    }
 }

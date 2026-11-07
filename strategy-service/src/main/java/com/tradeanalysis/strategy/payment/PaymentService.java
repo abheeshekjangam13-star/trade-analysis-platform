@@ -129,8 +129,12 @@ public class PaymentService {
                 markPaid(o, paymentId);
             }
             case "payment.failed" -> {
-                o.failed(paymentId, payment.path("error_description").asText("Payment failed"));
+                if (o.getStatus() == PaymentOrder.Status.PAID) { log.info("PAYMENT failed event for paid order {}: ignored", orderId); return; }
+                boolean first = o.getStatus() != PaymentOrder.Status.FAILED;
+                String reason = payment.path("error_description").asText("Payment failed");
+                o.failed(paymentId, reason);
                 log.info("PAYMENT failed order={} payment={}", orderId, paymentId);
+                if (first) emails.paymentFailed(users.get(o.getUserId()), o.getPlan(), o.getAmountPaise(), reason);
             }
             default -> log.info("PAYMENT webhook {} order={}: ignored", event, orderId);
         }

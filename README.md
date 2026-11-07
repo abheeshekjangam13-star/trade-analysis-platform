@@ -300,8 +300,17 @@ The parser is rule based (no AI); it knows every `NIFTY_OPENING_BREAKOUT` parame
 
 ### Email notifications
 
-strategy-service emails users when they sign up (admins get an alert too), when an admin creates their account, and
-when their sign-up is approved or rejected. The admin's approve/reject note is included as **Remarks**. Emails are
+strategy-service emails users about everything that concerns their account:
+- **Sign-up and account:** sign-up received (admins get an alert too), approved or rejected (the admin's note is
+  included as **Remarks**), account created by an admin.
+- **Payments:** payment received, payment failed (Razorpay `payment.failed` webhook, once per order).
+- **Plan:** plan changed by an admin; a reminder 3 days before a paid plan ends and a notice when it has ended (daily
+  at 09:00 IST, `notifications.plan-reminders-cron`, once per expiry date).
+- **Security:** password changed (by the user, or reset by an admin; never the password itself).
+
+Admins check the setup under **Users → Email and payments** (`GET /api/notifications/setup`), send themselves a test
+(`POST /api/notifications/email/test`), and see every email with its status. strategy-service also logs a `SETUP`
+line at startup saying what is on and what is missing. For GCP setup steps see `deploy/gcp/README.md` §8. Emails are
 written to the `email_notification` table in the same transaction as the change and sent every 15 s; failures are
 retried up to 5 times (`GET /api/notifications/emails`, `POST /api/notifications/emails/{id}/retry`, admin only).
 

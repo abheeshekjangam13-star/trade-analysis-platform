@@ -162,7 +162,10 @@ public class UserService {
         requireAdmin();
         if (plan == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a plan: FREE, GOLD or PREMIUM");
         AppUser u = get(id);
+        Plan before = u.getPlan();
+        Instant beforeUntil = u.getPlanExpiresAt();
         applyPlan(u, plan, expiresAt);
+        if (before != plan || !java.util.Objects.equals(beforeUntil, u.getPlanExpiresAt())) emails.planChanged(u, before);
         return u;
     }
 
@@ -229,7 +232,7 @@ public class UserService {
     /** Only ADMINs manage users. */
     public void requireAdmin() { requireAdminId(); }
 
-    private Long requireAdminId() {
+    public Long requireAdminId() {
         AppUser me = CurrentUser.id().flatMap(users::findById)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Log in first"));
         if (!me.isAdmin()) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an ADMIN can manage users");
