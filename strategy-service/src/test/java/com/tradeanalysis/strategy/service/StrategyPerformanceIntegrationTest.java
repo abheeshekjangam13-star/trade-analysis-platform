@@ -46,6 +46,13 @@ class StrategyPerformanceIntegrationTest {
 
     private long id(String u) { return users.findByUsernameIgnoreCase(u).orElseThrow().getId(); }
 
+    /** A NIFTY_OPENING_BREAKOUT strategy owned by this user (master strategies are admin-only). */
+    private long ownBreakout(String username, String name) {
+        jdbc.update("INSERT INTO strategy (name, type, created_at, created_by_user_id) "
+                + "SELECT ?, 'NIFTY_OPENING_BREAKOUT', CURRENT_TIMESTAMP, id FROM app_user WHERE username = ?", name, username);
+        return jdbc.queryForObject("SELECT id FROM strategy WHERE name = ?", Long.class, name);
+    }
+
     private void backtest(long strategyId, String user, int window, double returnPct, String createdAt) {
         double capital = 500_000;
         jdbc.update("""
@@ -63,17 +70,18 @@ class StrategyPerformanceIntegrationTest {
             call(post("/api/users").content("{\"username\":\"" + u + "\",\"password\":\"Pass1234\"}"), "admin", 201);
             call(put("/api/users/" + id(u) + "/plan").content("{\"plan\":\"GOLD\"}"), "admin", 200);
         }
-        backtest(56, "ravi", 30, 2.0, "2026-11-01T10:00:00Z");
-        backtest(56, "ravi", 30, 4.6, "2026-11-05T10:00:00Z");     // newer: wins
-        backtest(56, "ravi", 360, 14.2, "2026-11-05T10:00:01Z");
-        backtest(56, "ravi", 730, 30.0, "2026-11-05T10:00:02Z");    // not one of the windows
-        backtest(55, "ravi", 360, -3.0, "2026-11-05T10:00:03Z");
-        backtest(56, "sita", 90, 99.0, "2026-11-05T10:00:04Z");     // someone else's
+        long ce = ownBreakout("ravi", "ravi CE"), pe = ownBreakout("ravi", "ravi PE"), sitas = ownBreakout("sita", "sita CE");
+        backtest(ce, "ravi", 30, 2.0, "2026-11-01T10:00:00Z");
+        backtest(ce, "ravi", 30, 4.6, "2026-11-05T10:00:00Z");     // newer: wins
+        backtest(ce, "ravi", 360, 14.2, "2026-11-05T10:00:01Z");
+        backtest(ce, "ravi", 730, 30.0, "2026-11-05T10:00:02Z");    // not one of the windows
+        backtest(pe, "ravi", 360, -3.0, "2026-11-05T10:00:03Z");
+        backtest(sitas, "sita", 90, 99.0, "2026-11-05T10:00:04Z");  // someone else's
 
         JsonNode r = call(get("/api/strategies/performance"), "ravi", 200);
         assertThat(r).hasSize(2);
         JsonNode s56 = null;
-        for (JsonNode n : r) if (n.get("strategyId").asLong() == 56) s56 = n;
+        for (JsonNode n : r) if (n.get("strategyId").asLong() == ce) s56 = n;
         assertThat(s56).isNotNull();
         assertThat(s56.get("windows").fieldNames()).toIterable().containsExactly("30", "360");
         assertThat(s56.get("windows").get("30").get("returnPct").asDouble()).isEqualTo(4.6);

@@ -12,9 +12,8 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * Strategies every user may see (read-only): the master strategies in master-data/strategies.json (#55, #56).
- * Everything else is private to the user who created it. Backtests, reports and trades on shared strategies still
- * belong to whoever ran them.
+ * The master strategies in master-data/strategies.json (#55, #56). Only admins see, run and change them; other users
+ * see only the strategies they created themselves.
  */
 @Component
 public class SharedStrategies {

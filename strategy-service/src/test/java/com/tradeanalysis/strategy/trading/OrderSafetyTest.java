@@ -57,6 +57,13 @@ class OrderSafetyTest {
         return body.isEmpty() ? null : json.readTree(body);
     }
 
+    /** A NIFTY_OPENING_BREAKOUT strategy owned by this user (master strategies are admin-only). */
+    private long ownBreakout(String username, String name) {
+        jdbc.update("INSERT INTO strategy (name, type, created_at, created_by_user_id) "
+                + "SELECT ?, 'NIFTY_OPENING_BREAKOUT', CURRENT_TIMESTAMP, id FROM app_user WHERE username = ?", name, username);
+        return jdbc.queryForObject("SELECT id FROM strategy WHERE name = ?", Long.class, name);
+    }
+
     private String order(String mode, String side, int qty) {
         return """
                {"exchange":"NFO","tradingsymbol":"NIFTY26N0324150CE","transactionType":"%s","quantity":%d,
@@ -89,7 +96,8 @@ class OrderSafetyTest {
         assertThat(o.get("status").asText()).isEqualTo("REJECTED");
         assertThat(o.get("message").asText()).contains("Live trading is disabled");
         verify(kite, never()).placeOrder(any());
-        long id = 56;   // master CE strategy (NIFTY_OPENING_BREAKOUT)
+        call(get("/api/trading/strategies"), "trader2", 200);   // registers trader2
+        long id = ownBreakout("trader2", "trader2 CE");
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"LIVE\"}"), "boss", 400);       // server switch off
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"LIVE\"}"), "trader2", 403);    // not an admin
         assertThat(call(put("/api/trading/strategies/" + id).content("{\"mode\":\"PAPER\"}"), "trader2", 200).get("mode").asText()).isEqualTo("PAPER");
@@ -126,7 +134,8 @@ class OrderSafetyTest {
     @Test
     void killSwitchStopsNewOrdersAndStrategies() throws Exception {
         jdbc.update("DELETE FROM strategy_user_mode");   // other tests in this database leave strategies on
-        long id = 56;
+        call(get("/api/trading/strategies"), "t", 200);   // registers user t
+        long id = ownBreakout("t", "t CE for kill switch");
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"PAPER\"}"), "t", 200);
         call(post("/api/trading/kill-switch"), "t", 403);            // admins only, now that outside users can sign up
         jdbc.update("INSERT INTO app_user (username, status, created_at) SELECT 'chief', 'ACTIVE', CURRENT_TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE username = 'chief')");

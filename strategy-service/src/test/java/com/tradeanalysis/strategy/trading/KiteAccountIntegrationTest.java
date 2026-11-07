@@ -55,6 +55,13 @@ class KiteAccountIntegrationTest {
         return body.isEmpty() ? null : json.readTree(body);
     }
 
+    /** A NIFTY_OPENING_BREAKOUT strategy owned by this user (master strategies are admin-only). */
+    private long ownBreakout(String username, String name) {
+        jdbc.update("INSERT INTO strategy (name, type, created_at, created_by_user_id) "
+                + "SELECT ?, 'NIFTY_OPENING_BREAKOUT', CURRENT_TIMESTAMP, id FROM app_user WHERE username = ?", name, username);
+        return jdbc.queryForObject("SELECT id FROM strategy WHERE name = ?", Long.class, name);
+    }
+
     private void plan(String user, String plan) throws Exception {
         call(get("/api/trading/kite-account"), user, 200);   // registers the user
         jdbc.update("UPDATE app_user SET plan = ?, plan_expires_at = NULL WHERE username = ?", plan, user);
@@ -99,7 +106,7 @@ class KiteAccountIntegrationTest {
 
         // GOLD: no live trading, even with their own account.
         call(post("/api/trading/orders").content(LIVE_ORDER), "goldie", 403);
-        call(put("/api/trading/strategies/56").content("{\"mode\":\"LIVE\"}"), "goldie", 403);
+        call(put("/api/trading/strategies/" + ownBreakout("goldie", "goldie CE")).content("{\"mode\":\"LIVE\"}"), "goldie", 403);
 
         // The same Kite account cannot be linked to a second user.
         plan("copycat", "GOLD");
@@ -134,9 +141,10 @@ class KiteAccountIntegrationTest {
         verify(own).cancelOrder("OWN-1");
 
         // LIVE strategies are allowed, and the account cannot be removed while one is LIVE.
-        assertThat(call(put("/api/trading/strategies/56").content("{\"mode\":\"LIVE\"}"), "prem", 200).get("mode").asText()).isEqualTo("LIVE");
+        long prems = ownBreakout("prem", "prem CE");
+        assertThat(call(put("/api/trading/strategies/" + prems).content("{\"mode\":\"LIVE\"}"), "prem", 200).get("mode").asText()).isEqualTo("LIVE");
         call(delete("/api/trading/kite-account"), "prem", 400);
-        call(put("/api/trading/strategies/56").content("{\"mode\":\"OFF\"}"), "prem", 200);
+        call(put("/api/trading/strategies/" + prems).content("{\"mode\":\"OFF\"}"), "prem", 200);
         call(delete("/api/trading/kite-account"), "prem", 204);
 
         // A LIVE strategy whose owner's PREMIUM plan expired: the order service refuses new live entries.
@@ -144,7 +152,7 @@ class KiteAccountIntegrationTest {
         jdbc.update("UPDATE app_user SET plan = 'PREMIUM', plan_expires_at = TIMESTAMP '2000-01-01 00:00:00' WHERE username = 'prem'");
         Long prem = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'prem'", Long.class);
         TradeOrder refused = orders.place(new OrderRequest("NFO", "NIFTY26N0324150CE", "BUY", 65, "MIS", "LIMIT", 120.5, null),
-                TradingMode.LIVE, "STRATEGY", 56L, prem, false);
+                TradingMode.LIVE, "STRATEGY", prems, prem, false);
         assertThat(refused.getStatus()).isEqualTo(TradeOrder.Status.REJECTED);
         assertThat(refused.getMessage()).contains("PREMIUM");
     }
