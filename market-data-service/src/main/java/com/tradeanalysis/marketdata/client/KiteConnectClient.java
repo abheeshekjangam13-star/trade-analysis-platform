@@ -67,7 +67,9 @@ public class KiteConnectClient {
                         .header("Authorization", credentials.authHeader())
                         .retrieve()
                         .body(Map.class);
-                all.addAll(parse(body));
+                List<Candle> chunk = parse(body);
+                if (chunk.isEmpty()) log.warn("Kite returned no candles for {} {} {}..{}: {}", symbol, ivStr, fromStr, toStr, summary(body));
+                all.addAll(chunk);
                 // Stay on an interval boundary; the overlapping boundary bar is de-duplicated on persist.
                 cursor = chunkEnd;
             }
@@ -114,8 +116,18 @@ public class KiteConnectClient {
             }
             return result;
         } catch (Exception e) {
+            log.warn("Kite historical response not understood: {}", e.toString());
             return Collections.emptyList();
         }
+    }
+
+    /** What Kite said, for the log: status, error type and message, and how many candles (never the whole body). */
+    private static String summary(Map<?, ?> body) {
+        if (body == null) return "empty response";
+        Object data = body.get("data");
+        Object candles = data instanceof Map<?, ?> d ? d.get("candles") : null;
+        return "status=" + body.get("status") + " error_type=" + body.get("error_type") + " message=" + body.get("message")
+                + " candles=" + (candles instanceof List<?> l ? l.size() : "none");
     }
 
     private BigDecimal bd(Object v) {

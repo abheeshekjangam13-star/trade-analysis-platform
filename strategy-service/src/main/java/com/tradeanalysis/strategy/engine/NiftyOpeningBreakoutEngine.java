@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
  * - Second entry only on fresh breakout after position is closed
  *
  * Parameters (defaults reproduce the original rules):
- *   lots (2), lotSize (75), directions BOTH|CE|PE (BOTH), maxTradesPerDay (2), trailMinutes (1),
+ *   lots (2), lotSize (65), directions BOTH|CE|PE (BOTH), maxTradesPerDay (2), trailMinutes (1),
  *   targetPoints (0 = none), gapFilter NONE|GAP_UP|GAP_DOWN|ANY_GAP|FLAT (NONE), gap threshold as gapPct (0.2) in %
  *   of the previous close, or gapPoints in NIFTY points (set one, not both),
  *   costPerTrade in ₹ per round trip for the whole quantity (0),
@@ -94,7 +94,7 @@ public class NiftyOpeningBreakoutEngine {
             String dirs = p.stringOr("directions", "BOTH").toUpperCase();
             if (!Set.of("BOTH", "CE", "PE").contains(dirs))
                 throw new IllegalArgumentException("directions must be BOTH, CE or PE: " + dirs);
-            return new Settings(p.intOr("lots", 2), p.intOr("lotSize", 75),
+            return new Settings(p.intOr("lots", 2), p.intOr("lotSize", 65),
                     !dirs.equals("PE"), !dirs.equals("CE"),
                     p.intOr("maxTradesPerDay", 2), p.intOr("trailMinutes", 1),
                     p.doubleOr("targetPoints", 0), GapFilter.valueOf(p.stringOr("gapFilter", "NONE").toUpperCase()),
