@@ -109,7 +109,8 @@ class PaymentIntegrationTest {
         assertThat(again.get("message").asText()).isEqualTo("Already activated");
         assertThat(expiry("ravi")).isEqualTo(first);
 
-        call(post("/api/strategies/56/clone").content("{\"lots\":2}"), "ravi", 201);   // GOLD features work now
+        long ravis = call(post("/api/strategies").content("{\"name\":\"ravi\",\"type\":\"NIFTY_OPENING_BREAKOUT\",\"parameters\":{\"directions\":\"CE\"}}"), "ravi", 201).get("id").asLong();
+        call(put("/api/trading/strategies/" + ravis).content("{\"mode\":\"PAPER\"}"), "ravi", 200);   // GOLD features work now
         assertThat(emails.findByUserIdOrderByCreatedAtDesc(id("ravi"), PageRequest.of(0, 10)))
                 .anySatisfy(e -> {
                     assertThat(e.getKind()).isEqualTo(EmailNotification.Kind.PAYMENT_RECEIVED);

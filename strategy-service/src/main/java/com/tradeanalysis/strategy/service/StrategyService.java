@@ -118,7 +118,7 @@ public class StrategyService {
     public static final int MAX_LOTS = 50;
 
     /**
-     * Copies a strategy the caller can see (their own or a shared master strategy) into a new strategy owned by the
+     * Copies a strategy the caller can see (their own, or any for an admin) into a new strategy owned by the
      * caller, with their own number of lots. Everything else stays the same. The name defaults to
      * "&lt;source&gt; (N lots)", made unique among the caller's strategies.
      */
@@ -244,7 +244,7 @@ public class StrategyService {
         stratRepo.delete(s);
     }
 
-    /** A strategy the caller may see: their own, a shared master strategy, or any for an admin (else 404). */
+    /** A strategy the caller may see: their own, or any for an admin (else 404). Master strategies are admin-only. */
     @Transactional(readOnly = true)
     public Strategy get(Long id) {
         Strategy s = load(id);
@@ -258,11 +258,16 @@ public class StrategyService {
         return stratRepo.findById(id).orElseThrow(() -> new NotFoundException("Strategy not found: " + id));
     }
 
-    public boolean canSee(Strategy s) { return CurrentUser.owns(s.getCreatedByUserId()) || shared.contains(s.getId()); }
+    public boolean canSee(Strategy s) {
+        return CurrentUser.owns(s.getCreatedByUserId()) && (CurrentUser.unrestricted() || !shared.contains(s.getId()));
+    }
 
     public boolean isShared(Long strategyId) { return shared.contains(strategyId); }
 
-    public java.util.Set<Long> sharedIds() { return new java.util.TreeSet<>(shared.ids()); }
+    /** The master strategy ids, for admins (everyone else can't see them, so gets none). */
+    public java.util.Set<Long> sharedIds() {
+        return CurrentUser.unrestricted() ? new java.util.TreeSet<>(shared.ids()) : java.util.Set.of();
+    }
 
     @Transactional(readOnly = true)
     public List<Strategy> list() { return stratRepo.findAll().stream().filter(this::canSee).toList(); }

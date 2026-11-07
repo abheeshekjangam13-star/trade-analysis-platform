@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Every user (any plan) may edit and delete their own strategies; shared ones are admin-only. */
+/** Every user (any plan) may edit and delete their own strategies; master strategies are admin-only. */
 @SpringBootTest(properties = {"auth.auto-register-users=false", "auth.trust-user-header=false",
         "spring.datasource.url=jdbc:h2:mem:edit-delete-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1"})
 @AutoConfigureMockMvc
@@ -87,15 +87,14 @@ class StrategyEditDeleteIntegrationTest {
     }
 
     @Test @Order(2)
-    void nobodyElsesStrategyAndSharedOnesAreAdminOnly() throws Exception {
+    void nobodyElsesStrategyAndMasterOnesAreAdminOnly() throws Exception {
         user("ravi", "GOLD");
         long sitas = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Other'", Long.class);   // sita's (FREE: 2 max)
         call(put("/api/strategies/" + sitas).content("{\"name\":\"hijack\"}"), "ravi", 404);
         call(delete("/api/strategies/" + sitas), "ravi", 404);
 
-        JsonNode denied = call(put("/api/strategies/56").content("{\"name\":\"mine now\"}"), "ravi", 403);
-        assertThat(denied.get("message").asText()).contains("Shared");
-        call(delete("/api/strategies/56"), "ravi", 403);
+        call(put("/api/strategies/56").content("{\"name\":\"mine now\"}"), "ravi", 404);   // users can't see master strategies
+        call(delete("/api/strategies/56"), "ravi", 404);
 
         call(put("/api/strategies/" + sitas).content("{\"description\":\"checked by admin\"}"), "admin", 200);
     }
@@ -116,7 +115,10 @@ class StrategyEditDeleteIntegrationTest {
 
     @Test @Order(4)
     void tradedOrPortfolioStrategiesCantBeDeletedAndParamsLockWhileTrading() throws Exception {
-        JsonNode clone = call(post("/api/strategies/56/clone").content("{\"lots\":2}"), "ravi", 201);   // paper trading: Nifty breakout only
+        JsonNode master = call(get("/api/strategies/56"), "admin", 200);                                // paper trading: Nifty breakout only
+        var mine = json.createObjectNode().put("name", "Ravi paper").put("type", master.get("type").asText());
+        mine.set("parameters", master.get("parameters"));
+        JsonNode clone = call(post("/api/strategies").content(mine.toString()), "ravi", 201);
         long s = clone.get("id").asLong();
         com.fasterxml.jackson.databind.node.ObjectNode params = (com.fasterxml.jackson.databind.node.ObjectNode) clone.get("parameters").deepCopy();
         params.put("lots", "3");
@@ -156,7 +158,7 @@ class StrategyEditDeleteIntegrationTest {
     void anyPlanCanTurnTradingOffButOnlyGoldCanTurnItOn() throws Exception {
         long mine = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Other'", Long.class);   // sita's, FREE
         call(put("/api/trading/strategies/" + mine).content("{\"mode\":\"OFF\"}"), "sita", 200);
-        JsonNode paper = call(put("/api/trading/strategies/56").content("{\"mode\":\"PAPER\"}"), "sita", 403);
+        JsonNode paper = call(put("/api/trading/strategies/" + mine).content("{\"mode\":\"PAPER\"}"), "sita", 403);
         assertThat(paper.get("message").asText()).contains("GOLD");
     }
 }

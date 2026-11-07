@@ -86,34 +86,39 @@ class DataIsolationIntegrationTest {
     }
 
     @Test @Order(2)
-    void strategiesArePrivateExceptTheSharedMasterOnes() throws Exception {
+    void strategiesArePrivateAndMasterOnesAreAdminOnly() throws Exception {
         ravisStrategy = strategy("ravi", "my breakout");
         sitasStrategy = strategy("sita", "my breakout");          // same name is fine for another user
         call(post("/api/strategies").content("""
                 {"name":"my breakout","type":"NIFTY_OPENING_BREAKOUT","parameters":{}}"""), "ravi", 409);   // but not twice for one user
 
         List<Long> ravis = ids(call(get("/api/strategies"), "ravi", 200), "id");
-        assertThat(ravis).contains(ravisStrategy, 55L, 56L).doesNotContain(sitasStrategy);
+        assertThat(ravis).contains(ravisStrategy).doesNotContain(sitasStrategy, 55L, 56L);
         call(get("/api/strategies/" + sitasStrategy), "ravi", 404);  // as if it didn't exist
-        call(get("/api/strategies/56"), "ravi", 200);                 // master strategies are shared, read-only
-        assertThat(call(get("/api/strategies/shared"), "ravi", 200).toString()).isEqualTo("[55,56]");
-        assertThat(ids(call(get("/api/strategies"), "admin", 200), "id")).contains(ravisStrategy, sitasStrategy);
+        call(get("/api/strategies/56"), "ravi", 404);                 // master strategies are admin-only
+        call(post("/api/strategies/56/clone").content("{\"lots\":2}"), "ravi", 404);
+        call(post("/api/backtests").param("strategyId", "56").param("symbol", "NIFTY 50").param("lookbackDays", "30"), "ravi", 404);
+        assertThat(call(get("/api/strategies/shared"), "ravi", 200).toString()).isEqualTo("[]");
+        assertThat(call(get("/api/strategies/shared"), "admin", 200).toString()).isEqualTo("[55,56]");
+        assertThat(ids(call(get("/api/strategies"), "admin", 200), "id")).contains(ravisStrategy, sitasStrategy, 55L, 56L);
+        call(get("/api/strategies/56"), "admin", 200);
     }
 
     @Test @Order(3)
     void backtestsReportsAndTradesArePrivate() throws Exception {
-        ravisBacktest = backtest("ravi", 56);
-        sitasBacktest = backtest("sita", 56);                          // both backtested the shared strategy
+        ravisBacktest = backtest("ravi", ravisStrategy);
+        sitasBacktest = backtest("sita", sitasStrategy);
 
-        assertThat(ids(call(get("/api/backtests/56"), "ravi", 200), "id")).containsExactly(ravisBacktest);
-        assertThat(ids(call(get("/api/backtests/56"), "admin", 200), "id")).contains(ravisBacktest, sitasBacktest);
+        assertThat(ids(call(get("/api/backtests/" + ravisStrategy), "ravi", 200), "id")).containsExactly(ravisBacktest);
+        assertThat(ids(call(get("/api/backtests/" + sitasStrategy), "admin", 200), "id")).containsExactly(sitasBacktest);
+        call(get("/api/backtests/56"), "ravi", 404);                   // master strategy: admin-only
         call(get("/api/backtests/" + sitasBacktest + "/daily"), "ravi", 404);
         call(get("/api/backtests/" + sitasBacktest + "/monthly"), "ravi", 404);
         call(get("/api/nifty-trades/backtest/" + sitasBacktest), "ravi", 404);
         call(get("/api/backtests/" + sitasStrategy), "ravi", 404);     // another user's strategy
 
         assertThat(ids(call(get("/api/nifty-trades/date/2026-11-03"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
-        assertThat(ids(call(get("/api/nifty-trades/strategy/56"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
+        assertThat(ids(call(get("/api/nifty-trades/strategy/" + ravisStrategy), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
         assertThat(ids(call(get("/api/nifty-trades/date/2026-11-03"), "admin", 200), "backtestResultId")).contains(ravisBacktest, sitasBacktest);
         assertThat(ids(call(get("/api/nifty-trades"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
         assertThat(ids(call(get("/api/nifty-trades?from=2026-11-01&to=2026-11-03"), "ravi", 200), "backtestResultId")).containsOnly(ravisBacktest);
@@ -124,8 +129,9 @@ class DataIsolationIntegrationTest {
 
     @Test @Order(4)
     void portfoliosArePrivate() throws Exception {
-        long ravis = call(post("/api/portfolios").content("{\"name\":\"CE + PE\",\"strategyIds\":[55,56]}"), "ravi", 201).get("id").asLong();
-        call(post("/api/portfolios").content("{\"name\":\"CE + PE\",\"strategyIds\":[55,56]}"), "sita", 201);   // same name, other user
+        long ravis = call(post("/api/portfolios").content("{\"name\":\"CE + PE\",\"strategyIds\":[" + ravisStrategy + "]}"), "ravi", 201).get("id").asLong();
+        call(post("/api/portfolios").content("{\"name\":\"CE + PE\",\"strategyIds\":[" + sitasStrategy + "]}"), "sita", 201);   // same name, other user
+        call(post("/api/portfolios").content("{\"name\":\"masters\",\"strategyIds\":[55,56]}"), "sita", 404);   // admin-only strategies
         call(post("/api/portfolios").content("{\"name\":\"spy\",\"strategyIds\":[" + ravisStrategy + "]}"), "sita", 404);   // not her strategy
         assertThat(call(get("/api/portfolios"), "sita", 200)).hasSize(1);
         call(get("/api/portfolios/" + ravis), "sita", 404);
@@ -136,7 +142,8 @@ class DataIsolationIntegrationTest {
 
     @Test @Order(5)
     void paperTradingIsPerUser() throws Exception {
-        call(put("/api/trading/strategies/56").content("{\"mode\":\"PAPER\"}"), "ravi", 200);
+        call(put("/api/trading/strategies/" + ravisStrategy).content("{\"mode\":\"PAPER\"}"), "ravi", 200);
+        call(put("/api/trading/strategies/56").content("{\"mode\":\"PAPER\"}"), "ravi", 404);   // admin-only strategy
         JsonNode sitasModes = call(get("/api/trading/strategies"), "sita", 200);
         sitasModes.forEach(m -> assertThat(m.get("mode").asText()).as("sita's #" + m.get("strategyId")).isEqualTo("OFF"));   // ravi's switch isn't hers
         assertThat(ids(sitasModes, "strategyId")).doesNotContain(ravisStrategy);

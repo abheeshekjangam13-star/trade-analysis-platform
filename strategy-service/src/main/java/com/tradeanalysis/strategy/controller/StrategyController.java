@@ -52,7 +52,7 @@ public class StrategyController {
 
     @PostMapping("/{id}/clone")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Clone a strategy you can see (e.g. a shared master strategy) as your own, with your own lots")
+    @Operation(summary = "Clone a strategy you can see as your own, with your own lots")
     public Strategy cloneWithLots(@PathVariable Long id, @RequestBody CloneRequest body) {
         if (body == null || body.lots() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing required field: lots");
         return svc.cloneWithLots(id, body.lots(), body.name());
@@ -91,7 +91,7 @@ public class StrategyController {
     public List<StrategyService.Performance> performance() { return svc.performance(); }
 
     @GetMapping("/shared")
-    @Operation(summary = "Ids of the master strategies every user may see (read-only); all others are private to their creator")
+    @Operation(summary = "Ids of the master strategies (admins only see them; empty for everyone else)")
     public java.util.Set<Long> shared() { return svc.sharedIds(); }
 
     @GetMapping("/{id}")
