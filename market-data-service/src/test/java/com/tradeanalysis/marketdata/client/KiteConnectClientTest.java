@@ -23,4 +23,13 @@ class KiteConnectClientTest {
         Instant from = Instant.parse("2026-11-03T05:45:58Z");
         assertThat(KiteConnectClient.alignDown(from, Interval.DAY_1)).isEqualTo(from);
     }
+
+    @org.junit.jupiter.api.Test
+    void readsKiteCandleTimesWithOrWithoutAColonInTheOffset() {
+        Instant expected = Instant.parse("2026-10-01T03:45:00Z");   // 09:15 IST
+        org.assertj.core.api.Assertions.assertThat(KiteConnectClient.parseKiteTime("2026-10-01T09:15:00+0530")).isEqualTo(expected);
+        org.assertj.core.api.Assertions.assertThat(KiteConnectClient.parseKiteTime("2026-10-01T09:15:00+05:30")).isEqualTo(expected);
+        org.assertj.core.api.Assertions.assertThat(KiteConnectClient.parseKiteTime("2026-10-01 09:15:00")).isEqualTo(expected);
+        org.assertj.core.api.Assertions.assertThat(KiteConnectClient.parseKiteTime("2026-10-01T03:45:00Z")).isEqualTo(expected);
+    }
 }

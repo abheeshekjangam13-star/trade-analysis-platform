@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -107,9 +108,7 @@ public class KiteConnectClient {
             for (Object row : candles) {
                 List<?> r = (List<?>) row;
                 // [timestamp, open, high, low, close, volume]
-                String tsRaw = r.get(0).toString();
-                Instant ts = Instant.parse(
-                        tsRaw.contains("+") ? tsRaw.replace(" ", "T") : tsRaw.replace(" ", "T") + "+05:30");
+                Instant ts = parseKiteTime(r.get(0).toString());
                 result.add(new Candle(ts,
                         bd(r.get(1)), bd(r.get(2)), bd(r.get(3)), bd(r.get(4)),
                         r.get(5) == null ? 0L : ((Number) r.get(5)).longValue()));
@@ -129,6 +128,22 @@ public class KiteConnectClient {
         return "status=" + body.get("status") + " error_type=" + body.get("error_type") + " message=" + body.get("message")
                 + " candles=" + (candles instanceof List<?> l ? l.size() : "none");
     }
+
+    /**
+     * Kite's candle time, e.g. "2026-10-01T09:15:00+0530" (offset without a colon), "+05:30", or no offset (IST).
+     * Instant.parse only accepts "+0530" on newer JDKs, so the format is spelled out to work on Java 21 too.
+     */
+    static Instant parseKiteTime(String raw) {
+        String t = raw.trim().replace(' ', 'T');
+        if (!t.matches(".*([+-]\\d{2}:?\\d{2}|Z)$")) t += "+05:30";
+        return OffsetDateTime.parse(t, KITE_TIME).toInstant();
+    }
+
+    private static final DateTimeFormatter KITE_TIME = new java.time.format.DateTimeFormatterBuilder()
+            .append(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            .optionalStart().appendOffset("+HH:MM", "Z").optionalEnd()
+            .optionalStart().appendOffset("+HHMM", "Z").optionalEnd()
+            .toFormatter();
 
     private BigDecimal bd(Object v) {
         return v == null ? BigDecimal.ZERO : new BigDecimal(v.toString());
