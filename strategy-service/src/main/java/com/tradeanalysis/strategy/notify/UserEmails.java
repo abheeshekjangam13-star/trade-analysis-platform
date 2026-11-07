@@ -72,6 +72,63 @@ final class UserEmails {
                 + "Your plan is active now: " + appUrl + SIGNATURE);
     }
 
+    static Message paymentFailed(AppUser u, Plan plan, long amountPaise, String reason, String appUrl) {
+        return new Message("Payment failed: " + plan + " plan not activated",
+                greeting(u) + "Your payment of ₹" + String.format("%.2f", amountPaise / 100.0) + " for the " + plan
+                + " plan did not go through, so the plan was not activated.\n\n"
+                + "Reason: " + orDash(reason) + "\n\n"
+                + "No money was taken; if your bank shows a debit, it is refunded automatically, usually within 5–7 working days.\n"
+                + "You can try again here: " + appUrl + "/account" + SIGNATURE);
+    }
+
+    static Message planChanged(AppUser u, Plan from, String appUrl) {
+        Plan p = u.getPlan();
+        return new Message("Your plan is now " + p,
+                greeting(u) + "An admin changed your plan from " + from + " to " + p + ".\n\n"
+                + "Plan: " + p + (p == Plan.FREE ? "" : " (₹" + p.pricePerMonth() + "/month)") + "\n"
+                + (u.getPlanExpiresAt() == null || p == Plan.FREE ? "" : "Valid until: " + DATE.format(u.getPlanExpiresAt()) + "\n")
+                + limits(p) + "\nSee your account: " + appUrl + "/account" + SIGNATURE);
+    }
+
+    static Message planExpiring(AppUser u, String appUrl) {
+        Plan p = u.getPlan();
+        return new Message("Your " + p + " plan ends on " + DATE.format(u.getPlanExpiresAt()),
+                greeting(u) + "Your " + p + " plan ends on " + DATE.format(u.getPlanExpiresAt()) + ".\n\n"
+                + "Renew it to keep " + limits(p).trim().toLowerCase(java.util.Locale.ROOT) + "\n"
+                + "After it ends your account moves to the Free plan (up to " + Plan.FREE.maxStrategies()
+                + " strategies, backtests of the last 3 months, no paper trading). Your strategies are kept.\n\n"
+                + "Renew here: " + appUrl + "/account" + SIGNATURE);
+    }
+
+    static Message planExpired(AppUser u, String appUrl) {
+        Plan p = u.getPlan();
+        return new Message("Your " + p + " plan has ended",
+                greeting(u) + "Your " + p + " plan ended on " + DATE.format(u.getPlanExpiresAt())
+                + ", so your account is now on the Free plan.\n\n"
+                + "Your strategies and reports are kept. Paper/live trading has stopped taking new entries; "
+                + "you can still turn trading off and delete strategies or portfolios.\n\n"
+                + "Renew any time: " + appUrl + "/account" + SIGNATURE);
+    }
+
+    static Message passwordChanged(AppUser u, boolean byAdmin, String appUrl) {
+        return new Message("Your password was changed",
+                greeting(u) + (byAdmin ? "An admin set a new password for your account '" : "The password of your account '")
+                + u.getUsername() + "'" + (byAdmin ? "." : " was changed.") + "\n\n"
+                + "If this wasn't you, contact the admin right away.\n"
+                + "Log in: " + appUrl + "/login" + SIGNATURE);
+    }
+
+    static Message test(AppUser u, String appUrl) {
+        return new Message("Test email from Trade Analysis",
+                greeting(u) + "This is a test email. If you can read it, email delivery from the server works.\n\n"
+                + appUrl + SIGNATURE);
+    }
+
+    private static String limits(Plan p) {
+        return "Up to " + p.maxStrategies() + " strategies, backtests of the last " + p.maxBacktestDays() + " days"
+                + (p.liveTrading() ? ", paper and live trading" : p.paperTrading() ? ", paper trading" : "") + ".\n";
+    }
+
     private static String greeting(AppUser u) {
         String name = u.getFullName() == null || u.getFullName().isBlank() ? u.getUsername() : u.getFullName();
         return "Hi " + name + ",\n\n";

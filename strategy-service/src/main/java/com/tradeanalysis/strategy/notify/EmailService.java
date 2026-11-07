@@ -51,6 +51,56 @@ public class EmailService {
                 UserEmails.paymentReceived(u, plan, amountPaise, paymentId, validUntil, appUrl));
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void paymentFailed(AppUser u, Plan plan, long amountPaise, String reason) {
+        queue(u, EmailNotification.Kind.PAYMENT_FAILED, UserEmails.paymentFailed(u, plan, amountPaise, reason, appUrl));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void planChanged(AppUser u, Plan from) { queue(u, EmailNotification.Kind.PLAN_CHANGED, UserEmails.planChanged(u, from, appUrl)); }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void passwordChanged(AppUser u, boolean byAdmin) {
+        queue(u, EmailNotification.Kind.PASSWORD_CHANGED, UserEmails.passwordChanged(u, byAdmin, appUrl));
+    }
+
+    /**
+     * Reminds paid users 3 days before their plan ends, and tells them once it has ended (each once per expiry date).
+     * Runs daily; also callable directly. Returns how many emails were queued.
+     */
+    @Transactional
+    public int planReminders(Instant now) {
+        int n = 0;
+        for (AppUser u : users.findAll()) {
+            Instant until = u.getPlanExpiresAt();
+            if (until == null || u.getPlan() == Plan.FREE || u.isAdmin() || u.getStatus() != AppUser.Status.ACTIVE || !hasEmail(u)) continue;
+            if (until.isAfter(now) && !until.isAfter(now.plus(java.time.Duration.ofDays(3)))
+                    && !repo.existsByUserIdAndKindAndCreatedAtAfter(u.getId(), EmailNotification.Kind.PLAN_EXPIRING, until.minus(java.time.Duration.ofDays(7)))) {
+                queue(u, EmailNotification.Kind.PLAN_EXPIRING, UserEmails.planExpiring(u, appUrl));
+                n++;
+            } else if (!until.isAfter(now) && until.isAfter(now.minus(java.time.Duration.ofDays(7)))   // not for long-gone expiries
+                    && !repo.existsByUserIdAndKindAndCreatedAtAfter(u.getId(), EmailNotification.Kind.PLAN_EXPIRED, until.minus(java.time.Duration.ofDays(7)))) {
+                queue(u, EmailNotification.Kind.PLAN_EXPIRED, UserEmails.planExpired(u, appUrl));
+                n++;
+            }
+        }
+        return n;
+    }
+
+    @org.springframework.scheduling.annotation.Scheduled(cron = "${notifications.plan-reminders-cron:0 0 9 * * *}", zone = "Asia/Kolkata")
+    public void dailyPlanReminders() {
+        int n = planReminders(Instant.now());
+        if (n > 0) org.slf4j.LoggerFactory.getLogger(EmailService.class).info("EMAIL plan reminders queued: {}", n);
+    }
+
+    /** ADMIN check of the mail setup: queues a test email to this user. Returns its id (or null without an address). */
+    @Transactional
+    public Long test(AppUser to) {
+        if (!hasEmail(to)) return null;
+        UserEmails.Message m = UserEmails.test(to, appUrl);
+        return repo.save(new EmailNotification(to.getId(), to.getEmail(), EmailNotification.Kind.TEST, m.subject(), m.body())).getId();
+    }
+
     private void queue(AppUser to, EmailNotification.Kind kind, UserEmails.Message m) {
         if (!hasEmail(to)) return;
         repo.save(new EmailNotification(to.getId(), to.getEmail(), kind, m.subject(), m.body()));
