@@ -69,6 +69,22 @@ public class TradingController {
         return out;
     }
 
+    /**
+     * Today's special exchange session (e.g. Muhurat trading), for the banner: null on normal days. {@code open}
+     * says whether the market counts as open right now.
+     */
+    @GetMapping("/session")
+    public Map<String, Object> session() {
+        java.time.Instant now = clock.instant();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("open", LiveStrategyRunner.marketOpen(now));
+        out.put("special", com.tradeanalysis.common.market.SpecialSessions.on(now.atZone(com.tradeanalysis.common.market.SpecialSessions.IST).toLocalDate())
+                .map(s -> Map.of("name", s.name(), "date", s.date().toString(), "preOpen", s.preOpen().toString(),
+                        "tradingFrom", s.tradingFrom().toString(), "tradingTo", s.tradingTo().toString(), "close", s.close().toString()))
+                .orElse(null));
+        return out;
+    }
+
     @GetMapping("/controls")
     public TradingControl controls() { return trading.controls(); }
 

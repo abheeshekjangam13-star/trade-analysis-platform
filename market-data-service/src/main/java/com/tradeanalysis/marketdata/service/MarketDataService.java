@@ -152,6 +152,7 @@ public class MarketDataService {
 
     /** Weekdays 09:15–15:31 IST (holidays aside). */
     static boolean marketOpen(Instant t) {
+        if (com.tradeanalysis.common.market.SpecialSessions.open(t)) return true;   // e.g. Muhurat trading on a Sunday
         ZonedDateTime z = t.atZone(IST);
         if (z.getDayOfWeek() == DayOfWeek.SATURDAY || z.getDayOfWeek() == DayOfWeek.SUNDAY) return false;
         LocalTime lt = z.toLocalTime();

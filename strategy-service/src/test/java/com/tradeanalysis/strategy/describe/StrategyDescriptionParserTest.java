@@ -167,4 +167,21 @@ class StrategyDescriptionParserTest {
                 .anySatisfy(w -> assertThat(w).startsWith("Large-gap skip needs a number"));
         assertThat(r.findings()).anySatisfy(f -> assertThat(f.note()).contains("Gap % keeps its default 0.2%"));
     }
+
+    @Test
+    void muhuratSessionReferenceCandleAndDate() {
+        var r = parse("CE only. Reference candle at 14:20. Entries from 14:25 until 15:10. Max 2 trades per day. "
+                + "SL at the low of the first candle. Max SL 20 points. Target 35 points. Trail on 1-min lows. "
+                + "Trail after 20 points in profit. 1 lot. Only on 2026-11-08.");
+        assertThat(r.parameters()).containsEntry("referenceTime", "14:20").containsEntry("onlyOn", "2026-11-08")
+                .containsEntry("entryFrom", "14:25").containsEntry("entryUntil", "15:10")
+                .containsEntry("initialStop", "OPPOSITE").containsEntry("directions", "CE")
+                .containsEntry("maxTradesPerDay", "2").containsEntry("maxStopPoints", "20")
+                .containsEntry("targetPoints", "35").containsEntry("trailMinutes", "1")
+                .containsEntry("trailAfterPoints", "20").containsEntry("lots", "1");
+        assertThat(r.notUnderstood()).isEmpty();
+        assertThat(r.warnings()).isEmpty();
+        assertThat(parse("CE only. First candle at 2:20 pm. Trade only on 8 Nov 2026.").parameters())
+                .containsEntry("referenceTime", "14:20").containsEntry("onlyOn", "2026-11-08");
+    }
 }

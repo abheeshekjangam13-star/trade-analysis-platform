@@ -155,4 +155,22 @@ class LiveStrategyRunnerTest {
         assertThat(orders.findByTradeDateAndUserIdOrderByCreatedAtDesc(TUE, a)).extracting(TradeOrder::getTransactionType).containsExactly("BUY");
         assertThat(orders.findByTradeDateAndUserIdOrderByCreatedAtDesc(TUE, b)).extracting(TradeOrder::getTransactionType).containsExactly("BUY");
     }
+
+    @Test
+    void muhuratTradingOnSunday8Nov2026CountsAsMarketHours() {
+        LocalDate muhurat = LocalDate.of(2026, 11, 8);
+        assertThat(LiveStrategyRunner.marketOpen(at(muhurat, 14, 4))).isFalse();
+        assertThat(LiveStrategyRunner.marketOpen(at(muhurat, 14, 20))).isTrue();
+        assertThat(LiveStrategyRunner.marketOpen(at(muhurat, 15, 39))).isTrue();
+        assertThat(LiveStrategyRunner.marketOpen(at(muhurat, 15, 40))).isFalse();
+        assertThat(LiveStrategyRunner.marketOpen(at(LocalDate.of(2026, 11, 15), 14, 30))).isFalse();   // a normal Sunday
+
+        // The banner's lookup: the whole day has the session, with its trading hours
+        var s = com.tradeanalysis.common.market.SpecialSessions.on(muhurat).orElseThrow();
+        assertThat(s.name()).isEqualTo("Muhurat trading");
+        assertThat(s.tradingFrom()).hasToString("14:20");
+        assertThat(s.tradingTo()).hasToString("15:30");
+        assertThat(com.tradeanalysis.common.market.SpecialSessions.on(LocalDate.of(2026, 11, 9))).isEmpty();
+        assertThat(com.tradeanalysis.common.market.SpecialSessions.at(at(muhurat, 12, 16))).isEmpty();   // before pre-open
+    }
 }

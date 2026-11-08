@@ -4,6 +4,7 @@ import com.tradeanalysis.common.indicator.Params;
 import com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -28,6 +29,8 @@ public class StrategyDescriptionParser {
     private static final int F = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
     private static final String NUM = "(\\d+(?:\\.\\d+)?)";
     private static final String TIME = "(\\d{1,2}(?:[:.]\\d{2})?\\s*(?:am|pm)?)";
+    /** 2026-11-08, 08-11-2026, 8 Nov 2026 or 8 November 2026. */
+    private static final String DATE = "(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{4}|\\d{1,2}\\s+[a-z]{3,9}\\s+\\d{4})";
     private static final Map<String, Integer> WORDS = Map.of("one", 1, "two", 2, "three", 3, "four", 4, "five", 5,
             "single", 1, "a", 1, "once", 1, "twice", 2);
     private static final String COUNT = "(\\d+|one|two|three|four|five|single|a)";
@@ -99,6 +102,13 @@ public class StrategyDescriptionParser {
                 + "|\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|below|above)\\s+(the\\s+)?(low|high)\\s+of\\s+(the\\s+)?(first|reference|opening|9[:.]15)\\b[^.;\\n]{0,40}?candle(\\s*\\(?\\s*9[:.]15\\s+candle\\s+(low|high)\\s*\\)?)?"
                 + "|\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|below|above)\\s+(the\\s+)?(9[:.]15|first|reference)\\s+candle'?s?\\s+(low|high)\\b",
                 m -> s.set("initialStop", "OPPOSITE", m, "Initial SL at the reference candle's low (CE) / high (PE)"));
+
+        // Reference candle at another time (special sessions such as Muhurat trading), and a single trading date.
+        s.match("\\b(reference|ref|first|opening)\\s*(5[- ]?min(ute)?\\s*)?candle\\s*(at|from|starts?\\s+at|=|:)\\s*" + TIME
+                + "|\\breference\\s+time\\s*(=|:|at|of)?\\s*" + TIME,
+                m -> s.setTime("referenceTime", m.group(5) != null ? m.group(5) : m.group(7), m));
+        s.match("\\b(trade\\s+)?only\\s+on\\s+" + DATE + "|\\bon\\s+" + DATE + "\\s+only\\b",
+                m -> s.setDate("onlyOn", m.group(2) != null ? m.group(2) : m.group(3), m));
 
         // The entry is the engine's breakout: a 5-min candle crossing the reference candle.
         s.builtin("\\b(watch|observe|check|see)?\\s*(if\\s+)?(the\\s+)?(9[:.]2[05]|next|second)\\s+candle\\s+(closes\\s+|breaks\\s+|crosses\\s+|barely\\s+crosses\\s+)(above|below|over)\\s+(the\\s+)?(9[:.]1?[05]|first|reference)\\s+candle('?s\\s+(high|low))?",
@@ -364,6 +374,23 @@ public class StrategyDescriptionParser {
                 warnings.add(key + " " + t + " is outside market hours 09:15–15:30; not set"); return;
             }
             set(key, t.toString(), m, null);
+        }
+
+        void setDate(String key, String raw, Matcher m) {
+            LocalDate d = date(raw);
+            if (d == null) { warnings.add(key + ": couldn't read the date \"" + raw.trim() + "\""); return; }
+            set(key, d.toString(), m, "Trades on " + d + " only");
+        }
+
+        private static LocalDate date(String raw) {
+            String r = raw.trim();
+            for (String f : new String[]{"yyyy-MM-dd", "d-M-yyyy", "d/M/yyyy", "d MMM yyyy", "d MMMM yyyy"}) {
+                try {
+                    return LocalDate.parse(r, new java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive()
+                            .appendPattern(f).toFormatter(Locale.ENGLISH));
+                } catch (java.time.format.DateTimeParseException ignored) { }
+            }
+            return null;
         }
 
         private static LocalTime time(String raw) {

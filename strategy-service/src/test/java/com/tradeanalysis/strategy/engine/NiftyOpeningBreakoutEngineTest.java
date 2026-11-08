@@ -605,4 +605,24 @@ class NiftyOpeningBreakoutEngineTest {
         assertThat(run(params("referenceTime", "10:45", "onlyOn", "2026-10-27"), breakout, List.of(), closeOf(10, 50), null)
                 .tradeLogs()).hasSize(1);
     }
+
+    @Test
+    void muhuratSundaySessionTradesOffThe1420ReferenceCandleOnThatDayOnly() {
+        LocalDate muhurat = LocalDate.of(2026, 11, 8);   // Sunday
+        List<Candle> five = List.of(
+                barOn(muhurat, 14, 20, 24360, 24372, 24345, 24369),   // reference candle
+                barOn(muhurat, 14, 25, 24369, 24380, 24360, 24378),   // closes above 24,372 → CE
+                barOn(muhurat, 14, 30, 24378, 24420, 24375, 24415));  // +35 from entry 24,378 → target 24,413
+        Params p = params("referenceTime", "14:20", "onlyOn", "2026-11-08", "initialStop", "OPPOSITE", "directions", "CE",
+                "entryFrom", "14:25", "entryUntil", "15:10", "maxStopPoints", "20", "targetPoints", "35",
+                "trailMinutes", "1", "trailAfterPoints", "20", "lots", "1", "maxTradesPerDay", "2");
+        Instant end = barOn(muhurat, 14, 30, 0, 0, 0, 0).timestamp().plusSeconds(300);
+        var trades = run(p, five, List.of(), end, null).tradeLogs();
+        assertThat(trades).hasSize(1);
+        NiftyTradeLog t = trades.get(0);
+        assertThat(t.getOptionType()).isEqualTo("CE");
+        assertThat(t.getInitialStopLoss()).isEqualTo(24358.0);   // reference low 24,345 is 33 away: capped at entry − 20
+        assertThat(t.getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(t.getLotSize()).isEqualTo(65);
+    }
 }

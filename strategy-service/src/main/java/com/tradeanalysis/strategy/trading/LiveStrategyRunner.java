@@ -105,8 +105,9 @@ public class LiveStrategyRunner {
         ZonedDateTime t = now.atZone(IST);
         DayOfWeek d = t.getDayOfWeek();
         LocalTime time = t.toLocalTime();
-        return d != DayOfWeek.SATURDAY && d != DayOfWeek.SUNDAY
-                && !time.isBefore(LocalTime.of(9, 20)) && !time.isAfter(LocalTime.of(15, 31));
+        return (d != DayOfWeek.SATURDAY && d != DayOfWeek.SUNDAY
+                && !time.isBefore(LocalTime.of(9, 20)) && !time.isAfter(LocalTime.of(15, 31)))
+                || com.tradeanalysis.common.market.SpecialSessions.open(now);   // e.g. Muhurat trading on a Sunday
     }
 
     String run(StrategyLiveConfig cfg) {
