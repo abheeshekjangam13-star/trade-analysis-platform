@@ -56,4 +56,16 @@ class OptionEstimatesTest {
         }
         assertThat(StrategyPreviewController.pointsForLoss(com.tradeanalysis.common.market.Underlying.NIFTY, true, spot, years, 0.13, 130, 85, 1_000_000)).isNull();   // more than the premium
     }
+
+    @Test
+    void aTradeOfABacktestNotYetSavedHasNoIdAndStillGetsAPremium() {
+        // A running backtest's trades have no id yet; the capital lookup must not fail on the null key.
+        OptionEstimates estimates = new OptionEstimates(org.mockito.Mockito.mock(com.tradeanalysis.strategy.engine.MarketDataClient.class));
+        com.tradeanalysis.strategy.model.NiftyTradeLog t = new com.tradeanalysis.strategy.model.NiftyTradeLog(null, "NIFTY 50", LocalDate.of(2026, 11, 3), 1,
+                "BREAKOUT", 24150, 24080, Instant.parse("2026-11-03T03:50:00Z"), Instant.parse("2026-11-03T03:50:00Z"),
+                24150, "CE", 24150, 2, 65, 24115);
+        estimates.estimate(java.util.List.of(t), java.util.Map.of());
+        assertThat(t.getEstEntryPremium()).isNotNull().isPositive();
+        assertThat(t.getCapitalUsedPct()).isNull();   // no backtest capital to compare with yet
+    }
 }

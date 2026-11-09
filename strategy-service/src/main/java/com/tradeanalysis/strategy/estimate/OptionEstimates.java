@@ -136,7 +136,9 @@ public class OptionEstimates {
             com.tradeanalysis.common.market.Underlying u = underlyingOf(t);
             double years = yearsToExpiry(entry, expiryFor(u, t.getTradeDate()));
             double premium = price("CE".equals(t.getOptionType()), t.getEntrySpotPrice(), t.getStrikePrice(), years, vol);
-            t.estimated(premium, capitalByBacktest.get(t.getBacktestResultId()), vol, assumed);
+            // A trade of a backtest that is still running has no id yet, and Map.of() rejects a null key.
+            Double capital = t.getBacktestResultId() == null ? null : capitalByBacktest.get(t.getBacktestResultId());
+            t.estimated(premium, capital, vol, assumed);
         }
     }
 }
