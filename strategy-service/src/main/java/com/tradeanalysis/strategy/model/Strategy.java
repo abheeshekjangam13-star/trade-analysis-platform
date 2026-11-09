@@ -38,6 +38,13 @@ public class Strategy {
     /** Strategy this one was cloned from (null when created from scratch). */
     private Long clonedFromStrategyId;
 
+    /** Set when the strategy was deleted: it is hidden everywhere, but the row and its history are kept. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Instant deletedAt;
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Long deletedByUserId;
+
     protected Strategy() {}
 
     public Strategy(String name, String description, String type, Map<String, String> parameters) {
@@ -63,4 +70,19 @@ public class Strategy {
         this.parameters.putAll(params);
     }
     public void setClonedFromStrategyId(Long id) { this.clonedFromStrategyId = id; }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isDeleted() { return deletedAt != null; }
+    public Instant getDeletedAt() { return deletedAt; }
+    public Long getDeletedByUserId() { return deletedByUserId; }
+
+    /**
+     * Soft delete: hides the strategy and frees its name (names are unique per owner), so the owner can reuse it.
+     */
+    public void softDelete(Long byUserId, Instant at) {
+        this.deletedAt = at;
+        this.deletedByUserId = byUserId;
+        String suffix = " [deleted " + id + "]";
+        this.name = (name.length() + suffix.length() > 255 ? name.substring(0, 255 - suffix.length()) : name) + suffix;
+    }
 }

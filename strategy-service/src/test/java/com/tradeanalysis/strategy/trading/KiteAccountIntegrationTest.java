@@ -34,6 +34,7 @@ class KiteAccountIntegrationTest {
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate jdbc;
     @Autowired OrderService orders;
+    @Autowired LivePositionRepository positionRepo;
     @MockitoBean KiteApi platform;             // the admin's platform session
     @MockitoSpyBean KiteAccounts accounts;
     final KiteApi own = mock(KiteApi.class);   // the user's own Kite account
@@ -155,5 +156,28 @@ class KiteAccountIntegrationTest {
                 TradingMode.LIVE, "STRATEGY", prems, prem, false);
         assertThat(refused.getStatus()).isEqualTo(TradeOrder.Status.REJECTED);
         assertThat(refused.getMessage()).contains("PREMIUM");
+    }
+
+    @Test
+    void positionHistoryCoversADateRangeAndShowsUsersOnlyTheirOwn() throws Exception {
+        plan("hist_a", "GOLD"); plan("hist_b", "GOLD");
+        long a = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'hist_a'", Long.class);
+        long b = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'hist_b'", Long.class);
+        long sa = ownBreakout("hist_a", "hist a strategy");
+        java.time.LocalDate d1 = java.time.LocalDate.of(2026, 10, 1), d2 = java.time.LocalDate.of(2026, 10, 15), d3 = java.time.LocalDate.of(2026, 11, 2);
+        for (var d : new java.time.LocalDate[]{d2, d1, d3})
+            positionRepo.save(new LivePosition(sa, a, d, TradingMode.PAPER, "CE", "NIFTY" + d + "CE", 65,
+                    d.atTime(9, 25).atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant(), 24000, 23980.0));
+        positionRepo.save(new LivePosition(sa, b, d2, TradingMode.LIVE, "PE", "NIFTYBPE", 65,
+                d2.atTime(9, 30).atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant(), 24000, 24020.0));
+
+        JsonNode mine = call(get("/api/trading/positions/history?from=2026-10-01&to=2026-10-31"), "hist_a", 200);
+        assertThat(mine).hasSize(2);                                     // d3 is outside the range; b's is not mine
+        assertThat(mine.get(0).get("tradeDate").asText()).isEqualTo("2026-10-01");   // oldest first
+        assertThat(mine.get(1).get("tradeDate").asText()).isEqualTo("2026-10-15");
+        assertThat(call(get("/api/trading/positions/history?from=2026-10-01&to=2026-11-30"), "hist_b", 200)).hasSize(1);
+
+        call(get("/api/trading/positions/history?from=2025-01-01&to=2026-11-30"), "hist_a", 400);   // more than 400 days
+        call(get("/api/trading/positions/history?from=2026-11-30&to=2026-10-01"), "hist_a", 400);   // from after to
     }
 }

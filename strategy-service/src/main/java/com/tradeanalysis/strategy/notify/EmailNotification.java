@@ -36,6 +36,11 @@ public class EmailNotification {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String body;
 
+    /** The HTML version (null for emails queued before HTML templates). */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(columnDefinition = "TEXT")
+    private String htmlBody;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 12)
     private Status status = Status.PENDING;
@@ -57,6 +62,11 @@ public class EmailNotification {
         this.userId = userId; this.recipient = recipient; this.kind = kind; this.subject = subject; this.body = body;
     }
 
+    public EmailNotification(Long userId, String recipient, Kind kind, String subject, String body, String htmlBody) {
+        this(userId, recipient, kind, subject, body);
+        this.htmlBody = htmlBody;
+    }
+
     public void sent(Instant at)       { status = Status.SENT; sentAt = at; attempts++; lastError = null; }
     public void logged(Instant at)     { status = Status.LOGGED; sentAt = at; }
     public void failed(String error)   {
@@ -74,6 +84,7 @@ public class EmailNotification {
     public Kind getKind()        { return kind; }
     public String getSubject()   { return subject; }
     public String getBody()      { return body; }
+    public String getHtmlBody()  { return htmlBody; }
     public Status getStatus()    { return status; }
     public int getAttempts()     { return attempts; }
     public String getLastError() { return lastError; }

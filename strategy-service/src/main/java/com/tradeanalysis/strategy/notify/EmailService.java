@@ -108,12 +108,12 @@ public class EmailService {
     public Long test(AppUser to) {
         if (!hasEmail(to)) return null;
         UserEmails.Message m = UserEmails.test(to, appUrl);
-        return repo.save(new EmailNotification(to.getId(), to.getEmail(), EmailNotification.Kind.TEST, m.subject(), m.body())).getId();
+        return repo.save(new EmailNotification(to.getId(), to.getEmail(), EmailNotification.Kind.TEST, m.subject(), m.body(), m.html())).getId();
     }
 
     private void queue(AppUser to, EmailNotification.Kind kind, UserEmails.Message m) {
         if (!hasEmail(to)) return;
-        repo.save(new EmailNotification(to.getId(), to.getEmail(), kind, m.subject(), m.body()));
+        repo.save(new EmailNotification(to.getId(), to.getEmail(), kind, m.subject(), m.body(), m.html()));
     }
 
     private static boolean hasEmail(AppUser u) { return u.getEmail() != null && !u.getEmail().isBlank(); }

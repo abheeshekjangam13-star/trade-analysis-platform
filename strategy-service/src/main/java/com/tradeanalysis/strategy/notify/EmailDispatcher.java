@@ -5,8 +5,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.mail.javamail.MimeMessagePreparator;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -55,6 +56,22 @@ public class EmailDispatcher {
         if (ids != null) ids.forEach(this::dispatch);
     }
 
+    /**
+     * The email as a MIME message: plain text plus the HTML version (multipart/alternative) when there is one, so
+     * clients without HTML still read it.
+     */
+    MimeMessagePreparator message(EmailNotification n) {
+        return mime -> {
+            boolean html = n.getHtmlBody() != null && !n.getHtmlBody().isBlank();
+            MimeMessageHelper h = new MimeMessageHelper(mime, html, "UTF-8");
+            if (!from.isBlank()) h.setFrom(from);
+            h.setTo(n.getRecipient());
+            h.setSubject(n.getSubject());
+            if (html) h.setText(n.getBody(), n.getHtmlBody());
+            else h.setText(n.getBody());
+        };
+    }
+
     /** Sends (or logs) one email and records the outcome. Each email has its own transaction. */
     public void dispatch(Long id) {
         tx.executeWithoutResult(s -> {
@@ -67,12 +84,7 @@ public class EmailDispatcher {
                 return;
             }
             try {
-                SimpleMailMessage m = new SimpleMailMessage();
-                if (!from.isBlank()) m.setFrom(from);
-                m.setTo(n.getRecipient());
-                m.setSubject(n.getSubject());
-                m.setText(n.getBody());
-                mail.send(m);
+                mail.send(message(n));
                 n.sent(clock.instant());
                 log.info("EMAIL sent id={} to={} kind={}", n.getId(), n.getRecipient(), n.getKind());
             } catch (RuntimeException e) {

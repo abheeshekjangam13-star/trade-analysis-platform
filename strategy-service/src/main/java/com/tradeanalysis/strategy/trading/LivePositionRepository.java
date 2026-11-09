@@ -11,6 +11,8 @@ public interface LivePositionRepository extends JpaRepository<LivePosition, Long
     Optional<LivePosition> findByStrategyIdAndUserIdAndModeAndEntryCandle(Long strategyId, Long userId, TradingMode mode, Instant entryCandle);
     List<LivePosition> findByTradeDateOrderByOpenedAtDesc(LocalDate date);
     List<LivePosition> findByTradeDateAndUserIdOrderByOpenedAtDesc(LocalDate date, Long userId);
+    List<LivePosition> findByTradeDateBetweenOrderByTradeDateAscOpenedAtAsc(LocalDate from, LocalDate to);
+    List<LivePosition> findByTradeDateBetweenAndUserIdOrderByTradeDateAscOpenedAtAsc(LocalDate from, LocalDate to, Long userId);
     List<LivePosition> findByStatus(LivePosition.Status status);
     List<LivePosition> findByTradeDateAndModeAndStatus(LocalDate date, TradingMode mode, LivePosition.Status status);
 }

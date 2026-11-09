@@ -158,6 +158,24 @@ public class TradingController {
                 : positionRepo.findByTradeDateAndUserIdOrderByOpenedAtDesc(day, CurrentUser.id().orElseThrow());
     }
 
+    /** At most this many days per history request. */
+    static final int MAX_HISTORY_DAYS = 400;
+
+    @GetMapping("/positions/history")
+    @Operation(summary = "Strategy positions (paper and live) between two days, oldest first: for the dashboard's history "
+            + "(default the last 90 days, at most " + MAX_HISTORY_DAYS + " days). Non-admins see their own")
+    public List<LivePosition> positionHistory(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        LocalDate end = to == null ? orders.today() : to;
+        LocalDate start = from == null ? end.minusDays(89) : from;
+        if (start.isAfter(end)) throw new TradingException("'from' must not be after 'to'");
+        if (start.plusDays(MAX_HISTORY_DAYS).isBefore(end))
+            throw new TradingException("Pick at most " + MAX_HISTORY_DAYS + " days");
+        return trading.isAdmin() ? positionRepo.findByTradeDateBetweenOrderByTradeDateAscOpenedAtAsc(start, end)
+                : positionRepo.findByTradeDateBetweenAndUserIdOrderByTradeDateAscOpenedAtAsc(start, end, CurrentUser.id().orElseThrow());
+    }
+
     /** Your own Kite account (admins without one: the platform account). */
     private KiteApi myKite() { return accounts.forUser(CurrentUser.id().orElse(null)); }
 

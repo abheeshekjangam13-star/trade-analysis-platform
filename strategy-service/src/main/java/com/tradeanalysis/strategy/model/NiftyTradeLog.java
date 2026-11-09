@@ -116,4 +116,25 @@ public class NiftyTradeLog {
     public String getExitReason()         { return exitReason; }
     public double getEstimatedPnl()       { return estimatedPnl; }
     public Instant getCreatedAt()         { return createdAt; }
+
+    // ── Estimates for display (not stored; see OptionEstimates) ──────────────
+    @Transient private Double estEntryPremium;   // option premium per unit at entry (Black-Scholes, India VIX)
+    @Transient private Double capitalUsed;       // estEntryPremium × lots × lotSize
+    @Transient private Double capitalUsedPct;    // of the backtest's capital
+    @Transient private Double estIv;             // volatility used (India VIX / 100)
+    @Transient private Boolean ivAssumed;        // true when India VIX wasn't available
+
+    public void estimated(double premium, Double capital, double iv, boolean assumed) {
+        this.estEntryPremium = Math.round(premium * 100) / 100.0;
+        this.capitalUsed = (double) Math.round(premium * lots * lotSize);
+        this.capitalUsedPct = capital == null || capital <= 0 ? null : Math.round(capitalUsed / capital * 1000) / 10.0;
+        this.estIv = Math.round(iv * 1000) / 1000.0;
+        this.ivAssumed = assumed;
+    }
+
+    public Double getEstEntryPremium()    { return estEntryPremium; }
+    public Double getCapitalUsed()        { return capitalUsed; }
+    public Double getCapitalUsedPct()     { return capitalUsedPct; }
+    public Double getEstIv()              { return estIv; }
+    public Boolean getIvAssumed()         { return ivAssumed; }
 }

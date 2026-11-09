@@ -19,7 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Every user (any plan) may edit and delete their own strategies; master strategies are admin-only. */
+/**
+ * Paid plans may edit their own strategies (Free may not); every plan may delete them (soft delete: hidden, history
+ * kept), Free up to 4 times. Master strategies are admin-only.
+ */
 @SpringBootTest(properties = {"auth.auto-register-users=false", "auth.trust-user-header=false",
         "spring.datasource.url=jdbc:h2:mem:edit-delete-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1"})
 @AutoConfigureMockMvc
@@ -64,26 +67,30 @@ class StrategyEditDeleteIntegrationTest {
     }
 
     @Test @Order(1)
-    void freeUserEditsTheirOwnStrategy() throws Exception {
+    void freeUserCantEditButAdminCan() throws Exception {
         call(post("/api/auth/setup").content("{\"username\":\"admin\",\"password\":\"Secret123\"}"), null, 200);
         user("sita", "FREE");
         long s = create("sita", "Mine");
 
+        JsonNode refused = call(put("/api/strategies/" + s).content("{\"name\":\"Mine renamed\"}"), "sita", 403);
+        assertThat(refused.get("message").asText()).contains("Upgrade to GOLD");
+        assertThat(call(get("/api/users/me/usage"), "sita", 200).get("editStrategies").asBoolean()).isFalse();
+
         JsonNode e = call(put("/api/strategies/" + s).content("{\"name\":\"Mine renamed\",\"description\":\"faster\","
-                + "\"parameters\":{\"fast\":\"5\",\"slow\":\"30\"}}"), "sita", 200);
+                + "\"parameters\":{\"fast\":\"5\",\"slow\":\"30\"}}"), "admin", 200);
         assertThat(e.get("name").asText()).isEqualTo("Mine renamed");
         assertThat(e.get("description").asText()).isEqualTo("faster");
         assertThat(e.get("parameters").get("fast").asText()).isEqualTo("5");
         assertThat(e.get("type").asText()).isEqualTo("SMA_CROSSOVER");
 
         // omitted fields stay as they are
-        JsonNode onlyName = call(put("/api/strategies/" + s).content("{\"name\":\"Mine again\"}"), "sita", 200);
+        JsonNode onlyName = call(put("/api/strategies/" + s).content("{\"name\":\"Mine again\"}"), "admin", 200);
         assertThat(onlyName.get("parameters").get("fast").asText()).isEqualTo("5");
         assertThat(onlyName.get("description").asText()).isEqualTo("faster");
 
         create("sita", "Other");
-        call(put("/api/strategies/" + s).content("{\"name\":\"Other\"}"), "sita", 409);   // your names stay unique
-        call(put("/api/strategies/" + s).content("{\"name\":\"  \"}"), "sita", 400);
+        call(put("/api/strategies/" + s).content("{\"name\":\"Other\"}"), "admin", 409);   // the owner's names stay unique
+        call(put("/api/strategies/" + s).content("{\"name\":\"  \"}"), "admin", 400);
     }
 
     @Test @Order(2)
@@ -100,7 +107,7 @@ class StrategyEditDeleteIntegrationTest {
     }
 
     @Test @Order(3)
-    void deleteRemovesBacktestsAndReportsAndFreesAPlace() throws Exception {
+    void deleteHidesTheStrategyKeepsItsHistoryAndFreesAPlace() throws Exception {
         long s = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Mine again'", Long.class);
         long bt = backtestRow(s, "sita");
         jdbc.update("INSERT INTO backtest_daily_report (backtest_result_id, trade_date, day_of_week, status, trades, net_pnl) "
@@ -108,12 +115,33 @@ class StrategyEditDeleteIntegrationTest {
 
         call(delete("/api/strategies/" + s), "sita", 204);
         call(get("/api/strategies/" + s), "sita", 404);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE strategy_id = ?", Integer.class, s)).isZero();
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_daily_report WHERE backtest_result_id = ?", Integer.class, bt)).isZero();
-        create("sita", "Room again");   // back under FREE's limit of 2
+        assertThat(call(get("/api/strategies"), "sita", 200).findValuesAsText("id")).doesNotContain(String.valueOf(s));
+        // soft delete: the row and its history stay
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM strategy WHERE id = ? AND deleted_at IS NOT NULL", Integer.class, s)).isOne();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE strategy_id = ?", Integer.class, s)).isOne();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_daily_report WHERE backtest_result_id = ?", Integer.class, bt)).isOne();
+        create("sita", "Mine again");   // the name is free again, and she's back under FREE's limit of 2
     }
 
     @Test @Order(4)
+    void freeUsersMayDeleteFourTimes() throws Exception {
+        for (int i = 2; i <= 4; i++) {
+            long s = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Mine again' AND deleted_at IS NULL", Long.class);
+            call(delete("/api/strategies/" + s), "sita", 204);
+            create("sita", "Mine again");
+        }
+        JsonNode usage = call(get("/api/users/me/usage"), "sita", 200);
+        assertThat(usage.get("deletesUsed").asInt()).isEqualTo(4);
+        assertThat(usage.get("maxDeletes").asInt()).isEqualTo(4);
+        assertThat(usage.get("nextPlan").asText()).isEqualTo("GOLD");
+
+        long fifth = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Mine again' AND deleted_at IS NULL", Long.class);
+        JsonNode refused = call(delete("/api/strategies/" + fifth), "sita", 403);
+        assertThat(refused.get("message").asText()).contains("used all 4 deletes", "Upgrade to GOLD");
+        call(get("/api/strategies/" + fifth), "sita", 200);
+    }
+
+    @Test @Order(5)
     void tradedOrPortfolioStrategiesCantBeDeletedAndParamsLockWhileTrading() throws Exception {
         JsonNode master = call(get("/api/strategies/56"), "admin", 200);                                // paper trading: Nifty breakout only
         var mine = json.createObjectNode().put("name", "Ravi paper").put("type", master.get("type").asText());
@@ -139,8 +167,8 @@ class StrategyEditDeleteIntegrationTest {
 
         call(put("/api/trading/strategies/" + s).content("{\"mode\":\"OFF\"}"), "ravi", 200);
         assertThat(call(put("/api/strategies/" + s).content(newParams), "ravi", 200).get("parameters").get("lots").asText()).isEqualTo("3");
-        call(delete("/api/strategies/" + s), "ravi", 204);   // closed PAPER trades go with it
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ?", Integer.class, s)).isZero();
+        call(delete("/api/strategies/" + s), "ravi", 204);   // closed PAPER trades are kept with the hidden strategy
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ?", Integer.class, s)).isOne();
 
         long p = create("ravi", "In a portfolio");
         call(post("/api/portfolios").content("{\"name\":\"My P\",\"strategyIds\":[" + p + "]}"), "ravi", 201);
@@ -151,10 +179,12 @@ class StrategyEditDeleteIntegrationTest {
         long t = create("ravi", "Has live trades");
         jdbc.update("INSERT INTO live_position (strategy_id, user_id, trade_date, mode, option_type, quantity, entry_candle, entry_spot, "
                 + "status, opened_at) VALUES (?, ?, CURRENT_DATE, 'LIVE', 'CE', 65, CURRENT_TIMESTAMP, 24000, 'CLOSED', CURRENT_TIMESTAMP)", t, id("ravi"));
-        assertThat(call(delete("/api/strategies/" + t), "ravi", 409).get("code").asText()).isEqualTo("HAS_LIVE_TRADES");
+        call(delete("/api/strategies/" + t), "ravi", 204);   // soft delete keeps the live trade records, so it may go
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ?", Integer.class, t)).isOne();
+        assertThat(call(get("/api/users/me/usage"), "ravi", 200).get("maxDeletes").asInt()).isEqualTo(-1);   // GOLD: no limit
     }
 
-    @Test @Order(5)
+    @Test @Order(6)
     void anyPlanCanTurnTradingOffButOnlyGoldCanTurnItOn() throws Exception {
         long mine = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Other'", Long.class);   // sita's, FREE
         call(put("/api/trading/strategies/" + mine).content("{\"mode\":\"OFF\"}"), "sita", 200);

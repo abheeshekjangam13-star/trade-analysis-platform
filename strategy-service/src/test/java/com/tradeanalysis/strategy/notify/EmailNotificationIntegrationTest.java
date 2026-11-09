@@ -12,7 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.mail.MailSendException;
-import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.MimeMessagePreparator;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -119,7 +119,7 @@ class EmailNotificationIntegrationTest {
 
     @Test @Order(6)
     void dispatcherSendsAndRetriesFailures() throws Exception {
-        doThrow(new MailSendException("SMTP down")).doNothing().when(mail).send(any(SimpleMailMessage.class));
+        doThrow(new MailSendException("SMTP down")).doNothing().when(mail).send(any(MimeMessagePreparator.class));
         long failing = emailsFor("ravi").get(0).getId();
         dispatcher.dispatch(failing);
         assertThat(emails.findById(failing).orElseThrow()).satisfies(e -> {
@@ -131,13 +131,23 @@ class EmailNotificationIntegrationTest {
         dispatcher.dispatchPending();
         assertThat(emails.findAll()).allSatisfy(e -> assertThat(e.getStatus()).isEqualTo(EmailNotification.Status.SENT));
 
-        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        ArgumentCaptor<MimeMessagePreparator> sent = ArgumentCaptor.forClass(MimeMessagePreparator.class);
         verify(mail, atLeastOnce()).send(sent.capture());
-        assertThat(sent.getAllValues()).allSatisfy(m -> assertThat(m.getFrom()).isEqualTo("alerts@test.local"));
-        assertThat(sent.getAllValues()).anySatisfy(m -> {
-            assertThat(m.getTo()).containsExactly("spam@example.com");
-            assertThat(m.getText()).contains("Payment not received");
-        });
+        List<String> froms = new java.util.ArrayList<>();
+        List<String> toSpam = new java.util.ArrayList<>();
+        for (MimeMessagePreparator p : sent.getAllValues()) {
+            var m = new jakarta.mail.internet.MimeMessage((jakarta.mail.Session) null);
+            p.prepare(m);
+            m.saveChanges();
+            froms.add(m.getFrom()[0].toString());
+            if (m.getAllRecipients()[0].toString().equals("spam@example.com")) {
+                java.io.ByteArrayOutputStream raw = new java.io.ByteArrayOutputStream();
+                m.writeTo(raw);
+                toSpam.add(raw.toString(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        assertThat(froms).containsOnly("alerts@test.local");
+        assertThat(toSpam).anySatisfy(mime -> assertThat(mime).contains("multipart/alternative", "text/plain", "text/html"));
     }
 
     @Test @Order(7)
@@ -192,7 +202,7 @@ class EmailNotificationIntegrationTest {
         JsonNode sent = call(post("/api/notifications/email/test"), "admin", 200);
         assertThat(sent.get("status").asText()).isEqualTo("SENT");
         assertThat(sent.get("recipient").asText()).isEqualTo("admin@test.local");
-        verify(mail).send(any(SimpleMailMessage.class));
+        verify(mail).send(any(MimeMessagePreparator.class));
         call(post("/api/notifications/email/test"), "ravi", 403);
 
         JsonNode setup = call(get("/api/notifications/setup"), "admin", 200);

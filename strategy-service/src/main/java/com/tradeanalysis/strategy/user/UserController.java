@@ -21,8 +21,31 @@ public class UserController {
     private final UserService svc;
 
     private final com.tradeanalysis.strategy.auth.AuthService auth;
+    private final DeleteAllowance deletes;
 
-    public UserController(UserService svc, com.tradeanalysis.strategy.auth.AuthService auth) { this.svc = svc; this.auth = auth; }
+    public UserController(UserService svc, com.tradeanalysis.strategy.auth.AuthService auth, DeleteAllowance deletes) {
+        this.svc = svc; this.auth = auth; this.deletes = deletes;
+    }
+
+    /**
+     * What the caller's plan allows and how much of it is used, for the UI's limits and upgrade hints. Limits of -1
+     * mean "no limit" (admins: no limits at all). nextPlan is the plan to upgrade to (null on the highest plan).
+     */
+    public record Usage(Plan plan, Plan nextPlan, boolean admin, int strategiesOwned, int maxStrategies,
+                        int deletesUsed, int maxDeletes, boolean editStrategies, int maxBacktestDays,
+                        boolean paperTrading, boolean liveTrading, boolean paidPlanExpired) {}
+
+    @GetMapping("/api/users/me/usage")
+    @Operation(summary = "The logged-in user's plan limits and how much of them is used (strategies, deletes)")
+    public Usage myUsage() {
+        AppUser u = me();
+        Plan p = u.getEffectivePlan();
+        boolean admin = u.isAdmin();
+        return new Usage(p, admin ? null : p.next(), admin, deletes.strategiesOwned(u.getId()),
+                admin ? -1 : p.maxStrategies(), deletes.used(u.getId()), admin ? -1 : p.maxDeletes(),
+                admin || p.editStrategies(), admin ? -1 : p.maxBacktestDays(), admin || p.paperTrading(),
+                admin || p.liveTrading(), !admin && u.getPlan() != Plan.FREE && p == Plan.FREE);
+    }
 
     @PostMapping("/api/users")
     @ResponseStatus(HttpStatus.CREATED)

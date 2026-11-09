@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Editing a portfolio's strategies starts it afresh (old reports deleted); deleting removes it with its reports. */
+/** Editing a portfolio's strategies starts it afresh (old reports deleted); deleting hides it (its reports are kept). */
 @SpringBootTest(properties = {"auth.auto-register-users=false", "auth.trust-user-header=false",
         "spring.datasource.url=jdbc:h2:mem:portfolio-edit-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1"})
 @AutoConfigureMockMvc
@@ -113,13 +113,16 @@ class PortfolioEditDeleteIntegrationTest {
     }
 
     @Test @Order(3)
-    void deleteRemovesPortfolioAndReportsAndFreesItsStrategies() throws Exception {
+    void deleteHidesPortfolioKeepsItsReportsAndFreesItsStrategies() throws Exception {
         java.util.List<Long> bts = report(portfolio, b);
         call(delete("/api/strategies/" + b), "ravi", 409);   // still in the portfolio
         call(delete("/api/portfolios/" + portfolio), "ravi", 204);
         call(get("/api/portfolios/" + portfolio), "ravi", 404);
-        assertThat(count("SELECT COUNT(*) FROM portfolio_report WHERE portfolio_id = ?", portfolio)).isZero();
-        assertThat(count("SELECT COUNT(*) FROM backtest_result WHERE id = ?", bts.get(0))).isZero();
+        assertThat(call(get("/api/portfolios"), "ravi", 200).findValuesAsText("id")).doesNotContain(String.valueOf(portfolio));
+        // soft delete: the portfolio row and its stored reports stay
+        assertThat(count("SELECT COUNT(*) FROM portfolio WHERE id = ? AND deleted_at IS NOT NULL", portfolio)).isOne();
+        assertThat(count("SELECT COUNT(*) FROM portfolio_report WHERE portfolio_id = ?", portfolio)).isPositive();
+        assertThat(count("SELECT COUNT(*) FROM backtest_result WHERE id = ?", bts.get(0))).isOne();
         call(delete("/api/strategies/" + b), "ravi", 204);   // now it can go
     }
 

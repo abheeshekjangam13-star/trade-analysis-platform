@@ -23,10 +23,12 @@ public class PortfolioService {
     private final PortfolioReportRepository reports;
     private final StrategyService strategies;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final com.tradeanalysis.strategy.user.DeleteAllowance deletes;
 
     public PortfolioService(PortfolioRepository portfolios, PortfolioReportRepository reports, StrategyService strategies,
-                            org.springframework.jdbc.core.JdbcTemplate jdbc) {
+                            org.springframework.jdbc.core.JdbcTemplate jdbc, com.tradeanalysis.strategy.user.DeleteAllowance deletes) {
         this.portfolios = portfolios; this.reports = reports; this.strategies = strategies; this.jdbc = jdbc;
+        this.deletes = deletes;
     }
 
     /** What an update did: the portfolio, and how many stored reports were deleted (strategies changed = start fresh). */
@@ -64,12 +66,16 @@ public class PortfolioService {
         return new UpdateResult(portfolios.save(p), deleted, changed);
     }
 
-    /** Deletes a portfolio with all its stored reports and the backtests they ran. Its strategies stay. */
+    /**
+     * Soft-deletes a portfolio: it disappears from every list and page, but the row and its stored reports are kept.
+     * Its strategies stay (and can be deleted afterwards). Counts towards the plan's delete allowance (Free: 4).
+     */
     @Transactional
     public void delete(Long id) {
         Portfolio p = get(id);
-        deleteReportData(id);
-        portfolios.delete(p);
+        deletes.check();
+        p.softDelete(CurrentUser.id().orElse(null), java.time.Instant.now());
+        portfolios.save(p);
     }
 
     /**
@@ -105,14 +111,17 @@ public class PortfolioService {
 
     @Transactional(readOnly = true)
     public Portfolio get(Long id) {
-        Portfolio p = portfolios.findById(id).orElseThrow(() -> new NotFoundException("Portfolio not found: " + id));
+        Portfolio p = portfolios.findById(id).filter(x -> !x.isDeleted())
+                .orElseThrow(() -> new NotFoundException("Portfolio not found: " + id));
         if (!CurrentUser.owns(p.getCreatedByUserId())) throw new NotFoundException("Portfolio not found: " + id);
         return p;
     }
 
     /** The caller's portfolios (admins: everyone's). */
     @Transactional(readOnly = true)
-    public List<Portfolio> list() { return portfolios.findAll().stream().filter(p -> CurrentUser.owns(p.getCreatedByUserId())).toList(); }
+    public List<Portfolio> list() {
+        return portfolios.findAll().stream().filter(p -> !p.isDeleted() && CurrentUser.owns(p.getCreatedByUserId())).toList();
+    }
 
     @Transactional(readOnly = true)
     public List<PortfolioReport> reports(Long portfolioId) {

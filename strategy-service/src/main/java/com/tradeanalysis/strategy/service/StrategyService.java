@@ -34,6 +34,7 @@ public class StrategyService {
     private final BacktestMonthlyStatRepository monthlyRepo;
     private final com.tradeanalysis.strategy.user.SharedStrategies shared;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final com.tradeanalysis.strategy.user.DeleteAllowance deletes;
 
     public StrategyService(StrategyRepository stratRepo,
                            BacktestResultRepository btRepo,
@@ -42,7 +43,9 @@ public class StrategyService {
                            BacktestDailyReportRepository dailyRepo,
                            BacktestMonthlyStatRepository monthlyRepo,
                            com.tradeanalysis.strategy.user.SharedStrategies shared,
-                           org.springframework.jdbc.core.JdbcTemplate jdbc) {
+                           org.springframework.jdbc.core.JdbcTemplate jdbc,
+                           com.tradeanalysis.strategy.user.DeleteAllowance deletes) {
+        this.deletes = deletes;
         this.shared = shared;
         this.jdbc = jdbc;
         this.stratRepo = stratRepo;
@@ -70,7 +73,7 @@ public class StrategyService {
     private void checkStrategyLimit(Long owner) {
         if (owner == null) return;
         CurrentUser.limitedPlan().ifPresent(plan -> {
-            if (stratRepo.countByCreatedByUserId(owner) >= plan.maxStrategies())
+            if (stratRepo.countByCreatedByUserIdAndDeletedAtIsNull(owner) >= plan.maxStrategies())
                 throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
                         "You've reached the limit of your " + plan + " plan: " + plan.maxStrategies() + " strategies."
                                 + upgradeFor(plan));
@@ -143,7 +146,7 @@ public class StrategyService {
         Map<String, String> params = new java.util.LinkedHashMap<>(src.getParameters() == null ? Map.of() : src.getParameters());
         params.put("lots", String.valueOf(lots));
         String description = (src.getDescription() == null || src.getDescription().isBlank() ? "" : src.getDescription() + "\n\n")
-                + "Cloned from #" + src.getId() + " (" + src.getName() + ") with " + lots + " lots.";
+                + "Cloned from '" + src.getName() + "' with " + lots + " lots.";
         Strategy copy = new Strategy(unique, description, src.getType(), params);
         copy.setCreatedByUserId(owner);
         copy.setClonedFromStrategyId(src.getId());
@@ -192,6 +195,15 @@ public class StrategyService {
      */
     @Transactional
     public Strategy update(Long id, String name, String description, Map<String, String> params) {
+        CurrentUser.limitedPlan().ifPresent(plan -> {
+            if (!plan.editStrategies()) {
+                var next = plan.next();
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        "Editing strategies isn't part of the " + plan + " plan."
+                                + (next == null ? "" : " Upgrade to " + next + " (₹" + next.pricePerMonth()
+                                + "/month) to edit your strategies, or create a new one."));
+            }
+        });
         Strategy s = editable(id);
         if (name != null) {
             String n = name.trim();
@@ -214,34 +226,25 @@ public class StrategyService {
     }
 
     /**
-     * Deletes a strategy with its backtests (and their reports and trade logs) and its paper-trading history. Refused
-     * while it is being traded or is in a portfolio, and when it has real (LIVE) trades on record, which are kept.
+     * Soft-deletes a strategy: it disappears from every list and page, but the row, its backtests, reports and trades
+     * are kept for the record. Refused while it is being traded or is in a portfolio, and when the caller's plan has
+     * used up its deletes (Free: 4).
      */
     @Transactional
     public void delete(Long id) {
         Strategy s = editable(id);
         requireNotTrading(s, "delete");
         java.util.List<String> portfolios = jdbc.queryForList(
-                "SELECT DISTINCT p.name FROM portfolio p JOIN portfolio_strategy ps ON ps.portfolio_id = p.id WHERE ps.strategy_id = ? "
-                        + "UNION SELECT DISTINCT p.name FROM portfolio p JOIN portfolio_report r ON r.portfolio_id = p.id "
-                        + "JOIN portfolio_report_item i ON i.portfolio_report_id = r.id WHERE i.strategy_id = ?", String.class, id, id);
+                "SELECT DISTINCT p.name FROM portfolio p JOIN portfolio_strategy ps ON ps.portfolio_id = p.id "
+                        + "WHERE ps.strategy_id = ? AND p.deleted_at IS NULL", String.class, id);
         if (!portfolios.isEmpty())
             throw new StrategyBlockedException(StrategyBlockedException.Reason.IN_PORTFOLIO,
                     "'" + s.getName() + "' is part of " + (portfolios.size() == 1 ? "the portfolio '" + portfolios.get(0) + "'"
                             : "the portfolios " + String.join(", ", portfolios.stream().map(n -> "'" + n + "'").toList()))
                             + ". Delete " + (portfolios.size() == 1 ? "that portfolio" : "those portfolios") + " first, then try again.");
-        Integer live = jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ? AND mode = 'LIVE'", Integer.class, id);
-        if (live != null && live > 0)
-            throw new StrategyBlockedException(StrategyBlockedException.Reason.HAS_LIVE_TRADES,
-                    "'" + s.getName() + "' has placed real (live) trades, and their records must be kept, so it can't be "
-                            + "deleted. You can rename it, or leave its trading off.");
-        // Paper (simulated) trading history goes with it; the orders themselves stay in the order log.
-        jdbc.update("DELETE FROM live_position WHERE strategy_id = ? AND mode = 'PAPER'", id);
-        // Backtest daily reports and monthly stats go with their backtest (ON DELETE CASCADE).
-        jdbc.update("DELETE FROM nifty_trade_log WHERE strategy_id = ? OR backtest_result_id IN (SELECT id FROM backtest_result WHERE strategy_id = ?)", id, id);
-        jdbc.update("DELETE FROM nifty_position_state WHERE strategy_id = ?", id);
-        jdbc.update("DELETE FROM backtest_result WHERE strategy_id = ?", id);
-        stratRepo.delete(s);
+        deletes.check();
+        s.softDelete(CurrentUser.id().orElse(null), Instant.now());
+        stratRepo.save(s);
     }
 
     /** A strategy the caller may see: their own, or any for an admin (else 404). Master strategies are admin-only. */
@@ -255,7 +258,8 @@ public class StrategyService {
     /** Any strategy, without the owner check: for the live runner, which trades for every user. */
     @Transactional(readOnly = true)
     public Strategy load(Long id) {
-        return stratRepo.findById(id).orElseThrow(() -> new NotFoundException("Strategy not found: " + id));
+        return stratRepo.findById(id).filter(s -> !s.isDeleted())
+                .orElseThrow(() -> new NotFoundException("Strategy not found: " + id));
     }
 
     public boolean canSee(Strategy s) {
@@ -270,7 +274,7 @@ public class StrategyService {
     }
 
     @Transactional(readOnly = true)
-    public List<Strategy> list() { return stratRepo.findAll().stream().filter(this::canSee).toList(); }
+    public List<Strategy> list() { return stratRepo.findByDeletedAtIsNull().stream().filter(this::canSee).toList(); }
 
     @Transactional
     public BacktestResult backtest(Long strategyId, String symbol, int lookbackDays, double capital) {
