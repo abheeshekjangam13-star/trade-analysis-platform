@@ -221,6 +221,9 @@ public class NiftyOpeningBreakoutEngine {
     /** Live use: the same rules, but a trade still open at {@code now} stays open (in openTrades, with its current stop). */
     public BreakoutResult runLive(PriceSeries series, PriceSeries minutes, Params params, Long strategyId,
                                   Instant now, LocalDate tradeFrom) {
+        // The previous-day rules run in backtests only; live and paper trading would silently use the 09:15 reference.
+        if (PreviousRangeEngine.handles(params))
+            throw new IllegalArgumentException("The previous-day reference (referenceMode=PREVIOUS_DAY) is backtest-only for now");
         return run(series, minutes, params, strategyId, now, tradeFrom, false);
     }
 

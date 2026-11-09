@@ -28,13 +28,16 @@ public class BacktestEngine {
     private final MarketDataClient           mdClient;
     private final IndicatorClient            indClient;
     private final NiftyOpeningBreakoutEngine niftyEngine;
+    private final PreviousRangeEngine        previousRangeEngine;
     private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
 
     public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient,
-                          NiftyOpeningBreakoutEngine niftyEngine, com.tradeanalysis.strategy.estimate.CapitalFit capitalFit) {
+                          NiftyOpeningBreakoutEngine niftyEngine, PreviousRangeEngine previousRangeEngine,
+                          com.tradeanalysis.strategy.estimate.CapitalFit capitalFit) {
         this.mdClient    = mdClient;
         this.indClient   = indClient;
         this.niftyEngine = niftyEngine;
+        this.previousRangeEngine = previousRangeEngine;
         this.capitalFit  = capitalFit;
     }
 
@@ -88,8 +91,15 @@ public class BacktestEngine {
                 tradeFrom.minusDays(7).atStartOfDay(IST).toInstant(), to);
         PriceSeries minutes = mdClient.getRange(symbol, Interval.MINUTE_1, from, to);
         Params params = new Params(toObjectMap(strategy.getParameters()));
-        NiftyOpeningBreakoutEngine.BreakoutResult result =
-                niftyEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+        // Which engine runs is decided by the strategy's parameters: referenceMode=PREVIOUS_DAY goes to the
+        // previous-day PE engine; everything else runs on the 09:15 reference candle as before.
+        NiftyOpeningBreakoutEngine.BreakoutResult result;
+        if (PreviousRangeEngine.handles(params)) {
+            PreviousRangeEngine.validateParams(params);
+            result = previousRangeEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+        } else {
+            result = niftyEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+        }
 
         // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
         com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);
