@@ -16,7 +16,7 @@ public interface KiteApi {
                        String product, String statusMessage, String tag, String timestamp) {}
     record PlaceOrder(String exchange, String tradingsymbol, String transactionType, int quantity, String product,
                       String orderType, Double price, Double triggerPrice, String tag) {}
-    /** One NIFTY option contract from the NFO instruments list. */
+    /** One index option contract from the NFO instruments list. */
     record OptionInstrument(String tradingsymbol, LocalDate expiry, int strike, String optionType, int lotSize,
                             double tickSize) {}
 
@@ -29,6 +29,6 @@ public interface KiteApi {
     void cancelOrder(String orderId);
     /** Last traded prices keyed by "EXCHANGE:TRADINGSYMBOL". */
     Map<String, Double> ltp(List<String> instruments);
-    /** NIFTY index options currently listed on NFO. */
-    List<OptionInstrument> niftyOptions();
+    /** Option contracts of an index currently listed on NFO (NIFTY or BANKNIFTY). */
+    List<OptionInstrument> optionsOf(com.tradeanalysis.common.market.Underlying underlying);
 }

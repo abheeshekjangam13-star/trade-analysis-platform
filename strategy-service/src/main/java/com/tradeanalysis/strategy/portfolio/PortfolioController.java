@@ -52,7 +52,7 @@ public class PortfolioController {
     public List<PortfolioReport> run(@PathVariable Long id,
                                      @RequestParam(defaultValue = "30,90,180,360") List<Integer> windows,
                                      @RequestParam(defaultValue = "100000") double capital,
-                                     @RequestParam(defaultValue = "NIFTY 50") String symbol) {
+                                     @RequestParam(defaultValue = "") String symbol) {
         return svc.run(id, windows, capital, symbol);
     }
 

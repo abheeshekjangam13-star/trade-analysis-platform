@@ -3,6 +3,7 @@ package com.tradeanalysis.strategy.trading;
 import com.tradeanalysis.common.dto.Interval;
 import com.tradeanalysis.common.dto.PriceSeries;
 import com.tradeanalysis.common.indicator.Params;
+import com.tradeanalysis.common.market.Underlying;
 import com.tradeanalysis.strategy.engine.MarketDataClient;
 import com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
@@ -36,7 +37,6 @@ public class LiveStrategyRunner {
 
     private static final Logger log = LoggerFactory.getLogger(LiveStrategyRunner.class);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final String SYMBOL = "NIFTY 50";
 
     private final StrategyLiveConfigRepository configs;
     private final LivePositionRepository positions;
@@ -122,9 +122,10 @@ public class LiveStrategyRunner {
         LocalDate today = now.atZone(IST).toLocalDate();
         if (!"NIFTY_OPENING_BREAKOUT".equals(s.getType()))
             return new Evaluation(s, null, null, today, now, "#" + s.getId() + ": only NIFTY_OPENING_BREAKOUT can trade live");
-        PriceSeries five = marketData.getRange(SYMBOL, Interval.MINUTE_5, today.minusDays(7).atStartOfDay(IST).toInstant(), now);
-        PriceSeries one = marketData.getRange(SYMBOL, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
         Params params = new Params(new HashMap<>(s.getParameters()));
+        String symbol = underlying(params).indexSymbol;   // NIFTY 50 or NIFTY BANK, as the strategy says
+        PriceSeries five = marketData.getRange(symbol, Interval.MINUTE_5, today.minusDays(7).atStartOfDay(IST).toInstant(), now);
+        PriceSeries one = marketData.getRange(symbol, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
         try {
             NiftyOpeningBreakoutEngine.validateParams(params);
         } catch (IllegalArgumentException e) {   // saved before parameters were checked: skip it, warn once a day
@@ -171,7 +172,7 @@ public class LiveStrategyRunner {
     private String enter(StrategyLiveConfig cfg, Strategy s, Params params, NiftyTradeLog t, LocalDate today) {
         KiteApi.OptionInstrument opt;
         try {
-            opt = options.resolve(t.getOptionType(), t.getStrikePrice(), today);
+            opt = options.resolve(underlying(params), t.getOptionType(), t.getStrikePrice(), today);
         } catch (RuntimeException e) {
             LivePosition failed = new LivePosition(s.getId(), cfg.getUserId(), today, cfg.getMode(), t.getOptionType(), null, 0,
                     t.getEntryTimestamp(), t.getEntrySpotPrice(), t.getFinalStopLoss());
@@ -206,7 +207,7 @@ public class LiveStrategyRunner {
             return "entry cancelled (not filled)";
         }
         int qty = entry != null && entry.getFilledQuantity() > 0 ? entry.getFilledQuantity() : p.getQuantity();
-        double tick = options.find(p.getTradingsymbol()).map(KiteApi.OptionInstrument::tickSize).orElse(0.05);
+        double tick = options.find(underlying(params), p.getTradingsymbol()).map(KiteApi.OptionInstrument::tickSize).orElse(0.05);
         OrderRequest req = marketable(p.getTradingsymbol(), "SELL", qty, entry == null ? "MIS" : entry.getProduct(), tick, p.getMode());
         if (req == null) req = new OrderRequest("NFO", p.getTradingsymbol(), "SELL", qty, entry == null ? "MIS" : entry.getProduct(), "MARKET", null, null);
         TradeOrder o = orderService.place(req, p.getMode(), source, p.getStrategyId(), p.getUserId(), true);
@@ -222,6 +223,11 @@ public class LiveStrategyRunner {
         if (in == null || out == null) return estimate;
         return (out - in) * (exit.getFilledQuantity() > 0 ? exit.getFilledQuantity() : p.getQuantity())
                 - (params == null ? 0 : params.doubleOr("costPerTrade", 0));
+    }
+
+    /** The index a strategy trades (NIFTY unless its parameters say BANKNIFTY); NIFTY when there are no parameters. */
+    private static Underlying underlying(Params params) {
+        return params == null ? Underlying.NIFTY : NiftyOpeningBreakoutEngine.underlyingOf(params);
     }
 
     private static Double estimate(NiftyTradeLog t) { return t.getEstimatedPnl(); }

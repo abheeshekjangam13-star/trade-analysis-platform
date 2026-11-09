@@ -139,17 +139,20 @@ public class PortfolioService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "windows must be day counts between 1 and 3650");
         Long user = CurrentUser.id().orElse(null);
         LocalDate today = LocalDate.now(IST);
+        // Blank = each strategy on the index it trades (NIFTY or Bank Nifty), so one portfolio can mix them.
+        boolean ownIndex = symbol == null || symbol.isBlank();
+        String label = ownIndex ? "Each strategy's index" : symbol.trim();
         List<PortfolioReport> saved = new ArrayList<>();
         for (int window : windows) {
             List<NiftyTradeLog> all = new ArrayList<>();
             List<PortfolioReportItem> items = new ArrayList<>();
             for (Long strategyId : portfolio.getStrategyIds()) {
-                BacktestResult bt = strategies.backtest(strategyId, symbol, window, capital);
+                BacktestResult bt = strategies.backtest(strategyId, ownIndex ? null : symbol, window, capital);
                 List<NiftyTradeLog> trades = strategies.getNiftyTradeLogs(bt.getId());
                 all.addAll(trades);
                 items.add(new PortfolioReportItem(strategyId, bt.getId(), PortfolioMath.summarize(trades)));
             }
-            saved.add(reports.save(new PortfolioReport(portfolioId, window, symbol, today.minusDays(window), today,
+            saved.add(reports.save(new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
                     capital, PortfolioMath.summarize(all), user, items)));
         }
         return saved;

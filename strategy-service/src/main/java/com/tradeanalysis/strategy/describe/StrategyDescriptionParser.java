@@ -46,6 +46,13 @@ public class StrategyDescriptionParser {
         boolean detected = type != null;
         if (type == null) type = "NIFTY_OPENING_BREAKOUT";
 
+        // The index: "Bank Nifty" trades BANKNIFTY (monthly expiry, 100-point strikes, lot 30); NIFTY is the default.
+        if (scan.find("\\b(bank\\s*nifty|banknifty|nifty\\s*bank)\\b")) {
+            scan.params.put("underlying", "BANKNIFTY");
+            scan.builtin("\\b(bank\\s*nifty|banknifty|nifty\\s*bank)\\b",
+                    "Index: Bank Nifty (monthly expiry, 100-point strikes, lot 30)");
+        }
+
         switch (type) {
             case "SMA_CROSSOVER" -> sma(scan);
             case "RSI_THRESHOLD" -> rsi(scan);
@@ -148,7 +155,8 @@ public class StrategyDescriptionParser {
         }
 
         // Quantity
-        s.match("\\blot\\s*size\\s*(of|=|:)?\\s*(\\d+)\\b", m -> s.setInt("lotSize", m.group(2), 1, 1800, m));
+        // "lot size 65" is read and ignored: the index sets the lot size, not the strategy.
+        s.match("\\blot\\s*size\\s*(of|=|:)?\\s*(\\d+)\\b", m -> { });
         s.match("\\b(\\d+|one|two|three|four|five)\\s*lots?\\b(?!\\s*size)", m -> s.setInt("lots", count(m.group(1)), 1, 50, m));
         s.match("\\blots?\\s*(=|:)\\s*(\\d+)\\b", m -> s.setInt("lots", m.group(2), 1, 50, m));
 

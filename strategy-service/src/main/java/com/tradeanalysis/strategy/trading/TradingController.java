@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.trading;
 
+import com.tradeanalysis.common.market.Underlying;
 import com.tradeanalysis.strategy.user.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -184,15 +185,19 @@ public class TradingController {
     @GetMapping("/broker/orders")    public List<KiteApi.BrokerOrder> brokerOrders() { return myKite().orders(); }
 
     @GetMapping("/options/expiries")
-    @Operation(summary = "NIFTY option expiries from today")
-    public List<LocalDate> expiries() { return options.expiries(); }
+    @Operation(summary = "Option expiries from today of an index (NIFTY or BANKNIFTY)")
+    public List<LocalDate> expiries(@RequestParam(defaultValue = "NIFTY") String underlying) {
+        return options.expiries(Underlying.of(underlying));
+    }
 
     @GetMapping("/options/chain")
-    @Operation(summary = "NIFTY options of one expiry, optionally only strikes within ±range of a spot price")
+    @Operation(summary = "Options of one index (NIFTY or BANKNIFTY) and expiry, optionally only strikes within ±range of a spot price")
     public List<KiteApi.OptionInstrument> chain(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expiry,
+                                                @RequestParam(defaultValue = "NIFTY") String underlying,
                                                 @RequestParam(required = false) Double spot,
                                                 @RequestParam(defaultValue = "500") int range) {
-        return options.chain(expiry).stream().filter(o -> spot == null || Math.abs(o.strike() - spot) <= range).toList();
+        return options.chain(Underlying.of(underlying), expiry).stream()
+                .filter(o -> spot == null || Math.abs(o.strike() - spot) <= range).toList();
     }
 
     @GetMapping("/ltp")

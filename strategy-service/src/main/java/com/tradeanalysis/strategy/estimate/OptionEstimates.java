@@ -68,8 +68,25 @@ public class OptionEstimates {
 
     /** The strike the strategy buys: CE at ATM−50, PE at ATM+50 (ATM = spot rounded to 50). */
     public static int strike(boolean call, double spot) {
-        int atm = (int) (Math.round(spot / 50.0) * 50);
-        return call ? atm - 50 : atm + 50;
+        return com.tradeanalysis.common.market.Underlying.NIFTY.strike(call, spot);
+    }
+
+    /**
+     * The expiry that option trades: the monthly one (last Tuesday of the month, the day's month or the next one) for
+     * monthly-only underlyings, else that week's expiry.
+     */
+    public static LocalDate expiryFor(com.tradeanalysis.common.market.Underlying u, LocalDate day) {
+        if (!u.monthlyOnly) return weeklyExpiry(day);
+        LocalDate last = day.with(TemporalAdjusters.lastInMonth(DayOfWeek.TUESDAY));
+        return day.isAfter(last) ? day.plusMonths(1).with(TemporalAdjusters.lastInMonth(DayOfWeek.TUESDAY)) : last;
+    }
+
+    /**
+     * Volatility multiplier from NIFTY's India VIX: Bank Nifty has typically been about 1.25 times as volatile. An
+     * estimate (labelled as such), not a quote.
+     */
+    public static double volatilityFactor(com.tradeanalysis.common.market.Underlying u) {
+        return u == com.tradeanalysis.common.market.Underlying.BANKNIFTY ? 1.25 : 1.0;
     }
 
     // ── India VIX ────────────────────────────────────────────────────────────
@@ -85,6 +102,11 @@ public class OptionEstimates {
             log.warn("India VIX not available for {}..{}: {} (using {}% volatility)", from, to, e.getMessage(), DEFAULT_IV * 100);
         }
         return out;
+    }
+
+    /** The index a trade was taken on, from the trade's symbol (NIFTY unless it's NIFTY BANK). */
+    public static com.tradeanalysis.common.market.Underlying underlyingOf(NiftyTradeLog t) {
+        return com.tradeanalysis.common.market.Underlying.of(t.getSymbol());
     }
 
     /** That day's volatility, else the latest day before it; null if none. */
@@ -108,10 +130,11 @@ public class OptionEstimates {
         for (NiftyTradeLog t : trades) {
             Double iv = ivOn(vix, t.getTradeDate());
             boolean assumed = iv == null;
-            double vol = assumed ? DEFAULT_IV : iv;
+            double vol = (assumed ? DEFAULT_IV : iv) * volatilityFactor(underlyingOf(t));
             Instant entry = t.getEntryTimestamp() != null ? t.getEntryTimestamp()
                     : t.getTradeDate().atTime(9, 20).atZone(IST).toInstant();   // older rows may lack the entry time
-            double years = yearsToExpiry(entry, weeklyExpiry(t.getTradeDate()));
+            com.tradeanalysis.common.market.Underlying u = underlyingOf(t);
+            double years = yearsToExpiry(entry, expiryFor(u, t.getTradeDate()));
             double premium = price("CE".equals(t.getOptionType()), t.getEntrySpotPrice(), t.getStrikePrice(), years, vol);
             t.estimated(premium, capitalByBacktest.get(t.getBacktestResultId()), vol, assumed);
         }

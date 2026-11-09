@@ -111,7 +111,7 @@ public class KiteRestApi implements KiteApi {
         return out;
     }
 
-    @Override public List<OptionInstrument> niftyOptions() {
+    @Override public List<OptionInstrument> optionsOf(com.tradeanalysis.common.market.Underlying underlying) {
         KiteSession.Credentials creds = credentials.get();
         String csv;
         try {
@@ -119,11 +119,14 @@ public class KiteRestApi implements KiteApi {
         } catch (RestClientResponseException e) {
             throw new TradingException(kiteMessage(e));
         }
-        return parseNiftyOptions(csv);
+        return parseOptions(csv, underlying.optionName);
     }
 
-    /** Columns: instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange */
-    static List<OptionInstrument> parseNiftyOptions(String csv) {
+    /**
+     * Options of one index from the NFO list, by its option name ("NIFTY", "BANKNIFTY").
+     * Columns: instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
+     */
+    static List<OptionInstrument> parseOptions(String csv, String optionName) {
         List<OptionInstrument> out = new ArrayList<>();
         if (csv == null || csv.isBlank()) return out;
         try (BufferedReader r = new BufferedReader(new StringReader(csv))) {
@@ -135,7 +138,7 @@ public class KiteRestApi implements KiteApi {
                 String[] c = line.split(",", -1);
                 if (c.length < header.length) continue;
                 String type = c[col.get("instrument_type")].trim();
-                if (!"NIFTY".equals(unquote(c[col.get("name")])) || !(type.equals("CE") || type.equals("PE"))) continue;
+                if (!optionName.equals(unquote(c[col.get("name")])) || !(type.equals("CE") || type.equals("PE"))) continue;
                 out.add(new OptionInstrument(c[col.get("tradingsymbol")].trim(), LocalDate.parse(c[col.get("expiry")].trim()),
                         (int) Math.round(Double.parseDouble(c[col.get("strike")])), type,
                         Integer.parseInt(c[col.get("lot_size")].trim()), Double.parseDouble(c[col.get("tick_size")])));

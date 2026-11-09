@@ -108,6 +108,7 @@ public class StrategyService {
         Map<String, String> clean = new java.util.LinkedHashMap<>();
         if (params != null) params.forEach((k, v) -> { if (k != null && v != null && !v.isBlank()) clean.put(k, v.trim()); });
         if ("NIFTY_OPENING_BREAKOUT".equals(type)) {
+            clean.remove("lotSize");   // the index decides the lot size; a value saved earlier is dropped
             try {
                 com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine.validateParams(new com.tradeanalysis.common.indicator.Params(new java.util.HashMap<>(clean)));
             } catch (IllegalArgumentException e) {
@@ -278,8 +279,15 @@ public class StrategyService {
 
     @Transactional
     public BacktestResult backtest(Long strategyId, String symbol, int lookbackDays, double capital) {
-        checkBacktestDays(lookbackDays);
         Strategy strategy = get(strategyId);
+        checkBacktestDays(lookbackDays);   // the plan's limit first, then the index
+        if ("NIFTY_OPENING_BREAKOUT".equals(strategy.getType())) {
+            var u = com.tradeanalysis.common.market.Underlying.of(strategy.getParameters() == null ? null : strategy.getParameters().get("underlying"));
+            if (symbol == null || symbol.isBlank()) symbol = u.indexSymbol;
+            else if (!symbol.trim().equalsIgnoreCase(u.indexSymbol))
+                throw new IllegalArgumentException("This strategy trades " + (u == com.tradeanalysis.common.market.Underlying.BANKNIFTY ? "Bank Nifty" : "NIFTY")
+                        + ": backtest it on " + u.indexSymbol + ", not " + symbol);
+        }
         BacktestEngine.BacktestOutput out = engine.run(strategy, symbol, lookbackDays, capital);
         BacktestResult result = new BacktestResult(
                 strategy, symbol, Instant.now().minusSeconds((long) lookbackDays * 86400), Instant.now(),

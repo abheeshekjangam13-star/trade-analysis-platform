@@ -69,7 +69,7 @@ class LiveStrategyRunnerTest {
         jdbc.update("DELETE FROM live_position");
         jdbc.update("DELETE FROM trade_order");
         jdbc.update("UPDATE trading_control SET kill_switch = FALSE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
-        when(kite.niftyOptions()).thenReturn(List.of(
+        when(kite.optionsOf(com.tradeanalysis.common.market.Underlying.NIFTY)).thenReturn(List.of(
                 new KiteApi.OptionInstrument("NIFTY26N0324150CE", TUE, 24150, "CE", 65, 0.05),
                 new KiteApi.OptionInstrument("NIFTY26N1024150CE", TUE.plusDays(7), 24150, "CE", 65, 0.05)));
         when(marketData.getRange(anyString(), any(), any(), any())).thenAnswer(inv -> {

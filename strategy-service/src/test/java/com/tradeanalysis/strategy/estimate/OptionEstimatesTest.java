@@ -47,13 +47,13 @@ class OptionEstimatesTest {
     void aRupeeMaxLossBecomesStopPointsThatLoseAboutThatMuch() {
         double years = 2 / 365.0, spot = 25800;
         for (boolean call : new boolean[]{true, false}) {
-            Double pts = StrategyPreviewController.pointsForLoss(call, spot, years, 0.13, 130, 85, 2000);
+            Double pts = StrategyPreviewController.pointsForLoss(com.tradeanalysis.common.market.Underlying.NIFTY, call, spot, years, 0.13, 130, 85, 2000);
             int k = OptionEstimates.strike(call, spot);
             double premium = OptionEstimates.price(call, spot, k, years, 0.13);
             double loss = (premium - OptionEstimates.price(call, call ? spot - pts : spot + pts, k, years, 0.13)) * 130 + 85;
             assertThat(loss).isBetween(1900.0, 2000.0);                     // within the amount, and close to it
             assertThat(pts * 2).isEqualTo(Math.floor(pts * 2));             // half-point steps
         }
-        assertThat(StrategyPreviewController.pointsForLoss(true, spot, years, 0.13, 130, 85, 1_000_000)).isNull();   // more than the premium
+        assertThat(StrategyPreviewController.pointsForLoss(com.tradeanalysis.common.market.Underlying.NIFTY, true, spot, years, 0.13, 130, 85, 1_000_000)).isNull();   // more than the premium
     }
 }

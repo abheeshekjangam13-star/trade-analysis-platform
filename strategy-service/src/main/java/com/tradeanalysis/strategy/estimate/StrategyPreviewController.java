@@ -52,7 +52,8 @@ public class StrategyPreviewController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The preview is for NIFTY opening-breakout strategies");
         if (capital <= 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Capital must be more than 0");
         Map<String, String> p = s.getParameters() == null ? Map.of() : s.getParameters();
-        int lots = intOr(p, "lots", 2), lotSize = intOr(p, "lotSize", 65), qty = lots * lotSize;
+        com.tradeanalysis.common.market.Underlying u = com.tradeanalysis.common.market.Underlying.of(p.get("underlying"));
+        int lots = intOr(p, "lots", 2), lotSize = u.defaultLotSize, qty = lots * lotSize;
         double target = numOr(p, "targetPoints", 0), cost = numOr(p, "costPerTrade", 0);
         // A Max SL to try before saving it to the strategy (0 = none), else the strategy's own
         if (maxStopPoints != null && (maxStopPoints < 0 || maxStopPoints > 500))
@@ -64,14 +65,14 @@ public class StrategyPreviewController {
         List<String> types = directions.equals("BOTH") ? List.of("CE", "PE") : List.of(directions);
 
         Instant now = clock.instant();
-        Candle last = latest("NIFTY 50");
+        Candle last = latest(u.indexSymbol);
         double spot = last.close().doubleValue();
         Candle vixNow = latestOrNull(VIX);
         boolean ivAssumed = vixNow == null;
-        double iv = ivAssumed ? DEFAULT_IV : vixNow.close().doubleValue() / 100;
+        double iv = (ivAssumed ? DEFAULT_IV : vixNow.close().doubleValue() / 100) * volatilityFactor(u);
         LocalDate today = now.atZone(IST).toLocalDate();
-        LocalDate expiry = weeklyExpiry(today);
-        if (!now.isBefore(expiry.atTime(15, 30).atZone(IST).toInstant())) expiry = weeklyExpiry(today.plusDays(1));
+        LocalDate expiry = expiryFor(u, today);
+        if (!now.isBefore(expiry.atTime(15, 30).atZone(IST).toInstant())) expiry = expiryFor(u, today.plusDays(1));
         double years = yearsToExpiry(now, expiry);
 
         // A Max SL given in ₹: the NIFTY points at which the option loses that much (with charges) today; with CE and PE,
@@ -82,7 +83,7 @@ public class StrategyPreviewController {
             if (maxLossAmount <= cost)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Max loss must be more than the charges of ₹" + trim(cost));
             for (String type : types) {
-                Double pts = pointsForLoss(type.equals("CE"), spot, years, iv, qty, cost, maxLossAmount);
+                Double pts = pointsForLoss(u, type.equals("CE"), spot, years, iv, qty, cost, maxLossAmount);
                 if (pts != null) pointsForAmount = pointsForAmount == null ? pts : Math.min(pointsForAmount, pts);
             }
             if (pointsForAmount != null) {
@@ -107,7 +108,7 @@ public class StrategyPreviewController {
         List<Leg> legs = new ArrayList<>();
         for (String type : types) {
             boolean call = type.equals("CE");
-            int k = strike(call, spot);
+            int k = u.strike(call, spot);
             double premium = price(call, spot, k, years, iv), used = premium * qty;
             Double profit = target > 0 ? round((price(call, spot + (call ? target : -target), k, years, iv) - premium) * qty - cost) : null;
             Double loss = stop == null ? null
@@ -143,8 +144,8 @@ public class StrategyPreviewController {
      * NIFTY points against the trade at which the option loses {@code amount} (charges included), rounded down to half a
      * point so the loss stays within it; null when even losing the whole premium costs less than the amount.
      */
-    static Double pointsForLoss(boolean call, double spot, double years, double iv, int qty, double cost, double amount) {
-        int k = strike(call, spot);
+    static Double pointsForLoss(com.tradeanalysis.common.market.Underlying u, boolean call, double spot, double years, double iv, int qty, double cost, double amount) {
+        int k = u.strike(call, spot);
         double premium = price(call, spot, k, years, iv);
         if (premium * qty + cost <= amount) return null;
         double lo = 0, hi = spot;   // the loss grows with the distance, up to the whole premium

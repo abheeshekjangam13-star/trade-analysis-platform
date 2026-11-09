@@ -18,10 +18,10 @@ class StrategyDescriptionParserTest {
                 + "Trail SL on 5-min candle lows, target 80 points, no entry after 14:00, skip Thursdays, charges Rs 85 per trade.");
         assertThat(r.type()).isEqualTo("NIFTY_OPENING_BREAKOUT");
         assertThat(r.parameters()).containsAllEntriesOf(Map.of(
-                "directions", "CE", "gapFilter", "GAP_UP", "gapPct", "0.2", "lots", "3", "lotSize", "65",
+                "directions", "CE", "gapFilter", "GAP_UP", "gapPct", "0.2", "lots", "3",
                 "maxTradesPerDay", "1", "trailMinutes", "5", "targetPoints", "80", "entryUntil", "14:00",
                 "skipDays", "THU"));
-        assertThat(r.parameters()).containsEntry("costPerTrade", "85");
+        assertThat(r.parameters()).containsEntry("costPerTrade", "85").doesNotContainKey("lotSize");
         assertThat(r.warnings()).isEmpty();
         assertThat(r.notUnderstood()).isEmpty();
         assertThat(r.suggestedName()).isEqualTo("Nifty CE Gap-Up Breakout 80 Target - 3 lots");

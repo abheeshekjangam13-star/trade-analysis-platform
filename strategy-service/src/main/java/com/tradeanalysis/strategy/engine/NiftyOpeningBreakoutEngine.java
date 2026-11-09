@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
  * - Second entry only on fresh breakout after position is closed
  *
  * Parameters (defaults reproduce the original rules):
- *   lots (2), lotSize (65), directions BOTH|CE|PE (BOTH), maxTradesPerDay (2), trailMinutes (1),
+ *   lots (2), directions BOTH|CE|PE (BOTH), maxTradesPerDay (2), trailMinutes (1),
  *   targetPoints (0 = none), gapFilter NONE|GAP_UP|GAP_DOWN|ANY_GAP|FLAT (NONE), gap threshold as gapPct (0.2) in %
  *   of the previous close, or gapPoints in NIFTY points (set one, not both),
  *   costPerTrade in ₹ per round trip for the whole quantity (0),
@@ -71,6 +71,11 @@ public class NiftyOpeningBreakoutEngine {
     /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
     public static void validateParams(Params params) { Settings.from(params); }
 
+    /** The underlying a strategy trades, from its parameters (NIFTY unless set to BANKNIFTY). */
+    public static com.tradeanalysis.common.market.Underlying underlyingOf(Params params) {
+        return com.tradeanalysis.common.market.Underlying.of(params.stringOr("underlying", ""));
+    }
+
     public record BreakoutResult(List<Signal> signals, List<NiftyTradeLog> tradeLogs, List<DayReport> days,
                                  List<NiftyTradeLog> openTrades) {
         public BreakoutResult(List<Signal> signals, List<NiftyTradeLog> tradeLogs) { this(signals, tradeLogs, List.of(), List.of()); }
@@ -89,12 +94,15 @@ public class NiftyOpeningBreakoutEngine {
                             double costPerTrade, LocalTime entryFrom, LocalTime entryUntil, Threshold maxGap,
                             double trailAfterPoints, boolean breakevenOnTrail,
                             double failedBreakoutPoints, double maxStopPoints, double breakevenLockPoints,
-                            Set<DayOfWeek> skipDays, LocalTime referenceTime, boolean oppositeStop, LocalDate onlyOn) {
+                            Set<DayOfWeek> skipDays, LocalTime referenceTime, boolean oppositeStop, LocalDate onlyOn,
+                            com.tradeanalysis.common.market.Underlying underlying) {
         static Settings from(Params p) {
+            com.tradeanalysis.common.market.Underlying u = com.tradeanalysis.common.market.Underlying.of(p.stringOr("underlying", ""));
             String dirs = p.stringOr("directions", "BOTH").toUpperCase();
             if (!Set.of("BOTH", "CE", "PE").contains(dirs))
                 throw new IllegalArgumentException("directions must be BOTH, CE or PE: " + dirs);
-            return new Settings(p.intOr("lots", 2), p.intOr("lotSize", 65),
+            // The lot size is the index's own (NIFTY 65, Bank Nifty 30), not a parameter: quantity = lots × lot size.
+            return new Settings(p.intOr("lots", 2), u.defaultLotSize,
                     !dirs.equals("PE"), !dirs.equals("CE"),
                     p.intOr("maxTradesPerDay", 2), p.intOr("trailMinutes", 1),
                     p.doubleOr("targetPoints", 0), GapFilter.valueOf(p.stringOr("gapFilter", "NONE").toUpperCase()),
@@ -108,7 +116,7 @@ public class NiftyOpeningBreakoutEngine {
                     parseDays(p.stringOr("skipDays", "")),
                     Optional.ofNullable(parseTime("referenceTime", p.stringOr("referenceTime", ""))).orElse(REF_CANDLE_TIME),
                     parseStop(p.stringOr("initialStop", "MIDPOINT")),
-                    parseDate("onlyOn", p.stringOr("onlyOn", "")));
+                    parseDate("onlyOn", p.stringOr("onlyOn", "")), u);
         }
 
         private static boolean parseStop(String v) {
@@ -333,8 +341,7 @@ public class NiftyOpeningBreakoutEngine {
                         TrailingStopLoss.Direction dir = freshBullish
                                 ? TrailingStopLoss.Direction.BULLISH : TrailingStopLoss.Direction.BEARISH;
                         String optType = freshBullish ? "CE" : "PE";
-                        int atm    = (int) (Math.round(spot / 50.0) * 50);
-                        int strike = freshBullish ? atm - 50 : atm + 50;
+                        int strike = cfg.underlying().strike(freshBullish, spot);
                         stop = cfg.oppositeStop()
                                 ? TrailingStopLoss.openAt(dir, freshBullish ? refLow : refHigh, candle.timestamp(), cfg.trailMinutes())
                                 : TrailingStopLoss.open(dir, refHigh, refLow, candle.timestamp(), cfg.trailMinutes());
@@ -347,7 +354,7 @@ public class NiftyOpeningBreakoutEngine {
                                 refCandle.timestamp(), candle.timestamp(), spot,
                                 optType, strike, cfg.lots(), cfg.lotSize(), stop.currentStop());
                         open.setContext(gap, cfg.costPerTrade());
-                        signals.add(entrySignal(candle, optType, strike, atm, refHigh, refLow, stop.currentStop(), gap));
+                        signals.add(entrySignal(candle, optType, strike, cfg.underlying().atm(spot), refHigh, refLow, stop.currentStop(), gap));
                     }
                 }
 

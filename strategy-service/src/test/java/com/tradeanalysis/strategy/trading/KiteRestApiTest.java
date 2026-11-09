@@ -71,7 +71,7 @@ class KiteRestApiTest {
     }
 
     @Test
-    void parsesNiftyOptionsFromTheNfoInstrumentList() {
+    void parsesOnlyTheChosenIndexFromTheNfoInstrumentList() {
         String csv = """
                 instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
                 1,1,NIFTY26N0324150CE,"NIFTY",0,2026-11-03,24150,0.05,65,CE,NFO-OPT,NFO
@@ -79,9 +79,12 @@ class KiteRestApiTest {
                 3,3,BANKNIFTY26N0450000CE,"BANKNIFTY",0,2026-11-04,50000,0.05,30,CE,NFO-OPT,NFO
                 4,4,NIFTY26NOVFUT,"NIFTY",0,2026-11-24,0,0.1,65,FUT,NFO-FUT,NFO
                 """;
-        List<KiteApi.OptionInstrument> opts = KiteRestApi.parseNiftyOptions(csv);
+        List<KiteApi.OptionInstrument> opts = KiteRestApi.parseOptions(csv, "NIFTY");
         assertThat(opts).extracting(KiteApi.OptionInstrument::tradingsymbol).containsExactly("NIFTY26N0324150CE", "NIFTY26N0324150PE");
         assertThat(opts.get(0).expiry()).isEqualTo(LocalDate.of(2026, 11, 3));
         assertThat(opts.get(0).lotSize()).isEqualTo(65);
+        List<KiteApi.OptionInstrument> bank = KiteRestApi.parseOptions(csv, "BANKNIFTY");
+        assertThat(bank).extracting(KiteApi.OptionInstrument::tradingsymbol).containsExactly("BANKNIFTY26N0450000CE");
+        assertThat(bank.get(0).lotSize()).isEqualTo(30);
     }
 }
