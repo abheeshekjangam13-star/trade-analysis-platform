@@ -36,6 +36,15 @@ public class MarketDataService {
 
     private final Clock clock;
     private final Map<String, Instant> lastTopUp = new ConcurrentHashMap<>();
+    private final Map<String, Object> writeLocks = new ConcurrentHashMap<>();
+
+    /**
+     * One lock per symbol and interval. Two requests (say, two Bank Nifty backtests) that fetch the same candles
+     * would otherwise insert them twice and hit the unique key.
+     */
+    private Object lockFor(String symbol, Interval interval) {
+        return writeLocks.computeIfAbsent(symbol.toUpperCase() + "|" + interval, k -> new Object());
+    }
 
     @Autowired
     public MarketDataService(CandleRepository repo, KiteConnectClient client) {
@@ -49,8 +58,12 @@ public class MarketDataService {
     }
 
     /** Returns the latest candles, fetching from upstream if the DB is empty and topping up intraday candles to now. */
-    @Transactional
     public PriceSeries getSeries(String symbol, Interval interval, int limit) {
+        synchronized (lockFor(symbol, interval)) { return readSeries(symbol, interval, limit); }
+    }
+
+    // Not one transaction: each write commits before the lock is released, so the next request sees those candles.
+    private PriceSeries readSeries(String symbol, Interval interval, int limit) {
         watchedSymbols.add(symbol.toUpperCase());
         String sym = symbol.toUpperCase();
         List<CandleEntity> entities = repo.findBySymbolAndIntervalCodeOrderByTimestampAsc(sym, interval.name());
@@ -73,8 +86,11 @@ public class MarketDataService {
     }
 
     /** Returns candles in [from, to], backfilling from Kite any part of the range not yet stored. */
-    @Transactional
     public PriceSeries getRange(String symbol, Interval interval, Instant from, Instant to) {
+        synchronized (lockFor(symbol, interval)) { return readRange(symbol, interval, from, to); }
+    }
+
+    private PriceSeries readRange(String symbol, Interval interval, Instant from, Instant to) {
         String sym = symbol.toUpperCase();
         backfill(sym, interval, from, to);
         List<Candle> candles = repo.findInRange(sym, interval.name(), from, to)
