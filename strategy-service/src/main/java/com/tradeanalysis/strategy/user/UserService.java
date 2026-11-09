@@ -24,11 +24,14 @@ public class UserService {
     private final AccessLogRepository accessLogs;
     private final com.tradeanalysis.strategy.notify.EmailService emails;
     private final com.tradeanalysis.strategy.payment.RazorpayProperties razorpay;
+    private final com.tradeanalysis.strategy.payment.PaymentOrderRepository payments;
 
     public UserService(AppUserRepository users, AppRoleRepository roles, AccessLogRepository accessLogs,
                        com.tradeanalysis.strategy.notify.EmailService emails,
-                       com.tradeanalysis.strategy.payment.RazorpayProperties razorpay) {
+                       com.tradeanalysis.strategy.payment.RazorpayProperties razorpay,
+                       com.tradeanalysis.strategy.payment.PaymentOrderRepository payments) {
         this.users = users; this.roles = roles; this.accessLogs = accessLogs; this.emails = emails; this.razorpay = razorpay;
+        this.payments = payments;
     }
 
     /** With online payments on, GOLD/PREMIUM sign-ups pay in Checkout first and reach the admin only after paying. */
@@ -178,6 +181,14 @@ public class UserService {
         if (expiresAt == null && p == u.getPrepaidPlan() && u.getPrepaidDays() != null)
             expiresAt = Instant.now().plus(Duration.ofDays(u.getPrepaidDays()));
         applyPlan(u, p, expiresAt);
+        // The sign-up payment for a paid plan runs from approval, so its valid-until date is the plan's end.
+        if (expiresAt != null) {
+            final Instant end = expiresAt;
+            payments.findByUserIdOrderByCreatedAtDesc(u.getId()).stream()
+                    .filter(o -> o.getStatus() == com.tradeanalysis.strategy.payment.PaymentOrder.Status.PAID
+                            && o.getPlan() == p && o.getPlanValidUntil() == null)
+                    .findFirst().ifPresent(o -> o.planStarts(end));
+        }
         u.clearPrepaid();
         u.setStatus(AppUser.Status.ACTIVE);
         u.approved(admin, Instant.now());

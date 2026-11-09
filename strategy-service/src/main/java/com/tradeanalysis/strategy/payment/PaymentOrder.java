@@ -61,6 +61,9 @@ public class PaymentOrder {
         status = Status.PAID; razorpayPaymentId = paymentId; paidAt = at; planValidUntil = validUntil; failureReason = null;
     }
 
+    /** A sign-up payment's plan starts at approval: its valid-until date is the plan's end. */
+    public void planStarts(Instant validUntil) { planValidUntil = validUntil; }
+
     void failed(String paymentId, String reason) {
         if (status == Status.PAID) return;
         status = Status.FAILED; razorpayPaymentId = paymentId;
