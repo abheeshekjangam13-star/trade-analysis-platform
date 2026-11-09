@@ -74,10 +74,24 @@ public class NiftyTradeLog {
         this.exitTimestamp = exitTimestamp;
         this.exitSpotPrice = exitSpotPrice;
         this.exitReason = exitReason;
+        this.estimatedPnl = pnlFor(lots);
+    }
+
+    /**
+     * Sets the lots this trade is taken with, for backtests that must fit their capital (see CapitalFit), and
+     * restates its estimated P&L for them. Only for a closed trade.
+     */
+    public void resize(int newLots) {
+        this.lots = newLots;
+        if (exitTimestamp != null) this.estimatedPnl = pnlFor(newLots);
+    }
+
+    /** Indicative P&L for a number of lots: spot move × lot size × lots × 0.5 (ATM delta), minus charges. */
+    private double pnlFor(int n) {
         double spotDelta = optionType.equals("CE")
                 ? exitSpotPrice - entrySpotPrice
                 : entrySpotPrice - exitSpotPrice;
-        this.estimatedPnl = spotDelta * lotSize * lots * 0.5 - (charges == null ? 0 : charges);
+        return spotDelta * lotSize * n * 0.5 - (charges == null ? 0 : charges);
     }
 
     /** Live use: record the stop currently in force on a still-open trade. */

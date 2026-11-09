@@ -28,12 +28,14 @@ public class BacktestEngine {
     private final MarketDataClient           mdClient;
     private final IndicatorClient            indClient;
     private final NiftyOpeningBreakoutEngine niftyEngine;
+    private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
 
     public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient,
-                          NiftyOpeningBreakoutEngine niftyEngine) {
+                          NiftyOpeningBreakoutEngine niftyEngine, com.tradeanalysis.strategy.estimate.CapitalFit capitalFit) {
         this.mdClient    = mdClient;
         this.indClient   = indClient;
         this.niftyEngine = niftyEngine;
+        this.capitalFit  = capitalFit;
     }
 
     public BacktestOutput run(Strategy strategy, String symbol, int lookbackDays, double capital) {
@@ -89,14 +91,16 @@ public class BacktestEngine {
         NiftyOpeningBreakoutEngine.BreakoutResult result =
                 niftyEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
 
-        List<NiftyTradeLog> logs = result.tradeLogs();
+        // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
+        com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);
+        List<NiftyTradeLog> logs = fit.kept();
         int total = logs.size();
         int wins  = (int) logs.stream().filter(t -> t.getEstimatedPnl() > 0).count();
         double totalPnl = logs.stream().mapToDouble(NiftyTradeLog::getEstimatedPnl).sum();
         double totalReturn = capital > 0 ? (totalPnl / capital) * 100 : 0;
 
         return new BacktestOutput(capital + totalPnl, totalReturn, maxDrawdownPct(capital, logs),
-                total, wins, 0.0, result.signals(), logs, result.days());
+                total, wins, 0.0, result.signals(), logs, result.days(), fit.skipped());
     }
 
     /** Largest peak-to-trough fall in account equity (capital + cumulative P&L), as % of the peak. */
@@ -186,10 +190,18 @@ public class BacktestEngine {
     public record BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown,
                                   int totalTrades, int winningTrades, double sharpeRatio,
                                   List<Signal> signals, List<NiftyTradeLog> tradeLogs,
-                                  List<NiftyOpeningBreakoutEngine.DayReport> days) {
+                                  List<NiftyOpeningBreakoutEngine.DayReport> days,
+                                  /** Trades left out because the capital that was free at their entry could not buy a lot. */
+                                  int skippedTrades) {
+        public BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown, int totalTrades,
+                              int winningTrades, double sharpeRatio, List<Signal> signals, List<NiftyTradeLog> tradeLogs,
+                              List<NiftyOpeningBreakoutEngine.DayReport> days) {
+            this(finalCapital, totalReturn, maxDrawdown, totalTrades, winningTrades, sharpeRatio, signals, tradeLogs, days, 0);
+        }
+
         public BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown, int totalTrades,
                               int winningTrades, double sharpeRatio, List<Signal> signals, List<NiftyTradeLog> tradeLogs) {
-            this(finalCapital, totalReturn, maxDrawdown, totalTrades, winningTrades, sharpeRatio, signals, tradeLogs, List.of());
+            this(finalCapital, totalReturn, maxDrawdown, totalTrades, winningTrades, sharpeRatio, signals, tradeLogs, List.of(), 0);
         }
     }
 }

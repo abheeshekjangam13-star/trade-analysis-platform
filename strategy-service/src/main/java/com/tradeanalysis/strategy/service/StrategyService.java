@@ -294,6 +294,7 @@ public class StrategyService {
                 capital, out.finalCapital(), out.totalReturn(), out.maxDrawdown(),
                 out.totalTrades(), out.winningTrades(), out.sharpeRatio(), out.signals());
         result.setRunContext(lookbackDays, CurrentUser.id().orElse(null));
+        result.setSkippedTrades(out.skippedTrades());
         BacktestResult saved = btRepo.save(result);
 
         if (!out.tradeLogs().isEmpty()) {

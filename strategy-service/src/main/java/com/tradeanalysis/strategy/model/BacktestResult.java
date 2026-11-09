@@ -27,6 +27,7 @@ public class BacktestResult {
     private double sharpeRatio;
 
     private Integer lookbackDays;
+    private int skippedTrades;              // trades left out: the capital free at their entry could not buy a lot
     private Long runByUserId;               // user who ran the backtest (null before users existed)
     private Instant createdAt = Instant.now();
 
@@ -62,6 +63,8 @@ public class BacktestResult {
     public int getWinningTrades() { return winningTrades; }
     public double getSharpeRatio() { return sharpeRatio; }
     public Integer getLookbackDays() { return lookbackDays; }
+    public int getSkippedTrades() { return skippedTrades; }
+    public void setSkippedTrades(int skippedTrades) { this.skippedTrades = skippedTrades; }
     public Long getRunByUserId() { return runByUserId; }
     public Instant getCreatedAt() { return createdAt; }
     public void setRunContext(int lookbackDays, Long runByUserId) {
