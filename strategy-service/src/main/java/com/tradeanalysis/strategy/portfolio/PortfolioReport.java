@@ -25,6 +25,11 @@ public class PortfolioReport {
     private double grossPnl, charges, netPnl, endCapital, returnPct;
     private Double profitFactor;
     private double maxDrawdown;
+    /** The portfolio's own capital fit: trades left out for lack of capital, and the capital the kept trades used. */
+    private int skippedTrades;
+    private Double peakCapitalUsed, avgCapitalUsed, maxCapitalUsed;
+    private LocalDate peakCapitalOn;
+    private Boolean ivAssumed;
     private Long runByUserId;
     @Column(nullable = false) private Instant createdAt = Instant.now();
 
@@ -35,13 +40,17 @@ public class PortfolioReport {
     protected PortfolioReport() {}
 
     PortfolioReport(Long portfolioId, int windowDays, String symbol, LocalDate fromDate, LocalDate toDate,
-                    double capital, PortfolioMath.Summary s, Long runByUserId, List<PortfolioReportItem> items) {
+                    double capital, PortfolioMath.Summary s, PortfolioMath.CapitalUse use, int skippedTrades,
+                    Long runByUserId, List<PortfolioReportItem> items) {
         this.portfolioId = portfolioId; this.windowDays = windowDays; this.symbol = symbol;
         this.fromDate = fromDate; this.toDate = toDate; this.capital = capital;
         this.trades = s.trades(); this.wins = s.wins(); this.grossPnl = s.grossPnl(); this.charges = s.charges();
         this.netPnl = s.netPnl(); this.endCapital = capital + s.netPnl();
         this.returnPct = capital > 0 ? s.netPnl() / capital * 100 : 0;
         this.profitFactor = s.profitFactor(); this.maxDrawdown = s.maxDrawdown();
+        this.skippedTrades = skippedTrades;
+        this.avgCapitalUsed = use.avg(); this.maxCapitalUsed = use.max(); this.peakCapitalUsed = use.peak();
+        this.peakCapitalOn = use.peakOn(); this.ivAssumed = use.peak() == null ? null : use.ivAssumed();
         this.runByUserId = runByUserId; this.items = new ArrayList<>(items);
     }
 
@@ -61,6 +70,12 @@ public class PortfolioReport {
     public double getReturnPct()            { return returnPct; }
     public Double getProfitFactor()         { return profitFactor; }
     public double getMaxDrawdown()          { return maxDrawdown; }
+    public int getSkippedTrades()           { return skippedTrades; }
+    public Double getPeakCapitalUsed()      { return peakCapitalUsed; }
+    public Double getAvgCapitalUsed()       { return avgCapitalUsed; }
+    public Double getMaxCapitalUsed()       { return maxCapitalUsed; }
+    public LocalDate getPeakCapitalOn()     { return peakCapitalOn; }
+    public Boolean getIvAssumed()           { return ivAssumed; }
     public Long getRunByUserId()            { return runByUserId; }
     public Instant getCreatedAt()           { return createdAt; }
     public List<PortfolioReportItem> getItems() { return items; }

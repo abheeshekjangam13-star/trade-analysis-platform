@@ -27,7 +27,8 @@ public class NiftyTradeLog {
     private double entrySpotPrice;
     private String optionType;      // CE / PE
     private int strikePrice;
-    private int lots;
+    private int lots;               // lots taken (after the capital limit, see CapitalFit)
+    private int requestedLots;      // lots the strategy asked for, before any capital limit
     private int lotSize;
 
     private Double initialStopLoss; // reference-candle midpoint (nullable: rows predate this column)
@@ -64,6 +65,7 @@ public class NiftyTradeLog {
         this.optionType = optionType;
         this.strikePrice = strikePrice;
         this.lots = lots;
+        this.requestedLots = lots;
         this.lotSize = lotSize;
         this.initialStopLoss = initialStopLoss;
         this.finalStopLoss = initialStopLoss;
@@ -82,8 +84,14 @@ public class NiftyTradeLog {
      * restates its estimated P&L for them. Only for a closed trade.
      */
     public void resize(int newLots) {
+        int oldLots = this.lots;
         this.lots = newLots;
         if (exitTimestamp != null) this.estimatedPnl = pnlFor(newLots);
+        // The capital shown for the trade follows its lots (estimated() ran before the resize).
+        if (estEntryPremium != null && oldLots > 0) {
+            this.capitalUsed = (double) Math.round(estEntryPremium * newLots * lotSize);
+            if (capitalUsedPct != null) this.capitalUsedPct = Math.round(capitalUsedPct * newLots / oldLots * 10) / 10.0;
+        }
     }
 
     /** Indicative P&L for a number of lots: spot move × lot size × lots × 0.5 (ATM delta), minus charges. */
@@ -146,6 +154,7 @@ public class NiftyTradeLog {
         this.ivAssumed = assumed;
     }
 
+    public int getRequestedLots()         { return requestedLots; }
     public Double getEstEntryPremium()    { return estEntryPremium; }
     public Double getCapitalUsed()        { return capitalUsed; }
     public Double getCapitalUsedPct()     { return capitalUsedPct; }

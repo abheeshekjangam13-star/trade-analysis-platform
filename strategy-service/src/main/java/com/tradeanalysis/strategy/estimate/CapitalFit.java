@@ -36,10 +36,10 @@ public class CapitalFit {
             Instant entry = t.getEntryTimestamp();
             while (!open.isEmpty() && !open.peek().exit().isAfter(entry)) committed -= open.poll().amount();
             double perLot = t.getEstEntryPremium() * t.getLotSize();
-            int fits = perLot > 0 ? (int) Math.floor((capital - committed) / perLot + 1e-9) : t.getLots();
-            int lots = Math.min(t.getLots(), fits);
+            int fits = perLot > 0 ? (int) Math.floor((capital - committed) / perLot + 1e-9) : t.getRequestedLots();
+            int lots = Math.min(t.getRequestedLots(), fits);   // from what was asked for, so a trade can be fitted again
             if (lots < 1) { skipped++; continue; }   // not even one lot is free at this entry: skip the trade
-            if (lots < t.getLots()) t.resize(lots);
+            t.resize(lots);
             double amount = perLot * lots;
             committed += amount;
             open.add(new Held(exitOf(t), amount));

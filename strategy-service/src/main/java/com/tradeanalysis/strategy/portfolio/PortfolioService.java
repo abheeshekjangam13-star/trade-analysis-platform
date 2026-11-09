@@ -24,11 +24,13 @@ public class PortfolioService {
     private final StrategyService strategies;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final com.tradeanalysis.strategy.user.DeleteAllowance deletes;
+    private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
 
     public PortfolioService(PortfolioRepository portfolios, PortfolioReportRepository reports, StrategyService strategies,
-                            org.springframework.jdbc.core.JdbcTemplate jdbc, com.tradeanalysis.strategy.user.DeleteAllowance deletes) {
+                            org.springframework.jdbc.core.JdbcTemplate jdbc, com.tradeanalysis.strategy.user.DeleteAllowance deletes,
+                            com.tradeanalysis.strategy.estimate.CapitalFit capitalFit) {
         this.portfolios = portfolios; this.reports = reports; this.strategies = strategies; this.jdbc = jdbc;
-        this.deletes = deletes;
+        this.deletes = deletes; this.capitalFit = capitalFit;
     }
 
     /** What an update did: the portfolio, and how many stored reports were deleted (strategies changed = start fresh). */
@@ -144,16 +146,24 @@ public class PortfolioService {
         String label = ownIndex ? "Each strategy's index" : symbol.trim();
         List<PortfolioReport> saved = new ArrayList<>();
         for (int window : windows) {
+            // Each strategy's backtest is saved as it completes; then all their trades share one capital pool. A trade
+            // that the free capital can't buy at its entry is left out, as in a single backtest (CapitalFit).
             List<NiftyTradeLog> all = new ArrayList<>();
-            List<PortfolioReportItem> items = new ArrayList<>();
+            Map<Long, Long> strategyOfBacktest = new LinkedHashMap<>();
             for (Long strategyId : portfolio.getStrategyIds()) {
                 BacktestResult bt = strategies.backtest(strategyId, ownIndex ? null : symbol, window, capital);
-                List<NiftyTradeLog> trades = strategies.getNiftyTradeLogs(bt.getId());
-                all.addAll(trades);
-                items.add(new PortfolioReportItem(strategyId, bt.getId(), PortfolioMath.summarize(trades)));
+                all.addAll(strategies.getNiftyTradeLogs(bt.getId()));
+                strategyOfBacktest.put(bt.getId(), strategyId);
+            }
+            com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(all, capital);
+            List<NiftyTradeLog> kept = fit.kept();
+            List<PortfolioReportItem> items = new ArrayList<>();
+            for (Map.Entry<Long, Long> e : strategyOfBacktest.entrySet()) {
+                List<NiftyTradeLog> mine = kept.stream().filter(t -> e.getKey().equals(t.getBacktestResultId())).toList();
+                items.add(new PortfolioReportItem(e.getValue(), e.getKey(), PortfolioMath.summarize(mine)));
             }
             saved.add(reports.save(new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
-                    capital, PortfolioMath.summarize(all), user, items)));
+                    capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items)));
         }
         return saved;
     }
