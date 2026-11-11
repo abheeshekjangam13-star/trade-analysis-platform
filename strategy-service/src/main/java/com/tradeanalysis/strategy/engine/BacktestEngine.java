@@ -29,11 +29,13 @@ public class BacktestEngine {
     private final IndicatorClient            indClient;
     private final NiftyOpeningBreakoutEngine niftyEngine;
     private final PreviousRangeEngine        previousRangeEngine;
+    private final GapFillEngine              gapFillEngine;
     private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
 
     public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient,
                           NiftyOpeningBreakoutEngine niftyEngine, PreviousRangeEngine previousRangeEngine,
-                          com.tradeanalysis.strategy.estimate.CapitalFit capitalFit) {
+                          com.tradeanalysis.strategy.estimate.CapitalFit capitalFit, GapFillEngine gapFillEngine) {
+        this.gapFillEngine = gapFillEngine;
         this.mdClient    = mdClient;
         this.indClient   = indClient;
         this.niftyEngine = niftyEngine;
@@ -98,6 +100,9 @@ public class BacktestEngine {
         if (PreviousRangeEngine.handles(params)) {
             PreviousRangeEngine.validateParams(params);
             result = previousRangeEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+        } else if (GapFillEngine.handles(params)) {   // referenceMode=GAP_FILL: back into the opening gap
+            GapFillEngine.validateParams(params);
+            result = gapFillEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
         } else {
             result = niftyEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
         }

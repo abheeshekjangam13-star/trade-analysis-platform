@@ -66,6 +66,8 @@ public class StrategyDescriptionParser {
                 NiftyOpeningBreakoutEngine.validateParams(p);
                 if (com.tradeanalysis.strategy.engine.PreviousRangeEngine.handles(p))
                     com.tradeanalysis.strategy.engine.PreviousRangeEngine.validateParams(p);
+                if (com.tradeanalysis.strategy.engine.GapFillEngine.handles(p))
+                    com.tradeanalysis.strategy.engine.GapFillEngine.validateParams(p);
             } catch (IllegalArgumentException e) {
                 scan.warnings.add("These parameters would be rejected: " + e.getMessage());
             }
@@ -121,6 +123,26 @@ public class StrategyDescriptionParser {
             s.builtin("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|=)\\s+" + YDAY + "\\s+(high|low)\\b",
                     "Stop at yesterday's high (PE) / low (CE)");
             s.builtin("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\b", "Yesterday's high-low range");
+        }
+        // ── Gap fill: after an opening gap, trade back towards yesterday's close once price re-enters the gap (GapFillEngine) ──
+        boolean gapFill = s.peek("\\bgap[- ]?fill(ing|s)?\\b|\\bfill(s|ing)?\\s+(the|its)\\s+gap\\b|\\b(back\\s+)?(in|into|inside)\\s+the\\s+gap\\b|\\bre-?enters?\\s+the\\s+gap\\b");
+        if (gapFill) {
+            s.params.put("referenceMode", "GAP_FILL");
+            s.findings.add(new Finding("referenceMode", "GAP_FILL", "gap fill", "Gap fill: trade back towards yesterday's close once price re-enters the gap"));
+            // The target as a share of the gap, read before the point targets ("target 50% of the gap" is not 50 points).
+            s.match("\\btarget\\s+(the\\s+)?(full\\s+)?(gap\\s+fill|fill\\s+of\\s+the\\s+gap|yesterday'?s\\s+close|previous\\s+close|prev(ious)?\\s+day'?s?\\s+close)\\b",
+                    m -> s.set("gapFillTarget", "1", m, "Target: the full gap fill (yesterday's close)"));
+            s.match("\\btarget\\s+(a\\s+)?half(\\s+of)?\\s+(the\\s+)?gap(\\s+fill(ed)?)?\\b|\\bhalf[- ]gap\\s+(fill|target)\\b|\\btarget\\s+(the\\s+)?(middle|midpoint)\\s+of\\s+the\\s+gap\\b",
+                    m -> s.set("gapFillTarget", "0.5", m, "Target: half the gap filled"));
+            s.match("\\btarget\\s+" + NUM + "\\s*%\\s+(of\\s+)?(the\\s+)?gap(\\s+fill(ed)?)?\\b",
+                    m -> s.setNum("gapFillTarget", trim(String.valueOf(Double.parseDouble(m.group(1)) / 100)), 0.01, 1, m));
+            s.builtin("\\b(once|when|after)\\s+(the\\s+)?(price|market|index|it|nifty|bank\\s*nifty)\\s+(falls|drops|comes|rises|climbs|goes|moves|trades)?\\s*(back\\s+)?(below|above|under|over|into|in|inside)\\s+(today'?s\\s+open|the\\s+open(ing)?(\\s+price)?|the\\s+gap)\\b",
+                    "Entry on a 5-min close back past today's open, into the gap");
+            s.builtin("\\b(a\\s+)?5[- ]?min(ute)?\\s+candle\\s+closes\\s+(back\\s+)?(below|above|past)\\s+(today'?s\\s+)?open\\b",
+                    "Entry on a 5-min close back past today's open, into the gap");
+            s.builtin("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|=)\\s+(the\\s+)?(09[:.]15|first|reference|opening)\\s+candle'?s?\\s+(high|low)\\b(\\s*\\(?\\s*(pe|ce)\\s*\\)?\\s*(/|or)\\s*(high|low)\\s*\\(?\\s*(pe|ce)\\s*\\)?)?",
+                    "Stop at the 09:15 candle's high (PE) / low (CE)");
+            s.builtin("\\bgap[- ]?fill(ing|s)?\\b|\\b(back\\s+)?(in|into|inside)\\s+the\\s+gap\\b|\\bre-?enters?\\s+the\\s+gap\\b", "Gap fill");
         }
         s.builtin("\\bfresh\\s+cross(es|ing)?\\b", "Fresh crosses only");
         s.builtin("\\bfrom\\s+the\\s+09?[:.]20\\s+candle\\b", "Entries checked from the 09:20 candle");
@@ -300,6 +322,17 @@ public class StrategyDescriptionParser {
             }
         }
 
+        if ("GAP_FILL".equals(s.params.get("referenceMode"))) {
+            // The gap-fill engine trades both gap directions by itself and stops at the 09:15 candle: drop what it ignores.
+            String gf = s.params.remove("gapFilter");
+            s.params.remove("initialStop");
+            // No side named: gap-up days trade PE back down, gap-down days CE back up.
+            if (!s.params.containsKey("directions") && "GAP_UP".equals(gf)) s.params.put("directions", "PE");
+            if (!s.params.containsKey("directions") && "GAP_DOWN".equals(gf)) s.params.put("directions", "CE");
+            if (s.params.containsKey("gapPoints") || s.params.containsKey("maxGapPoints"))
+                s.warnings.add("The gap-fill strategy measures the gap in % of yesterday's close: write e.g. \"gap-up above 0.2%\" instead of points");
+        }
+
         // Gap sizes in words only: explain which number is used / needed.
         s.match("\\b(there\\s+must\\s+be\\s+)?(a\\s+)?(minimum|min|small|modest|minimum\\s*/\\s*modest)\\s+gap([- ]up|[- ]down)?(\\s+to\\s+proceed)?\\b|\\bonly\\s+proceed\\s+if\\s+it'?s\\s+a\\s+(minimum|small|modest)(\\s*/\\s*(minimum|small|modest))?\\s+gap\\b",
                 m -> { if (!s.params.containsKey("gapPct")) s.note(m, "Minimum gap with no number: Gap % keeps its default 0.2% (write e.g. \"gap up above 0.3%\" to change it)"); else s.note(m, "Minimum gap"); });
@@ -381,6 +414,14 @@ public class StrategyDescriptionParser {
             default -> { }
         }
         if ("PREVIOUS_DAY".equals(p.get("referenceMode"))) n.append(" Prev-Day");
+        else if ("GAP_FILL".equals(p.get("referenceMode"))) {
+            n.append(dir.equals("PE") ? " Gap-Up Fill" : dir.equals("CE") ? " Gap-Down Fill" : " Gap Fill");
+            String f = p.getOrDefault("gapFillTarget", "0.5");
+            n.append(f.equals("1") ? " Full" : " " + Math.round(Double.parseDouble(f) * 100) + "%");
+            if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
+            if (p.containsKey("lots")) n.append(" - ").append(p.get("lots")).append(" lots");
+            return n.toString();
+        }
         else if (p.containsKey("referenceMinutes") && !p.get("referenceMinutes").equals("5")) n.append(" ").append(p.get("referenceMinutes")).append("-min");
         n.append(dir.equals("PE") ? " Breakdown" : " Breakout");
         if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");

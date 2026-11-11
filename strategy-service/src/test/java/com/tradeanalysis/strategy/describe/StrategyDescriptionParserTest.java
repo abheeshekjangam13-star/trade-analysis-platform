@@ -258,4 +258,25 @@ class StrategyDescriptionParserTest {
                 .doesNotContainKey("gapPoints");
         assertThat(r.warnings()).isEmpty();
     }
+
+    @Test
+    void bankNiftyGapFillOnGapUpDays() {
+        var r = parse("Bank Nifty PE only on gap-up days above 0.2%, skip gaps above 2%. Once the price falls back below today's open "
+                + "(a 5-min close back into the gap), buy PE. Target half the gap. Stop at the 09:15 candle's high. "
+                + "No new entries after 14:00. 1 trade per day. Skip Thursday. 2 lots. Charges Rs 85 per trade.");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of("underlying", "BANKNIFTY", "referenceMode", "GAP_FILL", "directions", "PE",
+                "gapPct", "0.2", "maxGapPct", "2", "gapFillTarget", "0.5", "entryUntil", "14:00", "maxTradesPerDay", "1", "skipDays", "THU"))
+                .doesNotContainKeys("gapFilter", "initialStop", "targetPoints");
+        assertThat(r.warnings()).isEmpty();
+        assertThat(r.suggestedName()).isEqualTo("Bank Nifty PE Gap-Up Fill 50% - 2 lots");
+    }
+
+    @Test
+    void gapFillTargetsAndSidesFromTheGap() {
+        assertThat(parse("Gap fill on gap-down days above 0.3%: CE back into the gap, target the full gap fill, max stop distance 100 points.").parameters())
+                .containsAllEntriesOf(Map.of("referenceMode", "GAP_FILL", "directions", "CE", "gapPct", "0.3", "gapFillTarget", "1", "maxStopPoints", "100"));
+        assertThat(parse("Gap fill both ways, target 75% of the gap").parameters())
+                .containsEntry("gapFillTarget", "0.75").doesNotContainKey("targetPoints");
+        assertThat(parse("CE only, target 50 points").parameters()).doesNotContainKey("referenceMode");   // no gap-fill words
+    }
 }

@@ -263,6 +263,8 @@ public class NiftyOpeningBreakoutEngine {
                                   Instant now, LocalDate tradeFrom) {
         // referenceMode=PREVIOUS_DAY: yesterday's high and low are the reference, not today's 09:15 candle.
         if (PreviousRangeEngine.handles(params)) return new PreviousRangeEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
+        // referenceMode=GAP_FILL: trade back into the opening gap.
+        if (GapFillEngine.handles(params)) return new GapFillEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
         return run(series, minutes, params, strategyId, now, tradeFrom, false);
     }
 
