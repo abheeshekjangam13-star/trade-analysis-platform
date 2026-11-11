@@ -110,6 +110,12 @@ class StrategyShareIntegrationTest {
         JsonNode forStrategy = call(get("/api/strategies/56/shares"), "admin", 200);
         assertThat(forStrategy).hasSize(2);
         call(get("/api/strategies/56/shares"), "ravi", 403);
+        JsonNode all = call(get("/api/strategies/shares"), "admin", 200);           // every share, for the strategy list
+        assertThat(all).hasSize(2);
+        List<String> answers = new ArrayList<>();
+        all.forEach(sh -> answers.add(sh.get("sharedWith").asText() + ":" + sh.get("status").asText()));
+        assertThat(answers).containsExactlyInAnyOrder("ravi:ACCEPTED", "sita:DECLINED");
+        call(get("/api/strategies/shares"), "ravi", 403);
     }
 
     @Test @Order(2)

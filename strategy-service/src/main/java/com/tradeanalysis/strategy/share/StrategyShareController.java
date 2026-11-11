@@ -29,6 +29,10 @@ public class StrategyShareController {
     @Operation(summary = "ADMIN: who a strategy was shared with and their answers")
     public List<StrategyShareService.ShareView> forStrategy(@PathVariable Long id) { return svc.forStrategy(id); }
 
+    @GetMapping("/shares")
+    @Operation(summary = "ADMIN: every strategy share and its answer, newest first")
+    public List<StrategyShareService.ShareView> all() { return svc.all(); }
+
     @GetMapping("/shares/incoming")
     @Operation(summary = "Strategies shared with you (pending first)")
     public List<StrategyShareService.ShareView> mine() { return svc.mine(); }

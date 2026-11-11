@@ -69,6 +69,14 @@ public class StrategyShareService {
         return shares.findByStrategyIdOrderByCreatedAtDesc(strategyId).stream().map(this::view).toList();
     }
 
+    /** ADMIN: every share of every strategy, newest first (for "shared with" on the strategy list). */
+    @Transactional(readOnly = true)
+    public List<ShareView> all() {
+        requireAdmin();
+        return shares.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))
+                .stream().map(this::view).toList();
+    }
+
     /** The caller's invitations, newest first (pending ones first). */
     @Transactional(readOnly = true)
     public List<ShareView> mine() {
