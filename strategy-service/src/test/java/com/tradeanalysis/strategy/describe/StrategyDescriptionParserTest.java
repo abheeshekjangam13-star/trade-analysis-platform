@@ -184,4 +184,68 @@ class StrategyDescriptionParserTest {
         assertThat(parse("CE only. First candle at 2:20 pm. Trade only on 8 Nov 2026.").parameters())
                 .containsEntry("referenceTime", "14:20").containsEntry("onlyOn", "2026-11-08");
     }
+
+    @Test
+    void bankNiftyPreviousDayBreakdownWithAStopCap() {
+        var r = parse("Bank Nifty PE Breakdown 50 Target - stop cap 150 - 2 lots. PE only, on days that open inside yesterday's high-low range. "
+                + "Enter PE when a 5-minute candle closes below yesterday's low (fresh cross, from the 09:20 candle), no entry after 14:00, "
+                + "1 trade per day, skip Thursdays. Stop at yesterday's high, but never more than 150 points above entry. Target 50 points. "
+                + "Square-off at 15:20. 2 lots, lot size 65, charges Rs 85 per trade.");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of(
+                "underlying", "BANKNIFTY", "referenceMode", "PREVIOUS_DAY", "directions", "PE", "maxStopPoints", "150",
+                "targetPoints", "50", "entryUntil", "14:00", "maxTradesPerDay", "1", "skipDays", "THU", "lots", "2", "costPerTrade", "85"));
+        assertThat(r.warnings()).singleElement().asString().contains("Bank Nifty uses 30");   // lot size 65 is NIFTY's
+        assertThat(r.notUnderstood()).isEmpty();
+        assertThat(r.suggestedName()).isEqualTo("Bank Nifty PE Prev-Day Breakdown 50 Target - stop cap 150 - 2 lots");
+    }
+
+    @Test
+    void previousDayCeOnNiftyWithoutACap() {
+        var r = parse("CE only when the day opens inside the previous day's range. Buy CE on a close above yesterday's high. "
+                + "Stop at yesterday's low. Target 60 points. 1 trade per day.");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of("referenceMode", "PREVIOUS_DAY", "directions", "CE", "targetPoints", "60"))
+                .doesNotContainKeys("maxStopPoints", "underlying");
+        assertThat(r.warnings()).isEmpty();
+    }
+
+    @Test
+    void fifteenMinuteGapDirectionStrategyWithEveryNewSetting() {
+        var r = parse("Trades only when NIFTY opens >= 0.2% and < 1% away from the previous close, in the direction of the 20-day trend: "
+                + "gap up -> CE only if the previous close is above its 20-session average; gap down -> PE only if below. "
+                + "Reference = first 15-min candle 09:15-09:30 IST. Entry on a fresh 5-min close beyond the 15-min high/low, on candles "
+                + "starting before 13:00, only if the breakout candle closes in its strong half. Initial SL = breakout candle low (CE) / high (PE). "
+                + "Max 1 trade/day. EOD square-off 15:20. Rs 85 charges per trade. No target: at 1R the stop moves to entry, then trails on "
+                + "completed 5-min lows (CE) / highs (PE).");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of(
+                "referenceMinutes", "15", "directions", "WITH_GAP", "trendSma", "20", "breakoutStrength", "0.5",
+                "initialStop", "BREAKOUT_CANDLE", "trailAfterR", "1", "breakevenOnTrail", "true", "trailMinutes", "5",
+                "maxTradesPerDay", "1", "costPerTrade", "85"));
+        assertThat(r.parameters()).containsEntry("targetPoints", "0").containsEntry("entryUntil", "13:00")
+                .containsEntry("gapFilter", "ANY_GAP").containsEntry("gapPct", "0.2").containsEntry("maxGapPct", "1");
+        assertThat(r.warnings()).isEmpty();
+        assertThat(r.suggestedName()).startsWith("Nifty CE/PE");
+    }
+
+    @Test
+    void targetsAndTrailsInMultiplesOfRisk() {
+        assertThat(parse("CE only. Target 2R.").parameters()).containsEntry("targetR", "2").doesNotContainKey("targetPoints");
+        assertThat(parse("CE only. Risk reward 1:2.5").parameters()).containsEntry("targetR", "2.5");
+        assertThat(parse("PE only. 1:2 target").parameters()).containsEntry("targetR", "2");
+        assertThat(parse("PE only. Target at 1.5x the risk").parameters()).containsEntry("targetR", "1.5");
+        assertThat(parse("CE only. Trail after 1.5R in profit.").parameters()).containsEntry("trailAfterR", "1.5");
+        assertThat(parse("CE only. No new entries after 1:30 pm").parameters()).containsEntry("entryUntil", "13:30").doesNotContainKey("targetR");
+    }
+
+    @Test
+    void breakoutStrengthAndReferenceRanges() {
+        assertThat(parse("CE only, breakout candle closes in the top 30% of its range").parameters()).containsEntry("breakoutStrength", "0.7");
+        assertThat(parse("CE only, 30-minute opening range").parameters()).containsEntry("referenceMinutes", "30");
+        assertThat(parse("PE only, reference candle 09:15-09:45").parameters()).containsEntry("referenceMinutes", "30");
+        assertThat(parse("CE only. Reference candle 09:15-09:20 IST.").parameters()).doesNotContainKey("referenceMinutes");
+        var bad = parse("CE only, first 7-min candle");
+        assertThat(bad.parameters()).doesNotContainKey("referenceMinutes");
+        assertThat(bad.warnings()).anySatisfy(w -> assertThat(w).contains("multiple of 5"));
+        assertThat(parse("Bank Nifty CE only, trail after 300 points, target 600 points, stop cap 900 points").parameters())
+                .containsAllEntriesOf(Map.of("trailAfterPoints", "300", "targetPoints", "600", "maxStopPoints", "900"));
+    }
 }

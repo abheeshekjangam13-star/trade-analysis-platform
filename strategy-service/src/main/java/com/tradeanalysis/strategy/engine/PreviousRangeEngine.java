@@ -24,12 +24,13 @@ import java.util.stream.Collectors;
  * - Entry: the first 5-min candle that closes above yesterday's high (CE) or below yesterday's low (PE), a fresh
  *   cross, after 09:15 and before entryUntil (default 14:00), once a day. With directions BOTH the first breakout
  *   either way is taken.
- * - Stop: the other side of the range (CE: yesterday's low, PE: yesterday's high). Target: targetPoints in favour
- *   (0 = none), checked on 1-min candles, stop first.
+ * - Stop: the other side of the range (CE: yesterday's low, PE: yesterday's high), but never more than maxStopPoints
+ *   from entry when that is set (0 or missing = no cap). Target: targetPoints in favour (0 = none), checked on 1-min
+ *   candles, stop first.
  * - Square-off at 15:20 IST.
  *
  * Selected by {@code referenceMode=PREVIOUS_DAY} in the strategy's parameters; see {@link BacktestEngine}.
- * Parameters used: lots (2), underlying, targetPoints (0), entryUntil (14:00), skipDays (none), costPerTrade (0),
+ * Parameters used: lots (2), underlying, targetPoints (0), maxStopPoints (0 = no cap), entryUntil (14:00), skipDays (none), costPerTrade (0),
  * directions (PE when empty, so older PE-only strategies keep their results; CE, PE or BOTH).
  */
 @Component
@@ -131,7 +132,7 @@ public class PreviousRangeEngine {
 
             double entrySpot = entryCandle.close().doubleValue();
             String side = call ? "CE" : "PE";
-            double stop = call ? pLow : pHigh;
+            double stop = cfg.capStop(call, entrySpot, call ? pLow : pHigh);
             int strike = cfg.underlying().strike(call, entrySpot);
             NiftyTradeLog trade = new NiftyTradeLog(strategyId, series.symbol(), date, 1, call ? "BULLISH" : "BEARISH", pHigh, pLow,
                     ref.timestamp(), entryCandle.timestamp(), entrySpot, side, strike, cfg.lots(), cfg.lotSize(), stop);
@@ -193,7 +194,14 @@ public class PreviousRangeEngine {
     private record Exit(Candle bar, double price, String reason) {}
 
     private record Settings(int lots, int lotSize, double targetPoints, LocalTime entryUntil, Set<DayOfWeek> skipDays,
-                            double costPerTrade, Underlying underlying, boolean allowCe, boolean allowPe) {
+                            double costPerTrade, Underlying underlying, boolean allowCe, boolean allowPe, double maxStopPoints) {
+
+        /** The range stop, moved closer to entry when it is further away than maxStopPoints (CE below entry, PE above). */
+        double capStop(boolean call, double entry, double rangeStop) {
+            if (maxStopPoints <= 0) return rangeStop;
+            return call ? Math.max(rangeStop, entry - maxStopPoints) : Math.min(rangeStop, entry + maxStopPoints);
+        }
+
         static Settings from(Params p) {
             String dirs = p.stringOr("directions", "").trim().toUpperCase(Locale.ROOT);
             if (dirs.isEmpty()) dirs = "PE";   // older previous-day strategies were PE-only
@@ -201,10 +209,12 @@ public class PreviousRangeEngine {
                 throw new IllegalArgumentException("The previous-day strategy trades CE, PE or BOTH: " + dirs);
             Underlying u = Underlying.of(p.stringOr("underlying", ""));
             String until = p.stringOr("entryUntil", "").trim();
+            double cap = p.doubleOr("maxStopPoints", 0);
+            if (cap < 0) throw new IllegalArgumentException("maxStopPoints can't be negative: " + cap);
             LocalTime entryUntil = until.isEmpty() ? DEFAULT_ENTRY_UNTIL : parseTime("entryUntil", until);
             return new Settings(p.intOr("lots", 2), u.defaultLotSize, p.doubleOr("targetPoints", 0), entryUntil,
                     parseDays(p.stringOr("skipDays", "")), p.doubleOr("costPerTrade", 0), u,
-                    !dirs.equals("PE"), !dirs.equals("CE"));
+                    !dirs.equals("PE"), !dirs.equals("CE"), cap);
         }
 
         private static LocalTime parseTime(String name, String v) {

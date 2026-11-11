@@ -143,6 +143,44 @@ class PreviousRangeEngineTest {
     }
 
     @Test
+    void anOptionalStopCapKeepsThePeStopCloseToEntry() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24120, 24050, 24080));
+        fiveMin.add(c(DAY, 9, 20, 24080, 24085, 23980, 23990));   // PE entry 23990; yesterday's high 24200 is 210 points away
+        List<Candle> oneMin = List.of(c(DAY, 9, 25, 23990, 24095, 23985, 24090));   // rises to 24095
+        var series = new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin);
+        var minutes = new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin);
+
+        NiftyTradeLog capped = new PreviousRangeEngine().run(series, minutes, params(Map.of("maxStopPoints", "100", "targetPoints", "0")), 7L, NOW, null).tradeLogs().get(0);
+        assertThat(capped.getInitialStopLoss()).isEqualTo(24090.0);   // entry + 100, closer than 24200
+        assertThat(capped.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(capped.getExitSpotPrice()).isEqualTo(24090.0);
+
+        NiftyTradeLog uncapped = new PreviousRangeEngine().run(series, minutes, params(Map.of("targetPoints", "0")), 7L, NOW, null).tradeLogs().get(0);
+        assertThat(uncapped.getInitialStopLoss()).isEqualTo(24200.0);   // no cap given: yesterday's high, as before
+        assertThat(uncapped.getExitReason()).isEqualTo("EOD_SQUAREOFF");
+
+        NiftyTradeLog wide = new PreviousRangeEngine().run(series, minutes, params(Map.of("maxStopPoints", "500", "targetPoints", "0")), 7L, NOW, null).tradeLogs().get(0);
+        assertThat(wide.getInitialStopLoss()).isEqualTo(24200.0);   // a cap wider than the range changes nothing
+    }
+
+    @Test
+    void anOptionalStopCapKeepsTheCeStopCloseToEntry() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));
+        fiveMin.add(c(DAY, 9, 20, 24140, 24230, 24130, 24220));   // CE entry 24220; yesterday's low 24000 is 220 points away
+        List<Candle> oneMin = List.of(c(DAY, 9, 25, 24220, 24225, 24140, 24150));   // dips to 24140
+        NiftyTradeLog t = new PreviousRangeEngine().run(new PriceSeries("BANK", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("BANK", Interval.MINUTE_1, oneMin),
+                params(Map.of("directions", "CE", "underlying", "BANKNIFTY", "maxStopPoints", "80", "targetPoints", "0")), 7L, NOW, null).tradeLogs().get(0);
+        assertThat(t.getInitialStopLoss()).isEqualTo(24140.0);   // entry − 80
+        assertThat(t.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(t.getLotSize()).isEqualTo(30);                 // Bank Nifty
+        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(params(Map.of("maxStopPoints", "-5"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void liveKeepsATradeWithNoExitYetOpen() {
         List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
         fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));

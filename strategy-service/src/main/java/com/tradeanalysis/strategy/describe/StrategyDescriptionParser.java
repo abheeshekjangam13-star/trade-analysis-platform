@@ -62,7 +62,10 @@ public class StrategyDescriptionParser {
 
         if (type.equals("NIFTY_OPENING_BREAKOUT")) {
             try {
-                NiftyOpeningBreakoutEngine.validateParams(new Params(new HashMap<>(scan.params)));
+                Params p = new Params(new HashMap<>(scan.params));
+                NiftyOpeningBreakoutEngine.validateParams(p);
+                if (com.tradeanalysis.strategy.engine.PreviousRangeEngine.handles(p))
+                    com.tradeanalysis.strategy.engine.PreviousRangeEngine.validateParams(p);
             } catch (IllegalArgumentException e) {
                 scan.warnings.add("These parameters would be rejected: " + e.getMessage());
             }
@@ -103,6 +106,72 @@ public class StrategyDescriptionParser {
         s.ignore("\\bif\\s+no\\s*→?\\s*$|\\bif\\s+(yes|no)\\s*(→|:|,)");
         s.ignore("\\b(market\\s+opens?|at\\s+market\\s+open)\\s*(\\(?\\s*(at\\s+)?9[:.]15\\s*(am|ist)?\\s*\\)?)?");
         s.ignore("\\benter\\s+the\\s+trade\\b");
+
+        // ── Reference: yesterday's high-low range instead of today's opening candle (PreviousRangeEngine) ──
+        String YDAY = "(yesterday'?s?|previous[- ]day'?s?|prev(ious)?\\s+day'?s?|prior[- ]day'?s?|pdh|pdl)";
+        boolean prevDay = s.peek("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?(range|high|low)\\b|\\bpd[hl]\\b");
+        if (prevDay) {
+            s.params.put("referenceMode", "PREVIOUS_DAY");
+            s.findings.add(new Finding("referenceMode", "PREVIOUS_DAY", "yesterday's high and low",
+                    "Reference: yesterday's high and low (not today's 09:15 candle)"));
+            s.builtin("\\b(on\\s+)?(days?\\s+(that|which)\\s+)?opens?\\s+(inside|within|in)\\s+(the\\s+)?" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\b",
+                    "The day must open inside yesterday's range");
+            s.builtin("\\b(a\\s+)?5[- ]?min(ute)?\\s+candle\\s+closes\\s+(below|above)\\s+" + YDAY + "\\s+(low|high)\\b|\\bclose[sd]?\\s+(below|above)\\s+" + YDAY + "\\s+(low|high)\\b",
+                    "Entry on a 5-min close beyond yesterday's low (PE) / high (CE)");
+            s.builtin("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|=)\\s+" + YDAY + "\\s+(high|low)\\b",
+                    "Stop at yesterday's high (PE) / low (CE)");
+            s.builtin("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\b", "Yesterday's high-low range");
+        }
+        s.builtin("\\bfresh\\s+cross(es|ing)?\\b", "Fresh crosses only");
+        s.builtin("\\bfrom\\s+the\\s+09?[:.]20\\s+candle\\b", "Entries checked from the 09:20 candle");
+
+        // ── Reference range length: "first 15-min candle", "09:15-09:30", "15-minute opening range" ──
+        s.match("\\b(first|opening|reference|ref)\\s+(\\d{1,2})[- ]?min(ute)?s?\\s+(candle|range|bar)(\\s*\\(?\\s*09[:.]15\\s*[-–]\\s*\\d{1,2}[:.]\\d{2}(\\s*ist)?\\s*\\)?)?"
+                + "|\\b(\\d{1,2})[- ]?min(ute)?s?\\s+(opening\\s+range|reference(\\s+(candle|range))?|orb)\\b",
+                m -> s.setReferenceMinutes(m.group(2) != null ? m.group(2) : m.group(7), m));
+        s.match("\\b(reference|ref|opening\\s+range|range)(\\s+(candle|range))?\\s*(=|:|is|from)?\\s*09[:.]15\\s*[-–]\\s*(09|10)[:.](\\d{2})(\\s*ist)?",
+                m -> s.setReferenceMinutes(String.valueOf((Integer.parseInt(m.group(5)) - 9) * 60 + Integer.parseInt(m.group(6)) - 15), m));
+
+        // The breakout itself: "a close beyond the 15-min high/low" is the reference range, not a trail block.
+        s.builtin("\\b(beyond|above|below|outside)\\s+the\\s+(\\d{1,2})[- ]?min(ute)?\\s+(range\\s+)?(high|low)(\\s*/\\s*(high|low))?\\b",
+                "Entry on a 5-min close beyond the reference range");
+
+        // ── Trade in the direction of the gap: CE on gap-up days, PE on gap-down days ──
+        s.match("\\b(in\\s+the\\s+direction\\s+of\\s+the\\s+gap|with\\s+the\\s+gap|gap\\s+direction(\\s+only)?|trade\\s+the\\s+gap(\\s+direction)?)\\b"
+                + "|\\bgap[- ]?up\\s*(→|->|:|=)?\\s*ce\\b[^.\\n]{0,120}?\\bgap[- ]?down\\s*(→|->|:|=)?\\s*pe\\b",
+                m -> s.set("directions", "WITH_GAP", m, "CE only on gap-up days, PE only on gap-down days"));
+
+        // ── Initial stop at the 5-min breakout candle's own low (CE) / high (PE) ──
+        s.match("\\b(initial\\s+)?(sl|stop(?:[- ]loss)?)\\s*(=|:|at|on|below|above)?\\s*(the\\s+)?break(out|down)\\s+candle'?s?\\s+(low|high)(\\s*\\(?\\s*(ce|pe)\\s*\\)?\\s*(/|or|and)\\s*(low|high)\\s*\\(?\\s*(ce|pe)\\s*\\)?)?"
+                + "|\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|below|above)\\s+(the\\s+)?(low|high)\\s+of\\s+(the\\s+)?break(out|down)\\s+candle\\b",
+                m -> s.set("initialStop", "BREAKOUT_CANDLE", m, "Initial SL at the breakout candle's low (CE) / high (PE)"));
+
+        // ── Target and trail as multiples of the initial risk (R) ──
+        s.match("\\btarget(\\s+(of|at|=|is))?\\s*\\+?" + NUM + "\\s*r\\b(?!s)|\\b" + NUM + "\\s*r\\s+target\\b"
+                + "|\\b(risk[- :]?reward|rr|r:r)\\s*(of|=|:)?\\s*1\\s*:\\s*(\\d(?:\\.\\d)?)(?!\\d)|\\b1\\s*[:-]\\s*(\\d(?:\\.\\d)?)(?!\\d)\\s*(target|rr|r:r|risk[- :]?reward)\\b"
+                + "|\\btarget\\s+(at\\s+)?" + NUM + "\\s*(x|times)\\s+(the\\s+)?(initial\\s+)?risk\\b",
+                m -> s.setNum("targetR", first(m, 3, 4, 7, 8, 11), 0.1, 20, m));
+        s.match("\\b(trail(ing)?|move\\s+(the\\s+)?(sl|stop)(\\s+to\\s+(entry|break[- ]?even|cost))?)\\s+(only\\s+)?(after|once|at)\\s+\\+?" + NUM + "\\s*r\\b(\\s+in\\s+(profit|favou?r))?"
+                + "|\\b(at|after|once)\\s+\\+?" + NUM + "\\s*r\\b(\\s+in\\s+(profit|favou?r))?\\s*,?\\s*(move\\s+)?(the\\s+)?(sl|stop)\\s+(moves\\s+)?to\\s+(entry|break[- ]?even|cost)",
+                m -> {
+                    s.setNum("trailAfterR", first(m, 9, 13), 0.1, 20, m);
+                    String t = s.text(m).toLowerCase(Locale.ROOT);
+                    if (t.matches(".*\\b(entry|break[- ]?even|cost)\\b.*")) s.params.put("breakevenOnTrail", "true");
+                });
+
+        // ── Breakout strength: the breakout candle must close near its high (CE) / low (PE) ──
+        s.match("\\bclos(es|ing|e)\\s+in\\s+(its|the)\\s+(strong|upper|top)\\s+half\\b|\\bstrong[- ]half\\s+close\\b",
+                m -> s.setNum("breakoutStrength", "0.5", 0, 1, m));
+        s.match("\\bclos(es|ing|e)\\s+in\\s+(the\\s+)?(top|upper|strongest)\\s+" + NUM + "\\s*%\\s+of\\s+(its|the)\\s+(range|candle)\\b",
+                m -> s.setNum("breakoutStrength", trim(String.valueOf(Math.round((100 - Double.parseDouble(m.group(4))) / 100.0 * 100) / 100.0)), 0, 1, m));
+        s.match("\\bclos(es|ing|e)\\s+in\\s+(the\\s+)?(top|upper)\\s+third\\b", m -> s.setNum("breakoutStrength", "0.67", 0, 1, m));
+        s.match("\\bbreakout\\s+strength\\s*(of|=|:)?\\s*" + NUM, m -> s.setNum("breakoutStrength", m.group(2), 0, 1, m));
+
+        // ── Trend filter: CE only above the N-session average of closes, PE only below ──
+        s.match("\\b(in\\s+the\\s+direction\\s+of\\s+the\\s+)?(\\d{1,3})[- ]?(day|session|period|bar)s?\\s+(trend|average|avg|sma|moving\\s+average|ma)\\b"
+                + "|\\btrend\\s+(filter|sma|average)\\s*(of|=|:)?\\s*(\\d{1,3})\\b",
+                m -> s.setInt("trendSma", m.group(2) != null ? m.group(2) : m.group(7), 2, 200, m));
+        s.builtin("\\b(only\\s+if\\s+)?(the\\s+)?previous\\s+close\\s+(is\\s+)?(above|below)\\s+(its|the)\\s+(average|sma|mean)\\b", "Trend check on the previous session's close");
 
         // Initial stop at the reference candle's own low (CE) / high (PE) = the OPPOSITE side.
         s.match("\\b(note|mark)\\s+its\\s+(low|high)\\b[^.;\\n]{0,40}\\binitial\\s+(sl|stop(?:[- ]loss)?)\\b"
@@ -156,7 +225,13 @@ public class StrategyDescriptionParser {
 
         // Quantity
         // "lot size 65" is read and ignored: the index sets the lot size, not the strategy.
-        s.match("\\blot\\s*size\\s*(of|=|:)?\\s*(\\d+)\\b", m -> { });
+        s.match("\\blot\\s*size\\s*(of|=|:)?\\s*(\\d+)\\b", m -> {
+            boolean bank = "BANKNIFTY".equals(s.params.get("underlying"));
+            int size = bank ? 30 : 65;
+            if (!m.group(2).equals(String.valueOf(size)))
+                s.unsupported(m, "Lot size comes from the index: " + (bank ? "Bank Nifty" : "NIFTY 50") + " uses " + size + ", so " + m.group(2) + " is not used");
+            else s.note(m, "Lot size " + size + " (set by the index)");
+        });
         s.match("\\b(\\d+|one|two|three|four|five)\\s*lots?\\b(?!\\s*size)", m -> s.setInt("lots", count(m.group(1)), 1, 50, m));
         s.match("\\blots?\\s*(=|:)\\s*(\\d+)\\b", m -> s.setInt("lots", m.group(2), 1, 50, m));
 
@@ -167,7 +242,7 @@ public class StrategyDescriptionParser {
         // Trailing stop
         s.match("\\btrail(ing)?(\\s+(sl|stop(-loss)?))?[^.;\\n]{0,25}?\\b(\\d{1,2})\\s*[- ]?(min(ute)?s?|m)\\b", m -> s.setInt("trailMinutes", m.group(5), 1, 60, m));
         s.match("\\b(\\d{1,2})\\s*[- ]?(min(ute)?s?|m)\\s+(candle\\s+|block\\s+)?(lows?|highs?|low\\s*/\\s*high|trail(ing)?)\\b", m -> s.setInt("trailMinutes", m.group(1), 1, 60, m));
-        s.match("\\btrail(ing)?\\s+(only\\s+)?(after|once)\\s+(\\+?" + NUM + ")\\s*(points?|pts?)(\\s+in\\s+(profit|favou?r))?", m -> s.setNum("trailAfterPoints", m.group(5), 0, 500, m));
+        s.match("\\btrail(ing)?\\s+(only\\s+)?(after|once)\\s+(\\+?" + NUM + ")\\s*(points?|pts?)(\\s+in\\s+(profit|favou?r))?", m -> s.setNum("trailAfterPoints", m.group(5), 0, 3000, m));
         s.match("\\b(after\\s+every\\s+(new\\s+)?(\\d{1,2})[- ]?min(ute)?\\s+candle\\s+closes,?\\s*)?move\\s+(your\\s+|the\\s+)?(sl|stop)\\s+(up\\s+|down\\s+)?to\\s+the\\s+(low|high)\\s+of\\s+(that|the|each)\\s+(just[- ]closed|completed|last|previous)\\s+candle\\b",
                 m -> {
                     if (m.group(3) != null && !s.params.containsKey("trailMinutes")) s.setInt("trailMinutes", m.group(3), 1, 60, m);
@@ -176,9 +251,20 @@ public class StrategyDescriptionParser {
         s.match("\\bdelayed\\s+trail\\b", m -> s.note(m, "Delayed trail: give the points with \"trail after N points\""));
 
         // Target
-        s.match("\\btarget(\\s+of)?\\s*(\\+|-)?\\s*" + NUM + "\\s*(points?|pts?)?\\b", m -> s.setNum("targetPoints", m.group(3), 1, 1000, m));
-        s.match("\\b" + NUM + "\\s*(points?|pts?)?\\s+target\\b", m -> s.setNum("targetPoints", m.group(1), 1, 1000, m));
+        s.match("\\btarget(\\s+of)?\\s*(\\+|-)?\\s*" + NUM + "\\s*(points?|pts?)?\\b", m -> s.setNum("targetPoints", m.group(3), 1, 3000, m));
+        s.match("\\b" + NUM + "\\s*(points?|pts?)?\\s+target\\b", m -> s.setNum("targetPoints", m.group(1), 1, 3000, m));
         s.match("\\bno\\s+target\\b", m -> s.set("targetPoints", "0", m, "No target"));
+
+        // "opens >= 0.2% and < 1% away from the previous close": a gap either way, with a minimum and a maximum
+        String AWAY = "\\s*(away\\s+)?from\\s+(the\\s+)?(previous|prev|yesterday'?s?)('?s)?\\s+close";
+        String MIN = "(>=|≥|>|at\\s+least|more\\s+than|above|over)?\\s*";
+        String MAX = "(<=|≤|<|below|under|less\\s+than|up\\s+to)\\s*";
+        s.match("\\bopens?\\s+" + MIN + NUM + "\\s*%\\s*(and|but|,)\\s*" + MAX + NUM + "\\s*%" + AWAY,
+                m -> { s.set("gapFilter", "ANY_GAP", m, "A gap either way"); s.setNum("gapPct", m.group(2), 0.01, 5, m); s.setNum("maxGapPct", m.group(5), 0.05, 10, m); });
+        s.match("\\bopens?\\s+" + MIN + NUM + "\\s*(points?|pts?)\\s*(and|but|,)\\s*" + MAX + NUM + "\\s*(points?|pts?)" + AWAY,
+                m -> { s.set("gapFilter", "ANY_GAP", m, "A gap either way"); s.setNum("gapPoints", m.group(2), 1, 2000, m); s.setNum("maxGapPoints", m.group(6), 1, 3000, m); });
+        s.match("\\bopens?\\s+" + MIN + NUM + "\\s*%" + AWAY,
+                m -> { s.set("gapFilter", "ANY_GAP", m, "A gap either way"); s.setNum("gapPct", m.group(2), 0.01, 5, m); });
 
         // Gap filter
         boolean up = s.peek("\\bgap(?:s|ped)?[- ]?ups?\\b|\\bopens?\\s+(higher|above)\\b|(%|\\bpoints?|\\bpts?)\\s*(higher|above)\\s+(the\\s+)?(previous|prev|yesterday)"),
@@ -220,16 +306,21 @@ public class StrategyDescriptionParser {
                 m -> { s.setTime("entryFrom", m.group(5), m); s.setTime("entryUntil", m.group(7), m); });
         s.match("\\b(no\\s+(new\\s+)?(entr(y|ies)|trades?)|don'?t\\s+enter|do\\s+not\\s+enter|stop\\s+(taking\\s+)?entries)\\s+(after|from|beyond)\\s+" + TIME, m -> s.setTime("entryUntil", m.group(7), m));
         s.match("\\b(entr(y|ies)|enter|trades?)\\s+(only\\s+)?(until|till|before|by)\\s+" + TIME, m -> s.setTime("entryUntil", m.group(5), m));
+        s.match("\\b(on\\s+)?(5[- ]?min(ute)?\\s+)?(candles?|bars?)\\s+(starting|that\\s+start|which\\s+start)\\s+(before|by)\\s+" + TIME, m -> s.setTime("entryUntil", m.group(7), m));
+        s.match("\\b(on\\s+)?(5[- ]?min(ute)?\\s+)?(candles?|bars?)\\s+(starting|that\\s+start|which\\s+start)\\s+(at\\s+or\\s+after|from|after)\\s+" + TIME, m -> s.setTime("entryFrom", m.group(7), m));
         s.match("\\b(entr(y|ies)|enter|trades?)\\s+(only\\s+)?(from|after|not\\s+before)\\s+" + TIME, m -> s.setTime("entryFrom", m.group(5), m));
         s.match("\\b(no\\s+(entr(y|ies)|trades?)|don'?t\\s+enter)\\s+before\\s+" + TIME, m -> s.setTime("entryFrom", m.group(4), m));
         s.match("\\b(wait|start)\\s+(until|till|from)\\s+" + TIME, m -> s.setTime("entryFrom", m.group(3), m));
 
         // Breakeven, failed breakout, stop cap
         s.match("\\b(move\\s+(the\\s+)?(sl|stop)\\s+to\\s+)?break[- ]?even(\\s+on\\s+trail)?\\b", m -> s.set("breakevenOnTrail", "true", m, null));
-        s.match("\\block(ing)?\\s+(in\\s+)?\\+?" + NUM + "\\s*(points?|pts?)", m -> s.setNum("breakevenLockPoints", m.group(3), 0, 200, m));
-        s.match("\\bfailed[- ]break(out|down)(\\s+exit)?(\\s+(of|at|after))?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("failedBreakoutPoints", m.group(5), 1, 300, m));
+        s.match("\\block(ing)?\\s+(in\\s+)?\\+?" + NUM + "\\s*(points?|pts?)", m -> s.setNum("breakevenLockPoints", m.group(3), 0, 1000, m));
+        s.match("\\bfailed[- ]break(out|down)(\\s+exit)?(\\s+(of|at|after))?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("failedBreakoutPoints", m.group(5), 1, 1000, m));
         s.match("\\bfailed[- ]break(out|down)(\\s+exit)?\\b", m -> s.note(m, "Failed-breakout exit: give the points, e.g. \"failed breakout exit 10 points\""));
-        s.match("\\b" + NUM + "\\s*(points?|pts?)\\s+(sl|stop)\\s+cap\\b|\\b(max(imum)?\\s+(sl|stop)(\\s+distance)?|(sl|stop)\\s+cap)\\s*(of)?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("maxStopPoints", m.group(1) != null ? m.group(1) : m.group(10), 5, 500, m));
+        s.match("\\b" + NUM + "\\s*(points?|pts?)\\s+(sl|stop)\\s+cap\\b|\\b(max(imum)?\\s+(sl|stop)(\\s+distance)?|(sl|stop)\\s+cap)\\s*(of)?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("maxStopPoints", m.group(1) != null ? m.group(1) : m.group(10), 5, 3000, m));
+        // "never more than 150 points above entry" (PE) / "below entry" (CE): a cap on the initial stop distance
+        s.match("\\b(but\\s+)?(never|not|no)\\s+more\\s+than\\s+" + NUM + "\\s*(points?|pts?)\\s+(above|below|from|away\\s+from)\\s+(the\\s+)?entry\\b",
+                m -> s.setNum("maxStopPoints", m.group(3), 5, 3000, m));
 
         // Weekdays to skip
         s.match("\\b(skip|avoid|no\\s+trades?\\s+on|don'?t\\s+trade\\s+on)\\s+((mon|tue|wed|thu|fri)[a-z]*(\\s*(,|and|&|/)\\s*(mon|tue|wed|thu|fri)[a-z]*)*)", m -> {
@@ -277,7 +368,7 @@ public class StrategyDescriptionParser {
             case "RSI_THRESHOLD" -> "RSI " + p.getOrDefault("period", "14") + " " + p.getOrDefault("oversold", "30") + "/" + p.getOrDefault("overbought", "70");
             default -> "MACD signal";
         };
-        StringBuilder n = new StringBuilder("Nifty ");
+        StringBuilder n = new StringBuilder("BANKNIFTY".equals(p.get("underlying")) ? "Bank Nifty " : "Nifty ");
         String dir = p.getOrDefault("directions", "BOTH");
         n.append(dir.equals("BOTH") || dir.equals("WITH_GAP") ? "CE/PE" : dir);
         switch (p.getOrDefault("gapFilter", "NONE")) {
@@ -287,13 +378,23 @@ public class StrategyDescriptionParser {
             case "FLAT" -> n.append(" Flat-Open");
             default -> { }
         }
+        if ("PREVIOUS_DAY".equals(p.get("referenceMode"))) n.append(" Prev-Day");
+        else if (p.containsKey("referenceMinutes") && !p.get("referenceMinutes").equals("5")) n.append(" ").append(p.get("referenceMinutes")).append("-min");
         n.append(dir.equals("PE") ? " Breakdown" : " Breakout");
         if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
+        else if (p.containsKey("targetR")) n.append(" ").append(trim(p.get("targetR"))).append("R Target");
+        if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
         if (p.containsKey("lots")) n.append(" - ").append(p.get("lots")).append(" lots");
         return n.toString();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /** The first group among these that matched. */
+    private static String first(Matcher m, int... groups) {
+        for (int g : groups) if (m.group(g) != null) return m.group(g);
+        return "";
+    }
 
     private static String count(String word) {
         Integer w = WORDS.get(word.toLowerCase(Locale.ROOT));
@@ -384,6 +485,15 @@ public class StrategyDescriptionParser {
             set(key, t.toString(), m, null);
         }
 
+        /** The reference range length in minutes: a multiple of 5 from 5 to 60 (the engine's limits). */
+        void setReferenceMinutes(String raw, Matcher m) {
+            int v;
+            try { v = Integer.parseInt(raw.trim()); } catch (NumberFormatException e) { warnings.add("referenceMinutes: not a whole number: " + raw); return; }
+            if (v < 5 || v > 60 || v % 5 != 0) { warnings.add("Reference range " + v + " minutes must be a multiple of 5 from 5 to 60 (\"" + text(m) + "\"); not set"); return; }
+            if (v == 5) { findings.add(new Finding(null, null, text(m), "Reference candle 09:15–09:20 IST (built in)")); return; }
+            set("referenceMinutes", String.valueOf(v), m, "Reference range " + v + " minutes from 09:15");
+        }
+
         void setDate(String key, String raw, Matcher m) {
             LocalDate d = date(raw);
             if (d == null) { warnings.add(key + ": couldn't read the date \"" + raw.trim() + "\""); return; }
@@ -412,7 +522,7 @@ public class StrategyDescriptionParser {
             return LocalTime.of(h, min);
         }
 
-        private String text(Matcher m) { return original.substring(m.start(), m.end()).trim(); }
+        String text(Matcher m) { return original.substring(m.start(), m.end()).trim(); }
 
         private void consume(int from, int to) {
             for (int i = from; i < to; i++) { used[i] = true; work.setCharAt(i, ' '); }
