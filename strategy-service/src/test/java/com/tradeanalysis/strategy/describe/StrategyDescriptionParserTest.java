@@ -248,4 +248,14 @@ class StrategyDescriptionParserTest {
         assertThat(parse("Bank Nifty CE only, trail after 300 points, target 600 points, stop cap 900 points").parameters())
                 .containsAllEntriesOf(Map.of("trailAfterPoints", "300", "targetPoints", "600", "maxStopPoints", "900"));
     }
+
+    @Test
+    void aStopCapNextToAGapFilterIsNotReadAsAGapSize() {
+        var r = parse("CE only on gap-up days above 0.1%, skip gaps above 2%. Initial SL at the midpoint of the reference candle, "
+                + "but never more than 60 points below entry. Trail only after +30 points in profit: move SL to breakeven, then trail on completed 10-min lows.");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of("gapFilter", "GAP_UP", "gapPct", "0.1", "maxGapPct", "2",
+                "maxStopPoints", "60", "initialStop", "MIDPOINT", "trailAfterPoints", "30", "trailMinutes", "10"))
+                .doesNotContainKey("gapPoints");
+        assertThat(r.warnings()).isEmpty();
+    }
 }

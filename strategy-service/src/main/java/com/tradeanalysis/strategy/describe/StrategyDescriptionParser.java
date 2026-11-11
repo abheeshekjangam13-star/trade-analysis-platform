@@ -255,6 +255,11 @@ public class StrategyDescriptionParser {
         s.match("\\b" + NUM + "\\s*(points?|pts?)?\\s+target\\b", m -> s.setNum("targetPoints", m.group(1), 1, 3000, m));
         s.match("\\bno\\s+target\\b", m -> s.set("targetPoints", "0", m, "No target"));
 
+        // "never more than 150 points above entry" (PE) / "below entry" (CE): a cap on the initial stop distance.
+        // Read before the gap rules, which would otherwise take "60 points below" as a gap size.
+        s.match("\\b(but\\s+)?(never|not|no)\\s+more\\s+than\\s+" + NUM + "\\s*(points?|pts?)\\s+(above|below|from|away\\s+from)\\s+(the\\s+)?entry\\b",
+                m -> s.setNum("maxStopPoints", m.group(3), 5, 3000, m));
+
         // "opens >= 0.2% and < 1% away from the previous close": a gap either way, with a minimum and a maximum
         String AWAY = "\\s*(away\\s+)?from\\s+(the\\s+)?(previous|prev|yesterday'?s?)('?s)?\\s+close";
         String MIN = "(>=|≥|>|at\\s+least|more\\s+than|above|over)?\\s*";
@@ -318,9 +323,6 @@ public class StrategyDescriptionParser {
         s.match("\\bfailed[- ]break(out|down)(\\s+exit)?(\\s+(of|at|after))?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("failedBreakoutPoints", m.group(5), 1, 1000, m));
         s.match("\\bfailed[- ]break(out|down)(\\s+exit)?\\b", m -> s.note(m, "Failed-breakout exit: give the points, e.g. \"failed breakout exit 10 points\""));
         s.match("\\b" + NUM + "\\s*(points?|pts?)\\s+(sl|stop)\\s+cap\\b|\\b(max(imum)?\\s+(sl|stop)(\\s+distance)?|(sl|stop)\\s+cap)\\s*(of)?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("maxStopPoints", m.group(1) != null ? m.group(1) : m.group(10), 5, 3000, m));
-        // "never more than 150 points above entry" (PE) / "below entry" (CE): a cap on the initial stop distance
-        s.match("\\b(but\\s+)?(never|not|no)\\s+more\\s+than\\s+" + NUM + "\\s*(points?|pts?)\\s+(above|below|from|away\\s+from)\\s+(the\\s+)?entry\\b",
-                m -> s.setNum("maxStopPoints", m.group(3), 5, 3000, m));
 
         // Weekdays to skip
         s.match("\\b(skip|avoid|no\\s+trades?\\s+on|don'?t\\s+trade\\s+on)\\s+((mon|tue|wed|thu|fri)[a-z]*(\\s*(,|and|&|/)\\s*(mon|tue|wed|thu|fri)[a-z]*)*)", m -> {
