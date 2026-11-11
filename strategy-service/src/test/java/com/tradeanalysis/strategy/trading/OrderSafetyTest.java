@@ -100,6 +100,7 @@ class OrderSafetyTest {
         long id = ownBreakout("trader2", "trader2 CE");
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"LIVE\"}"), "boss", 400);       // server switch off
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"LIVE\"}"), "trader2", 403);    // not an admin
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "trader2", 200);
         assertThat(call(put("/api/trading/strategies/" + id).content("{\"mode\":\"PAPER\"}"), "trader2", 200).get("mode").asText()).isEqualTo("PAPER");
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"OFF\"}"), "trader2", 200);
     }
@@ -136,6 +137,7 @@ class OrderSafetyTest {
         jdbc.update("DELETE FROM strategy_user_mode");   // other tests in this database leave strategies on
         call(get("/api/trading/strategies"), "t", 200);   // registers user t
         long id = ownBreakout("t", "t CE for kill switch");
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "t", 200);
         call(put("/api/trading/strategies/" + id).content("{\"mode\":\"PAPER\"}"), "t", 200);
         call(post("/api/trading/kill-switch"), "t", 403);            // admins only, now that outside users can sign up
         jdbc.update("INSERT INTO app_user (username, status, created_at) SELECT 'chief', 'ACTIVE', CURRENT_TIMESTAMP WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE username = 'chief')");

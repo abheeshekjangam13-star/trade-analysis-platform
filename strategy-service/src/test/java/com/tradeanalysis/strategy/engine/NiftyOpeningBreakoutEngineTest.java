@@ -625,4 +625,142 @@ class NiftyOpeningBreakoutEngineTest {
         assertThat(t.getExitReason()).isEqualTo("TARGET_HIT");
         assertThat(t.getLotSize()).isEqualTo(65);
     }
+
+    // ── First 15-min candle, gap-direction breakout (breakout-candle stop, R-multiple target) ──────────────
+
+    private static final LocalDate GAP_PREV = LocalDate.of(2026, 10, 26), GAP_DAY = Candles.DAY;
+
+    /** Previous close 24,000; gap-down open 23,900; 15-min reference range 23,870–23,960 (09:15–09:30). */
+    private static List<Candle> gapDownDay(Candle... after) {
+        List<Candle> c = new ArrayList<>(List.of(
+                barOn(GAP_PREV, 15, 25, 24000, 24010, 23990, 24000),
+                bar(9, 15, 23900, 23950, 23880, 23920),
+                bar(9, 20, 23920, 23960, 23890, 23940),
+                bar(9, 25, 23940, 23945, 23870, 23900)));
+        c.addAll(List.of(after));
+        return c;
+    }
+
+    private static Params firstFifteen(String... extra) {
+        List<String> kv = new ArrayList<>(List.of("referenceMinutes", "15", "directions", "WITH_GAP", "gapFilter", "ANY_GAP",
+                "gapPct", "0.2", "initialStop", "BREAKOUT_CANDLE", "maxTradesPerDay", "1", "trailMinutes", "5"));
+        kv.addAll(List.of(extra));
+        return params(kv.toArray(String[]::new));
+    }
+
+    @Test
+    void gapDownShortsOnACloseBelowTheFirst15MinLowWithStopAtTheBreakoutHighAndTargetAt2R() {
+        List<Candle> five = gapDownDay(
+                bar(9, 30, 23900, 23910, 23860, 23880),    // still above the 15-min low 23,870
+                bar(9, 35, 23880, 23890, 23850, 23860),    // closes below → PE at 23,860, SL 23,890 (risk 30)
+                bar(9, 40, 23860, 23865, 23795, 23800));   // 2R = 60 → target 23,800
+
+        var trades = run(firstFifteen("targetR", "2"), five, List.of(), closeOf(9, 40), GAP_DAY).tradeLogs();
+
+        assertThat(trades).hasSize(1);
+        NiftyTradeLog t = trades.get(0);
+        assertThat(t.getOptionType()).isEqualTo("PE");
+        assertThat(t.getReferenceHigh()).isEqualTo(23960.0);
+        assertThat(t.getReferenceLow()).isEqualTo(23870.0);
+        assertThat(t.getEntryTimestamp()).isEqualTo(at(9, 35));
+        assertThat(t.getInitialStopLoss()).isEqualTo(23890.0);
+        assertThat(t.getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(23800.0);
+    }
+
+    @Test
+    void withGapIgnoresBreakoutsAgainstTheGap() {
+        List<Candle> five = gapDownDay(
+                bar(9, 30, 23940, 23990, 23935, 23980),    // above the 15-min high on a gap-down day: ignored
+                bar(9, 35, 23980, 23985, 23900, 23910),
+                bar(9, 40, 23910, 23915, 23850, 23860));   // below the 15-min low → PE
+
+        var trades = run(firstFifteen(), five, List.of(), closeOf(9, 40), GAP_DAY).tradeLogs();
+
+        assertThat(trades).extracting(NiftyTradeLog::getOptionType).containsExactly("PE");
+        assertThat(trades.get(0).getInitialStopLoss()).isEqualTo(23915.0);
+    }
+
+    @Test
+    void trailAfterRHoldsTheBreakoutStopUntil2RThenMovesToEntryAndTrails() {
+        List<Candle> five = gapDownDay(
+                bar(9, 30, 23900, 23910, 23860, 23880),
+                bar(9, 35, 23880, 23890, 23850, 23860),    // PE at 23,860, SL 23,890, 2R trigger at 23,800
+                bar(9, 40, 23860, 23865, 23785, 23800),
+                bar(9, 45, 23800, 23830, 23790, 23815),
+                bar(9, 50, 23815, 23835, 23810, 23832));
+        List<Candle> one = List.of(
+                bar(9, 40, 23860, 23865, 23830, 23835),
+                bar(9, 41, 23835, 23840, 23798, 23805),    // 2R reached → stop to entry 23,860
+                bar(9, 42, 23805, 23820, 23800, 23815),
+                bar(9, 43, 23815, 23818, 23790, 23795),
+                bar(9, 44, 23795, 23810, 23785, 23800),    // block 09:40–09:44 high 23,865: stop stays 23,860
+                bar(9, 45, 23800, 23830, 23790, 23820),
+                bar(9, 46, 23820, 23825, 23800, 23805),
+                bar(9, 47, 23805, 23810, 23795, 23800),
+                bar(9, 48, 23800, 23815, 23790, 23810),
+                bar(9, 49, 23810, 23820, 23800, 23815),    // block high 23,830 → stop 23,830
+                bar(9, 50, 23815, 23835, 23810, 23832));   // high 23,835 ≥ 23,830 → out at 23,830
+
+        NiftyTradeLog t = run(firstFifteen("trailAfterR", "2", "breakevenOnTrail", "true"), five, one, closeOf(9, 50), GAP_DAY)
+                .tradeLogs().get(0);
+
+        assertThat(t.getInitialStopLoss()).isEqualTo(23890.0);
+        assertThat(t.getFinalStopLoss()).isEqualTo(23830.0);
+        assertThat(t.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(23830.0);
+    }
+
+    @Test
+    void firstFifteenParametersAreValidated() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("referenceMinutes", "7")))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("targetR", "2", "targetPoints", "50")))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("trailAfterR", "2", "trailAfterPoints", "20")))
+                .isInstanceOf(IllegalArgumentException.class);
+        NiftyOpeningBreakoutEngine.validateParams(firstFifteen("targetR", "2"));
+    }
+
+    @Test
+    void breakoutStrengthSkipsAWickyBreakoutAndWaitsForAFreshOne() {
+        List<Candle> five = gapDownDay(
+                bar(9, 30, 23900, 23910, 23820, 23868),    // closes below 23,870 but in the upper half of its range: skipped
+                bar(9, 35, 23868, 23880, 23840, 23845),    // still below: not a fresh cross
+                bar(9, 40, 23845, 23890, 23840, 23880),    // back inside the range
+                bar(9, 45, 23880, 23885, 23850, 23855));   // fresh close below, in the bottom part → PE
+
+        var trades = run(firstFifteen("breakoutStrength", "0.5"), five, List.of(), closeOf(9, 45), GAP_DAY).tradeLogs();
+
+        assertThat(trades).hasSize(1);
+        assertThat(trades.get(0).getEntryTimestamp()).isEqualTo(at(9, 45));
+        assertThat(trades.get(0).getInitialStopLoss()).isEqualTo(23885.0);
+        assertThat(run(firstFifteen(), five, List.of(), closeOf(9, 45), GAP_DAY).tradeLogs().get(0).getEntryTimestamp())
+                .isEqualTo(at(9, 30));
+    }
+
+    @Test
+    void trendSmaTradesAGapDownOnlyWhenThePreviousCloseIsBelowTheAverage() {
+        Candle[] breakdown = {
+                bar(9, 30, 23900, 23910, 23860, 23880),
+                bar(9, 35, 23880, 23890, 23850, 23855)};   // fresh close below 23,870 → PE
+        List<Candle> downtrend = new ArrayList<>(List.of(
+                barOn(GAP_PREV.minusDays(2), 15, 25, 24300, 24310, 24290, 24300),
+                barOn(GAP_PREV.minusDays(1), 15, 25, 24200, 24210, 24190, 24200)));
+        downtrend.addAll(gapDownDay(breakdown));           // closes 24,300, 24,200, 24,000: average 24,167 > 24,000
+        List<Candle> uptrend = new ArrayList<>(List.of(
+                barOn(GAP_PREV.minusDays(2), 15, 25, 23700, 23710, 23690, 23700),
+                barOn(GAP_PREV.minusDays(1), 15, 25, 23800, 23810, 23790, 23800)));
+        uptrend.addAll(gapDownDay(breakdown));             // closes 23,700, 23,800, 24,000: average 23,833 < 24,000
+
+        Params p = firstFifteen("trendSma", "3");
+        assertThat(run(p, downtrend, List.of(), closeOf(9, 35), GAP_DAY).tradeLogs()).hasSize(1);
+        var up = run(p, uptrend, List.of(), closeOf(9, 35), GAP_DAY);
+        assertThat(up.tradeLogs()).isEmpty();
+        assertThat(up.days().get(0).reason()).contains("3-day average");
+        assertThat(run(firstFifteen("trendSma", "4"), downtrend, List.of(), closeOf(9, 35), GAP_DAY).days().get(0).status())
+                .isEqualTo("NO_DATA");
+        assertThat(NiftyOpeningBreakoutEngine.warmupDays(params("trendSma", "20"))).isEqualTo(38);
+        assertThat(NiftyOpeningBreakoutEngine.warmupDays(params())).isEqualTo(7);
+    }
 }

@@ -95,6 +95,40 @@ public class LiveStrategyRunner {
                 }
             }
         }
+        report.addAll(enforceDayLoss());
+        return report;
+    }
+
+    /**
+     * Each user's own max day loss covers all their strategies together: once today's loss in a mode (realized plus
+     * open positions) reaches it, every open strategy position of that user in that mode is closed. New entries are
+     * refused for the rest of the day (see OrderService#dayLossRefusal).
+     */
+    public List<String> enforceDayLoss() {
+        List<String> report = new ArrayList<>();
+        LocalDate today = LocalDate.now(clock.withZone(IST));
+        Map<String, List<LivePosition>> byUserMode = new TreeMap<>();
+        for (TradingMode mode : List.of(TradingMode.PAPER, TradingMode.LIVE))
+            for (LivePosition p : positions.findByTradeDateAndModeAndStatus(today, mode, LivePosition.Status.OPEN))
+                if (p.getUserId() != null) byUserMode.computeIfAbsent(p.getUserId() + "|" + mode, k -> new ArrayList<>()).add(p);
+        for (List<LivePosition> open : byUserMode.values()) {
+            LivePosition first = open.get(0);
+            String refusal;
+            try { refusal = orderService.dayLossRefusal(first.getMode(), first.getUserId()); }
+            catch (RuntimeException e) { log.warn("DAY_LOSS_CHECK_FAILED user={}: {}", first.getUserId(), e.getMessage()); continue; }
+            if (refusal == null) continue;
+            for (LivePosition p : open) {
+                try {
+                    Params params = new Params(new HashMap<>(strategies.load(p.getStrategyId()).getParameters()));
+                    report.add("#" + p.getStrategyId() + " " + p.getMode() + " user " + p.getUserId() + ": "
+                            + exit(p, null, "MAX_DAY_LOSS", null, "MAX_DAY_LOSS", params));
+                } catch (RuntimeException e) {
+                    log.error("DAY_LOSS_EXIT_FAILED position={}: {}", p.getId(), e.getMessage(), e);
+                    report.add("#" + p.getStrategyId() + " user " + p.getUserId() + ": max day loss exit failed — " + e.getMessage());
+                }
+            }
+            log.warn("MAX_DAY_LOSS user={} mode={}: {}", first.getUserId(), first.getMode(), refusal);
+        }
         return report;
     }
 
@@ -124,7 +158,8 @@ public class LiveStrategyRunner {
             return new Evaluation(s, null, null, today, now, "#" + s.getId() + ": only NIFTY_OPENING_BREAKOUT can trade live");
         Params params = new Params(new HashMap<>(s.getParameters()));
         String symbol = underlying(params).indexSymbol;   // NIFTY 50 or NIFTY BANK, as the strategy says
-        PriceSeries five = marketData.getRange(symbol, Interval.MINUTE_5, today.minusDays(7).atStartOfDay(IST).toInstant(), now);
+        PriceSeries five = marketData.getRange(symbol, Interval.MINUTE_5,
+                today.minusDays(NiftyOpeningBreakoutEngine.warmupDays(params)).atStartOfDay(IST).toInstant(), now);
         PriceSeries one = marketData.getRange(symbol, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
         try {
             NiftyOpeningBreakoutEngine.validateParams(params);
@@ -155,6 +190,8 @@ public class LiveStrategyRunner {
                     continue;
                 }
                 if (controls.get().isKillSwitch()) { did.add("entry blocked: kill switch on"); continue; }
+                String dayLoss = orderService.dayLossRefusal(cfg.getMode(), cfg.getUserId());
+                if (dayLoss != null) { did.add("entry blocked: " + dayLoss); continue; }
                 did.add(enter(cfg, s, params, t, today));
             } else if (existing.get().getStatus() == LivePosition.Status.OPEN) {
                 LivePosition p = existing.get();

@@ -78,13 +78,13 @@ class PaymentIntegrationTest {
 
     private void signupAndApprove(String user, String phone) throws Exception {
         call(post("/api/auth/signup").content("{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + user
-                + "@example.com\",\"phone\":\"" + phone + "\",\"plan\":\"FREE\"}"), null, 201);
+                + "@example.com\",\"phone\":\"" + phone + "\",\"acceptTerms\":true,\"plan\":\"FREE\"}"), null, 201);
         call(post("/api/users/" + id(user) + "/approve").content("{\"plan\":\"FREE\"}"), "admin", 200);
     }
 
     private JsonNode signup(String user, String phone, String plan) throws Exception {
         return call(post("/api/auth/signup").content("{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + user
-                + "@example.com\",\"phone\":\"" + phone + "\",\"plan\":\"" + plan + "\"}"), null, 201);
+                + "@example.com\",\"phone\":\"" + phone + "\",\"acceptTerms\":true,\"plan\":\"" + plan + "\"}"), null, 201);
     }
 
     private boolean pendingForAdmin(String user) throws Exception {
@@ -159,6 +159,7 @@ class PaymentIntegrationTest {
         assertThat(expiry("ravi")).isEqualTo(first);
 
         long ravis = call(post("/api/strategies").content("{\"name\":\"ravi\",\"type\":\"NIFTY_OPENING_BREAKOUT\",\"parameters\":{\"directions\":\"CE\"}}"), "ravi", 201).get("id").asLong();
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "ravi", 200);
         call(put("/api/trading/strategies/" + ravis).content("{\"mode\":\"PAPER\"}"), "ravi", 200);   // GOLD features work now
         assertThat(emails.findByUserIdOrderByCreatedAtDesc(id("ravi"), PageRequest.of(0, 10)))
                 .anySatisfy(e -> {

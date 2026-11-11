@@ -88,7 +88,8 @@ public class BacktestEngine {
         LocalDate tradeFrom = LocalDate.now(IST).minusDays(lookbackDays);
         Instant from = tradeFrom.atStartOfDay(IST).toInstant();
         PriceSeries series = mdClient.getRange(symbol, Interval.MINUTE_5,
-                tradeFrom.minusDays(7).atStartOfDay(IST).toInstant(), to);
+                tradeFrom.minusDays(NiftyOpeningBreakoutEngine.warmupDays(new Params(toObjectMap(strategy.getParameters()))))
+                        .atStartOfDay(IST).toInstant(), to);
         PriceSeries minutes = mdClient.getRange(symbol, Interval.MINUTE_1, from, to);
         Params params = new Params(toObjectMap(strategy.getParameters()));
         // Which engine runs is decided by the strategy's parameters: referenceMode=PREVIOUS_DAY goes to the

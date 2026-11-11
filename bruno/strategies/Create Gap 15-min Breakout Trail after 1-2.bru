@@ -1,0 +1,40 @@
+meta {
+  name: Create Gap 15-min Breakout Trail after 1-2
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nifty Gap-Day First 15-min Breakout - trail after 1:2",
+    "description": "Same entries as the 1:2 target version (gap up: CE above the first 15-min high; gap down: PE below the first 15-min low; SL at the 5-min breakout candle's low/high). No fixed target: once spot reaches 1:2, SL moves to entry and then trails on completed 5-min lows (CE) / highs (PE). This is the runner half of 'book target 1 at 1:2, trail for target 2'. Max 1 trade/day. EOD square-off 15:20. Backtest deducts Rs 85 charges per trade.",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "parameters": {
+      "lots": "2",
+      "directions": "WITH_GAP",
+      "gapFilter": "ANY_GAP",
+      "gapPct": "0.2",
+      "referenceMinutes": "15",
+      "initialStop": "BREAKOUT_CANDLE",
+      "trailAfterR": "2",
+      "breakevenOnTrail": "true",
+      "maxTradesPerDay": "1",
+      "trailMinutes": "5",
+      "costPerTrade": "85"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

@@ -1,0 +1,44 @@
+meta {
+  name: Gap 15-min v2 - Runner
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Gap 15-min v2 - Runner",
+    "description": "Trades only when NIFTY opens >= 0.2% and < 1% away from the previous close, in the direction of the 20-day trend: gap up -> CE only if the previous close is above its 20-session average; gap down -> PE only if below. Reference = first 15-min candle 09:15-09:30 IST. Entry on a fresh 5-min close beyond the 15-min high/low, on candles starting before 13:00, only if the breakout candle closes in its strong half. Initial SL = breakout candle low (CE) / high (PE). Max 1 trade/day. EOD square-off 15:20. Rs 85 charges per trade. This half has no target: at 1R the stop moves to entry, then trails on completed 5-min lows (CE) / highs (PE).",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "parameters": {
+      "lots": "1",
+      "trailAfterR": "1",
+      "breakevenOnTrail": "true",
+      "directions": "WITH_GAP",
+      "gapFilter": "ANY_GAP",
+      "gapPct": "0.2",
+      "maxGapPct": "1.0",
+      "referenceMinutes": "15",
+      "initialStop": "BREAKOUT_CANDLE",
+      "breakoutStrength": "0.5",
+      "entryUntil": "13:00",
+      "trendSma": "20",
+      "maxTradesPerDay": "1",
+      "trailMinutes": "5",
+      "costPerTrade": "85"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

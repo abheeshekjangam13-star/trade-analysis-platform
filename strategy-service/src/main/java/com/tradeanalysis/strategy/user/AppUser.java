@@ -63,6 +63,14 @@ public class AppUser {
     private Plan prepaidPlan;
     private Integer prepaidDays;
 
+    /** When the user accepted the Terms and Conditions, and which version (see {@link Terms}). */
+    private Instant termsAcceptedAt;
+    @Column(length = 20)
+    private String termsVersion;
+
+    /** The user's own maximum loss for a day across all their strategies (per mode), or null when not set. */
+    private Double maxDayLoss;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "app_user_role",
             joinColumns = @JoinColumn(name = "user_id"),
@@ -95,6 +103,9 @@ public class AppUser {
     public void setReviewNote(String note)  { this.reviewNote = note; }
     public void prepaid(Plan p, int days)   { this.prepaidPlan = p; this.prepaidDays = days; }
     public void clearPrepaid()              { this.prepaidPlan = null; this.prepaidDays = null; }
+    public void acceptTerms(String version, Instant at) { this.termsVersion = version; this.termsAcceptedAt = at; }
+    public void setMaxDayLoss(Double amount) { this.maxDayLoss = amount; }
+    public Double getMaxDayLoss()           { return maxDayLoss; }
 
     /** A GOLD/PREMIUM sign-up that hasn't paid yet (it reaches the admin only after paying). */
     public boolean awaitingSignupPayment() {
@@ -118,6 +129,8 @@ public class AppUser {
     public String getReviewNote()           { return reviewNote; }
     public Plan getPrepaidPlan()            { return prepaidPlan; }
     public Integer getPrepaidDays()         { return prepaidDays; }
+    public Instant getTermsAcceptedAt()     { return termsAcceptedAt; }
+    public String getTermsVersion()         { return termsVersion; }
 
     public Long getId()             { return id; }
     public String getUsername()     { return username; }

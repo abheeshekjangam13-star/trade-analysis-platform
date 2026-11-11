@@ -48,14 +48,15 @@ public class StrategyController {
                 params);
     }
 
-    public record CloneRequest(Integer lots, String name) {}
+    public record CloneRequest(Integer lots, String name, String description, Map<String, String> parameters) {}
 
     @PostMapping("/{id}/clone")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Clone a strategy you can see as your own, with your own lots")
-    public Strategy cloneWithLots(@PathVariable Long id, @RequestBody CloneRequest body) {
-        if (body == null || body.lots() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing required field: lots");
-        return svc.cloneWithLots(id, body.lots(), body.name());
+    @Operation(summary = "Clone a strategy you can see as your own. Change anything in the copy: name, description, "
+            + "the full parameters (omitted = the source's) and/or lots. The type stays the same")
+    public Strategy cloneStrategy(@PathVariable Long id, @RequestBody(required = false) CloneRequest body) {
+        CloneRequest b = body == null ? new CloneRequest(null, null, null, null) : body;
+        return svc.cloneStrategy(id, b.name(), b.description(), b.parameters(), b.lots());
     }
 
     private static String required(Map<String, Object> body, String key) {

@@ -62,7 +62,7 @@ public class StrategyPreviewController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Max loss must be more than ₹0");
         double maxStop = maxStopPoints != null ? maxStopPoints : numOr(p, "maxStopPoints", 0);
         String directions = p.getOrDefault("directions", "BOTH");
-        List<String> types = directions.equals("BOTH") ? List.of("CE", "PE") : List.of(directions);
+        List<String> types = directions.equals("BOTH") || directions.equals("WITH_GAP") ? List.of("CE", "PE") : List.of(directions);
 
         Instant now = clock.instant();
         Candle last = latest(u.indexSymbol);

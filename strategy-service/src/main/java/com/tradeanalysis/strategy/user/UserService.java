@@ -111,7 +111,10 @@ public class UserService {
 
     /** Self sign-up: email and phone required; the account stays PENDING (no access) until an admin approves it. */
     @Transactional
-    public SignupResult signup(String username, String email, String phone, String fullName, Plan requested, String passwordHash) {
+    public SignupResult signup(String username, String email, String phone, String fullName, Plan requested, String passwordHash,
+                               boolean acceptTerms) {
+        if (!acceptTerms)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Please accept the Terms and Conditions to sign up");
         String name = validUsername(username);
         String mail = validEmail(email);
         String tel = validPhone(phone);
@@ -126,6 +129,7 @@ public class UserService {
         u.requestPlan(requested == null ? Plan.FREE : requested);
         u.setStatus(AppUser.Status.PENDING);
         u.setPasswordHash(passwordHash);
+        u.acceptTerms(Terms.VERSION, java.time.Instant.now());
         users.save(u);
         Plan p = u.getRequestedPlan();
         if (payAtSignup(p))   // the admin hears about it once the payment goes through (see signupPaid)

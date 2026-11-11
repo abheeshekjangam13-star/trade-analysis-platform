@@ -88,7 +88,6 @@ class StrategyCloneIntegrationTest {
         call(post("/api/strategies/" + ravis + "/clone").content("{\"lots\":3,\"name\":\"My CE 3 lots\"}"), "ravi", 409);
         call(post("/api/strategies/" + ravis + "/clone").content("{\"lots\":0}"), "ravi", 400);
         call(post("/api/strategies/" + ravis + "/clone").content("{\"lots\":51}"), "ravi", 400);
-        call(post("/api/strategies/" + ravis + "/clone").content("{}"), "ravi", 400);
         call(post("/api/strategies/999999/clone").content("{\"lots\":2}"), "ravi", 404);
     }
 
@@ -109,7 +108,36 @@ class StrategyCloneIntegrationTest {
 
         user("free", "FREE");                                                                   // FREE: up to 2 strategies
         long frees = ownCopyOfMaster("free", "Free CE");
-        call(post("/api/strategies/" + frees + "/clone").content("{\"lots\":3}"), "free", 201);
+        call(post("/api/strategies/" + frees + "/clone").content("{\"lots\":3,\"parameters\":null}"), "free", 201);
         call(post("/api/strategies/" + frees + "/clone").content("{\"lots\":4}"), "free", 403);
+    }
+
+    @Test @Order(5)
+    void theFullStrategyCanBeChangedInTheClone() throws Exception {
+        user("meena", "GOLD");
+        long meenas = ownCopyOfMaster("meena", "Meena CE");
+        JsonNode source = call(get("/api/strategies/" + meenas), "meena", 200);
+        JsonNode plain = call(post("/api/strategies/" + meenas + "/clone").content("{}"), "meena", 201);   // nothing changed: a straight copy
+        assertThat(plain.get("name").asText()).isEqualTo("Meena CE (copy)");
+        assertThat(plain.get("parameters")).isEqualTo(source.get("parameters"));
+        var params = (com.fasterxml.jackson.databind.node.ObjectNode) source.get("parameters").deepCopy();
+        params.put("directions", "PE").put("targetPoints", "45").put("maxTradesPerDay", "1").put("lots", "4");
+        var body = json.createObjectNode().put("name", "My PE variant").put("description", "PE with a 45-point target");
+        body.set("parameters", params);
+        JsonNode c = call(post("/api/strategies/" + meenas + "/clone").content(body.toString()), "meena", 201);
+        assertThat(c.get("name").asText()).isEqualTo("My PE variant");
+        assertThat(c.get("description").asText()).isEqualTo("PE with a 45-point target");
+        assertThat(c.get("type").asText()).isEqualTo(source.get("type").asText());
+        assertThat(c.get("parameters").get("directions").asText()).isEqualTo("PE");
+        assertThat(c.get("parameters").get("targetPoints").asText()).isEqualTo("45");
+        assertThat(c.get("parameters").get("maxTradesPerDay").asText()).isEqualTo("1");
+        assertThat(c.get("parameters").get("lots").asText()).isEqualTo("4");
+        assertThat(c.get("clonedFromStrategyId").asLong()).isEqualTo(meenas);
+        assertThat(call(get("/api/strategies/" + meenas), "meena", 200).get("parameters")).isEqualTo(source.get("parameters"));   // source unchanged
+
+        params.put("directions", "SIDEWAYS");                                               // parameters are checked like a create
+        body.set("parameters", params);
+        body.put("name", "Broken");
+        call(post("/api/strategies/" + meenas + "/clone").content(body.toString()), "meena", 400);
     }
 }

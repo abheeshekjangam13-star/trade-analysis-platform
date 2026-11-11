@@ -50,7 +50,7 @@ class SignupIntegrationTest {
 
     private static String signup(String user, String email, String phone, String plan) {
         return "{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":" + (email == null ? "null" : "\"" + email + "\"")
-                + ",\"phone\":" + (phone == null ? "null" : "\"" + phone + "\"") + ",\"plan\":\"" + plan + "\"}";
+                + ",\"phone\":" + (phone == null ? "null" : "\"" + phone + "\"") + ",\"acceptTerms\":true,\"plan\":\"" + plan + "\"}";
     }
 
     private long id(String username) { return users.findByUsernameIgnoreCase(username).orElseThrow().getId(); }
@@ -67,12 +67,21 @@ class SignupIntegrationTest {
         call(post("/api/auth/signup").content(signup("ravi", "ravi@example.com", null, "GOLD")), null, 400);
         call(post("/api/auth/signup").content(signup("ravi", "not-an-email", "9876543210", "GOLD")), null, 400);
         call(post("/api/auth/signup").content(signup("ravi", "ravi@example.com", "12345", "GOLD")), null, 400);
+        // the Terms and Conditions must be accepted: left out or false is refused, and no account is made
+        JsonNode noTerms = call(post("/api/auth/signup").content(signup("ravi", "ravi@example.com", "9876543210", "GOLD")
+                .replace("\"acceptTerms\":true,", "")), null, 400);
+        assertThat(noTerms.get("message").asText()).contains("Terms and Conditions");
+        call(post("/api/auth/signup").content(signup("ravi", "ravi@example.com", "9876543210", "GOLD")
+                .replace("\"acceptTerms\":true", "\"acceptTerms\":false")), null, 400);
+        assertThat(users.findByUsernameIgnoreCase("ravi")).isEmpty();
 
         JsonNode r = call(post("/api/auth/signup").content(signup("ravi", "Ravi@Example.com", "098765 43210", "GOLD")), null, 201);
         assertThat(r.get("status").asText()).isEqualTo("PENDING");
         assertThat(r.has("token")).isFalse();
         assertThat(jdbc.queryForObject("SELECT phone FROM app_user WHERE username = 'ravi'", String.class)).isEqualTo("+919876543210");
         assertThat(jdbc.queryForObject("SELECT plan FROM app_user WHERE username = 'ravi'", String.class)).isEqualTo("FREE");   // until approved
+        assertThat(users.findByUsernameIgnoreCase("ravi").orElseThrow().getTermsVersion()).isEqualTo(com.tradeanalysis.strategy.user.Terms.VERSION);
+        assertThat(users.findByUsernameIgnoreCase("ravi").orElseThrow().getTermsAcceptedAt()).isNotNull();
 
         call(post("/api/auth/signup").content(signup("ravi2", "ravi@example.com", "9876500000", "FREE")), null, 409);   // email
         call(post("/api/auth/signup").content(signup("ravi3", "r3@example.com", "+91 98765 43210", "FREE")), null, 409); // phone
@@ -99,6 +108,7 @@ class SignupIntegrationTest {
 
         call(post("/api/auth/login").content("{\"username\":\"ravi\",\"password\":\"Pass1234\"}"), null, 200);
         long ravis = call(post("/api/strategies").content(STRATEGY.formatted("ravi gold strategy")), "ravi", 201).get("id").asLong();
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "ravi", 200);
         call(put("/api/trading/strategies/" + ravis).content("{\"mode\":\"PAPER\"}"), "ravi", 200);      // paper trading
         call(put("/api/trading/strategies/" + ravis).content("{\"mode\":\"LIVE\"}"), "ravi", 403);       // live needs PREMIUM
         call(get("/api/users"), "ravi", 403);

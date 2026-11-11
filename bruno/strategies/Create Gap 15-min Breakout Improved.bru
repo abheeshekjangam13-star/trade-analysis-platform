@@ -1,0 +1,43 @@
+meta {
+  name: Create Gap 15-min Breakout Improved
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{strategyUrl}}/api/strategies
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Nifty Gap-Day First 15-min Breakout - improved (strong close, gap < 1%, entries before 13:00)",
+    "description": "Trades only when NIFTY opens >= 0.2% and < 1% away from the previous close. Gap up: CE only; gap down: PE only. Reference = first 15-min candle 09:15-09:30 IST. Entry on a fresh 5-min close above the 15-min high (gap up) or below the 15-min low (gap down), on candles starting before 13:00, and only if the breakout candle closes in its upper half (CE) / lower half (PE). Initial SL = low (CE) / high (PE) of the breakout candle. Whole position exits at 1:2 risk-reward, stop held fixed until then. Max 1 trade/day. EOD square-off 15:20. Backtest deducts Rs 85 charges per trade.",
+    "type": "NIFTY_OPENING_BREAKOUT",
+    "parameters": {
+      "lots": "2",
+      "directions": "WITH_GAP",
+      "gapFilter": "ANY_GAP",
+      "gapPct": "0.2",
+      "maxGapPct": "1.0",
+      "referenceMinutes": "15",
+      "initialStop": "BREAKOUT_CANDLE",
+      "breakoutStrength": "0.5",
+      "entryUntil": "13:00",
+      "targetR": "2",
+      "trailAfterR": "2",
+      "maxTradesPerDay": "1",
+      "trailMinutes": "5",
+      "costPerTrade": "85"
+    }
+  }
+}
+
+vars:pre-request {
+  strategyUrl: http://localhost:8080
+}

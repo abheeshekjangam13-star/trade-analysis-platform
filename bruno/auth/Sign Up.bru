@@ -17,11 +17,12 @@ body:json {
     "email": "ravi@example.com",
     "phone": "9876543210",
     "fullName": "Ravi Kumar",
-    "plan": "GOLD"
+    "plan": "GOLD",
+    "acceptTerms": true
   }
 }
 
 docs {
-  Email and phone are required. The account is PENDING (cannot log in) until an admin approves it.
+  Email and phone are required, and acceptTerms must be true (the Terms and Conditions at /terms); without it the sign-up is refused with 400. The account is PENDING (cannot log in) until an admin approves it.
   plan: FREE (2 strategies, 3-month backtests), GOLD (1499/month: 6 strategies, 1-year backtests, paper trading), PREMIUM (2499/month: 12 strategies, 2-year backtests, paper + live trading).
 }

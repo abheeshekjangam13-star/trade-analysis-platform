@@ -72,6 +72,7 @@ public class AuthService {
         user.setStatus(AppUser.Status.ACTIVE);
         user.setPlan(com.tradeanalysis.strategy.user.Plan.PREMIUM, null);
         user.setPasswordHash(encoder.encode(password));
+        if (user.getTermsAcceptedAt() == null) user.acceptTerms(com.tradeanalysis.strategy.user.Terms.VERSION, Instant.now());
         log.info("AUTH_SETUP first admin {}", user.getUsername());
         return issue(user);
     }
@@ -111,9 +112,11 @@ public class AuthService {
      * GOLD/PREMIUM sign-up gets a Razorpay order to pay right away; the admin sees it only after the payment.
      */
     public SignupResponse signup(String username, String password, String email,
-            String phone, String fullName, com.tradeanalysis.strategy.user.Plan plan) {
+            String phone, String fullName, com.tradeanalysis.strategy.user.Plan plan, boolean acceptTerms) {
+        if (!acceptTerms)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Please accept the Terms and Conditions to sign up");
         checkPassword(password);
-        var r = userService.signup(username, email, phone, fullName, plan, encoder.encode(password));
+        var r = userService.signup(username, email, phone, fullName, plan, encoder.encode(password), acceptTerms);
         log.info("AUTH_SIGNUP user={} plan={}", r.username(), r.requestedPlan());
         com.tradeanalysis.strategy.payment.PaymentService.Checkout checkout = null;
         String message = r.message();

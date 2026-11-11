@@ -14,9 +14,23 @@ public class PortfolioController {
 
     public record PortfolioRequest(String name, String description, List<Long> strategyIds) {}
 
-    private final PortfolioService svc;
+    public record TradingRequest(com.tradeanalysis.strategy.trading.TradingMode mode, String product) {}
 
-    public PortfolioController(PortfolioService svc) { this.svc = svc; }
+    private final PortfolioService svc;
+    private final com.tradeanalysis.strategy.trading.TradingService trading;
+
+    public PortfolioController(PortfolioService svc, com.tradeanalysis.strategy.trading.TradingService trading) {
+        this.svc = svc; this.trading = trading;
+    }
+
+    @PutMapping("/{id}/trading")
+    @Operation(summary = "Switch every strategy of the portfolio to OFF, PAPER or LIVE for you (PAPER: Gold+; LIVE: Premium "
+            + "with your own Kite account; both need your max day loss set). Strategies that can't trade are skipped")
+    public com.tradeanalysis.strategy.trading.TradingService.BulkResult trading(@PathVariable Long id, @RequestBody TradingRequest body) {
+        if (body == null || body.mode() == null)
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing required field: mode");
+        return trading.setModes(svc.get(id).getStrategyIds(), body.mode(), body.product());
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

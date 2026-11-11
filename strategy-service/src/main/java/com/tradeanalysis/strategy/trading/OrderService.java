@@ -19,7 +19,7 @@ import java.util.*;
  *
  * Safety rules for orders that open or add risk (exits are always allowed, so positions can always be closed):
  * kill switch off, quantity ≤ max per order, orders today < max per day, today's realized loss < daily loss limit
- * (all per user), and for LIVE: the user may trade live (PREMIUM with their own Kite account, or an admin).
+ * (all per user), today's loss (realized + open positions) < the user's own max day loss, and for LIVE: the user may trade live (PREMIUM with their own Kite account, or an admin).
  */
 @Service
 public class OrderService {
@@ -39,11 +39,13 @@ public class OrderService {
     private final KiteAccounts accounts; // the order owner's own account: live orders
     private final Clock clock;
     private final boolean liveEnabled;
+    private final com.tradeanalysis.strategy.user.AppUserRepository users;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
-                        KiteApi kite, KiteAccounts accounts, Clock clock, @Value("${trading.live.enabled:false}") boolean liveEnabled) {
+                        KiteApi kite, KiteAccounts accounts, Clock clock, @Value("${trading.live.enabled:false}") boolean liveEnabled,
+                        com.tradeanalysis.strategy.user.AppUserRepository users) {
         this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
-        this.clock = clock; this.liveEnabled = liveEnabled;
+        this.clock = clock; this.liveEnabled = liveEnabled; this.users = users;
     }
 
     public boolean liveEnabled() { return liveEnabled; }
@@ -151,6 +153,51 @@ public class OrderService {
         return strategies + manual;
     }
 
+    /**
+     * Today's P&L on the user's open strategy positions in this mode, at the last traded prices (positions without an
+     * entry price or a quote count as 0).
+     */
+    public double unrealizedToday(TradingMode mode, Long userId) {
+        List<LivePosition> open = positions.findByTradeDateAndModeAndStatus(today(), mode, LivePosition.Status.OPEN).stream()
+                .filter(p -> userId == null || userId.equals(p.getUserId()))
+                .filter(p -> p.getTradingsymbol() != null && p.getEntryPrice() != null && p.getQuantity() > 0).toList();
+        if (open.isEmpty()) return 0;
+        Map<String, Double> ltp;
+        try {
+            ltp = kite.ltp(open.stream().map(p -> "NFO:" + p.getTradingsymbol()).distinct().toList());
+        } catch (RuntimeException e) {
+            log.debug("No LTP for open positions: {}", e.getMessage());
+            return 0;
+        }
+        double sum = 0;
+        for (LivePosition p : open) {
+            Double px = ltp == null ? null : ltp.get("NFO:" + p.getTradingsymbol());
+            if (px != null && px > 0) sum += (px - p.getEntryPrice()) * p.getQuantity();
+        }
+        return sum;
+    }
+
+    /** Today's P&L for the user's own day-loss limit: realized plus open strategy positions. */
+    public double dayPnl(TradingMode mode, Long userId) {
+        return realizedToday(mode, userId) + unrealizedToday(mode, userId);
+    }
+
+    /** The user's own max day loss, or null when they haven't set one. */
+    public Double maxDayLoss(Long userId) {
+        return userId == null ? null : users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::getMaxDayLoss).orElse(null);
+    }
+
+    /**
+     * Why the user may not open new risk today because of their own max day loss (realized + open positions, all
+     * strategies together), or null when they may.
+     */
+    public String dayLossRefusal(TradingMode mode, Long userId) {
+        Double limit = maxDayLoss(userId);
+        if (limit == null || limit <= 0) return null;
+        double pnl = dayPnl(mode, userId);
+        return pnl <= -limit ? String.format("Your max day loss is reached (today %.0f, limit %.0f): no new entries today", pnl, limit) : null;
+    }
+
     /** Limits count each user's own orders and P&L (each user trades live on their own Kite account). */
     private String refusal(OrderRequest r, TradingMode mode, Long userId) {
         Long who = userId;
@@ -166,7 +213,7 @@ public class OrderService {
         double realized = realizedToday(mode, who);
         if (realized <= -c.getDailyLossLimit())
             return String.format("Daily loss limit reached (realized %.0f, limit %.0f)", realized, c.getDailyLossLimit());
-        return null;
+        return dayLossRefusal(mode, who);
     }
 
     private Double paperPrice(OrderRequest r) {

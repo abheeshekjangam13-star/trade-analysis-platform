@@ -17,7 +17,7 @@ public class AuthController {
     public record ChangePassword(String currentPassword, String newPassword) {}
     public record SetPassword(String password) {}
     public record SignupRequest(String username, String password, String email, String phone, String fullName,
-                                com.tradeanalysis.strategy.user.Plan plan) {}
+                                com.tradeanalysis.strategy.user.Plan plan, Boolean acceptTerms) {}
     public record SignupPaymentRequest(String username, String password, com.tradeanalysis.strategy.user.Plan plan) {}
     public record SignupVerifyRequest(String orderId, String paymentId, String signature) {}
 
@@ -41,10 +41,11 @@ public class AuthController {
 
     @PostMapping("/api/auth/signup")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Sign up (email and phone required). GOLD/PREMIUM: pay in Checkout with the returned order; "
+    @Operation(summary = "Sign up (email, phone and acceptTerms=true required). GOLD/PREMIUM: pay in Checkout with the returned order; "
             + "the sign-up reaches the admin after paying. FREE: waits for admin approval")
     public AuthService.SignupResponse signup(@RequestBody SignupRequest r) {
-        return auth.signup(r.username(), r.password(), r.email(), r.phone(), r.fullName(), r.plan());
+        return auth.signup(r.username(), r.password(), r.email(), r.phone(), r.fullName(), r.plan(),
+                Boolean.TRUE.equals(r.acceptTerms()));
     }
 
     @PostMapping("/api/auth/signup/payment")

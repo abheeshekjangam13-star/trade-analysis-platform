@@ -151,6 +151,7 @@ class StrategyEditDeleteIntegrationTest {
         com.fasterxml.jackson.databind.node.ObjectNode params = (com.fasterxml.jackson.databind.node.ObjectNode) clone.get("parameters").deepCopy();
         params.put("lots", "3");
         String newParams = "{\"parameters\":" + params + "}";
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "ravi", 200);
         call(put("/api/trading/strategies/" + s).content("{\"mode\":\"PAPER\"}"), "ravi", 200);
         call(put("/api/strategies/" + s).content("{\"name\":\"Ravi paper renamed\"}"), "ravi", 200);   // renaming is fine
         JsonNode locked = call(put("/api/strategies/" + s).content(newParams), "ravi", 409);

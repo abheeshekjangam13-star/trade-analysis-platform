@@ -62,11 +62,59 @@ public class TradingService {
             if (!orderService.liveEnabled())
                 throw new TradingException("Live trading is disabled on this server (start strategy-service with TRADING_LIVE_ENABLED=true)");
         }
+        if (mode != TradingMode.OFF && !CurrentUser.admin() && currentMaxDayLoss() == null)
+            throw new TradingException("Set your max day loss first (Trading → Max day loss): it caps your loss for a day "
+                    + "across all your strategies together");
         Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
         StrategyLiveConfig c = configs.findByStrategyIdAndUserId(strategyId, me).orElseGet(() -> new StrategyLiveConfig(strategyId, me));
         c.set(mode, product);
         configs.save(c);
         return strategyModes().stream().filter(m -> m.strategyId().equals(strategyId)).findFirst().orElseThrow();
+    }
+
+    /**
+     * Sets the caller's mode for several strategies at once (e.g. every strategy of a portfolio). The plan and the
+     * live checks apply to all; a strategy that can't take the mode is reported and skipped.
+     */
+    public record BulkResult(List<StrategyMode> changed, List<Map<String, Object>> skipped) {}
+
+    public BulkResult setModes(Collection<Long> strategyIds, TradingMode mode, String product) {
+        if (mode == null) throw new TradingException("Mode must be OFF, PAPER or LIVE");
+        List<StrategyMode> changed = new ArrayList<>();
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (Long id : new LinkedHashSet<>(strategyIds)) {
+            try {
+                changed.add(setMode(id, mode, product));
+            } catch (TradingException e) {
+                // Plan, live-permission and day-loss refusals hold for every strategy: report them once.
+                String reason = String.valueOf(e.getReason());
+                if (e.getStatusCode().value() == 403 || reason.startsWith("Set your max day loss")
+                        || reason.startsWith("Live trading is disabled")) throw e;
+                skipped.add(Map.of("strategyId", id, "reason", reason));
+            } catch (RuntimeException e) {
+                skipped.add(Map.of("strategyId", id, "reason", String.valueOf(e.getMessage())));
+            }
+        }
+        return new BulkResult(changed, skipped);
+    }
+
+    /** The caller's own max day loss (null = not set). */
+    public Double currentMaxDayLoss() {
+        return CurrentUser.id().flatMap(users::findById).map(com.tradeanalysis.strategy.user.AppUser::getMaxDayLoss).orElse(null);
+    }
+
+    public static final double MAX_DAY_LOSS_CAP = 100_000_000;
+
+    /** Sets the caller's own max day loss: a positive amount in rupees, for all their strategies together. */
+    @org.springframework.transaction.annotation.Transactional
+    public Double setMaxDayLoss(Double amount) {
+        Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        if (amount == null || amount.isNaN() || amount <= 0 || amount > MAX_DAY_LOSS_CAP)
+            throw new TradingException("Max day loss must be a positive amount in rupees (up to " + (long) MAX_DAY_LOSS_CAP + ")");
+        var u = users.findById(me).orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        u.setMaxDayLoss((double) Math.round(amount));
+        users.save(u);
+        return u.getMaxDayLoss();
     }
 
     public TradingControl controls() { return controls.get(); }

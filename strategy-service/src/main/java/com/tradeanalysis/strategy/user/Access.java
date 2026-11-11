@@ -32,6 +32,8 @@ public final class Access {
         if (path.startsWith("/api/strategies") || path.startsWith("/api/backtests")) return null;
         // Anyone may switch a strategy's trading OFF (e.g. after a paid plan expired); TradingService needs GOLD for PAPER/LIVE.
         if (method.equalsIgnoreCase("PUT") && path.startsWith("/api/trading/strategies/")) return null;
+        // The same for a whole portfolio's strategies, and everyone may set their own max day loss.
+        if (method.equalsIgnoreCase("PUT") && (path.matches("/api/portfolios/\\d+/trading") || path.equals("/api/trading/day-loss"))) return null;
         // Anyone may delete their own portfolio (e.g. after a paid plan expired); creating, editing and reports need GOLD.
         if (method.equalsIgnoreCase("DELETE") && path.matches("/api/portfolios/\\d+")) return null;
         if (!plan.atLeast(Plan.GOLD))

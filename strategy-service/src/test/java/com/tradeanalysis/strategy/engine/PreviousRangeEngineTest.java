@@ -81,8 +81,88 @@ class PreviousRangeEngineTest {
     }
 
     @Test
-    void aCallSpreadOnlyPeIsAccepted() {
-        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(params(Map.of("directions", "CE"))))
+    void ceOpensInsideYesterdaysRangeThenClosesAboveItsHighAndHitsTheTarget() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));   // opens 24100: inside 24000-24200
+        fiveMin.add(c(DAY, 9, 20, 24140, 24190, 24130, 24180));   // still below yesterday's high
+        fiveMin.add(c(DAY, 9, 25, 24180, 24230, 24175, 24220));   // closes 24220, above 24200: entry
+        List<Candle> oneMin = List.of(
+                c(DAY, 9, 30, 24220, 24255, 24215, 24250));       // high 24255 >= 24220 + 30: target
+        var result = new PreviousRangeEngine().run(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin), params(Map.of("directions", "CE")), 7L, NOW, null);
+
+        assertThat(result.tradeLogs()).hasSize(1);
+        NiftyTradeLog t = result.tradeLogs().get(0);
+        assertThat(t.getOptionType()).isEqualTo("CE");
+        assertThat(t.getEntrySpotPrice()).isEqualTo(24220.0);
+        assertThat(t.getInitialStopLoss()).isEqualTo(24000.0);     // stop at yesterday's low
+        assertThat(t.getReferenceHigh()).isEqualTo(24200.0);       // the reference is yesterday's range, not today's 09:15 candle
+        assertThat(t.getReferenceLow()).isEqualTo(24000.0);
+        assertThat(t.getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(24250.0);
+        assertThat(t.getEstimatedPnl()).isPositive();
+    }
+
+    @Test
+    void ceStopIsYesterdaysLow() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));
+        fiveMin.add(c(DAY, 9, 20, 24140, 24230, 24130, 24210));   // entry at 24210
+        List<Candle> oneMin = List.of(
+                c(DAY, 9, 25, 24210, 24212, 24100, 24120),
+                c(DAY, 9, 26, 24120, 24125, 23990, 23995));       // low 23990 <= 24000: stop
+        var result = new PreviousRangeEngine().run(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin), params(Map.of("directions", "CE", "targetPoints", "0")), 7L, NOW, null);
+
+        NiftyTradeLog t = result.tradeLogs().get(0);
+        assertThat(t.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(24000.0);
+    }
+
+    @Test
+    void bothTakesTheFirstBreakoutEitherWayOncePerDay() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24120, 24050, 24080));
+        fiveMin.add(c(DAY, 9, 20, 24080, 24085, 23980, 23990));   // below the low first: PE
+        fiveMin.add(c(DAY, 9, 25, 23990, 24300, 23980, 24250));   // later above the high: ignored (one trade a day)
+        var result = new PreviousRangeEngine().run(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, List.of()), params(Map.of("directions", "BOTH")), 7L, NOW, null);
+
+        assertThat(result.tradeLogs()).hasSize(1);
+        assertThat(result.tradeLogs().get(0).getOptionType()).isEqualTo("PE");
+    }
+
+    @Test
+    void peOnlyIgnoresABreakoutAboveTheHigh() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));
+        fiveMin.add(c(DAY, 9, 20, 24140, 24230, 24130, 24220));   // above the high: not for PE
+        var result = new PreviousRangeEngine().run(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, List.of()), params(Map.of()), 7L, NOW, null);
+        assertThat(result.tradeLogs()).isEmpty();
+    }
+
+    @Test
+    void liveKeepsATradeWithNoExitYetOpen() {
+        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
+        fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));
+        fiveMin.add(c(DAY, 9, 20, 24140, 24230, 24130, 24220));   // CE entry at 24220
+        List<Candle> oneMin = List.of(c(DAY, 9, 25, 24220, 24230, 24210, 24225));   // no stop, no target
+        Instant tenAm = LocalDateTime.of(DAY, LocalTime.of(10, 0)).atZone(IST).toInstant();
+        var live = new NiftyOpeningBreakoutEngine().runLive(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin), params(Map.of("directions", "CE")), 7L, tenAm, DAY);
+        assertThat(live.openTrades()).hasSize(1);
+        assertThat(live.openTrades().get(0).getOptionType()).isEqualTo("CE");
+        assertThat(live.openTrades().get(0).getFinalStopLoss()).isEqualTo(24000.0);
+        assertThat(live.tradeLogs()).isEmpty();
+    }
+
+    @Test
+    void directionsCePeOrBoth() {
+        PreviousRangeEngine.validateParams(params(Map.of("directions", "CE")));
+        PreviousRangeEngine.validateParams(params(Map.of("directions", "BOTH")));
+        PreviousRangeEngine.validateParams(params(Map.of("directions", "")));     // empty = PE, as before
+        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(params(Map.of("directions", "WITH_GAP"))))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(PreviousRangeEngine.handles(params(Map.of()))).isTrue();
         assertThat(PreviousRangeEngine.handles(new Params(Map.of("referenceMode", "REFERENCE_CANDLE")))).isFalse();

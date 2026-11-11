@@ -80,7 +80,7 @@ class DataIsolationIntegrationTest {
         call(post("/api/auth/setup").content("{\"username\":\"admin\",\"password\":\"Secret123\"}"), null, 200);
         for (String u : new String[]{"ravi", "sita"}) {
             call(post("/api/auth/signup").content("{\"username\":\"" + u + "\",\"password\":\"Pass1234\",\"email\":\"" + u
-                    + "@example.com\",\"phone\":\"98765" + (u.equals("ravi") ? "11111" : "22222") + "\",\"plan\":\"GOLD\"}"), null, 201);
+                    + "@example.com\",\"phone\":\"98765" + (u.equals("ravi") ? "11111" : "22222") + "\",\"acceptTerms\":true,\"plan\":\"GOLD\"}"), null, 201);
             call(post("/api/users/" + id(u) + "/approve").content("{}"), "admin", 200);
         }
     }
@@ -142,6 +142,7 @@ class DataIsolationIntegrationTest {
 
     @Test @Order(5)
     void paperTradingIsPerUser() throws Exception {
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "ravi", 200);
         call(put("/api/trading/strategies/" + ravisStrategy).content("{\"mode\":\"PAPER\"}"), "ravi", 200);
         call(put("/api/trading/strategies/56").content("{\"mode\":\"PAPER\"}"), "ravi", 404);   // admin-only strategy
         JsonNode sitasModes = call(get("/api/trading/strategies"), "sita", 200);

@@ -143,6 +143,7 @@ class KiteAccountIntegrationTest {
 
         // LIVE strategies are allowed, and the account cannot be removed while one is LIVE.
         long prems = ownBreakout("prem", "prem CE");
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "prem", 200);
         assertThat(call(put("/api/trading/strategies/" + prems).content("{\"mode\":\"LIVE\"}"), "prem", 200).get("mode").asText()).isEqualTo("LIVE");
         call(delete("/api/trading/kite-account"), "prem", 400);
         call(put("/api/trading/strategies/" + prems).content("{\"mode\":\"OFF\"}"), "prem", 200);

@@ -1,0 +1,27 @@
+meta {
+  name: Create Portfolio Gap 15-min v2
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{gatewayUrl}}/api/portfolios
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Gap 15-min v2 (T1 at 1:2 + runner)",
+    "description": "Half the position books at 1:2, the other half trails from 1R: the two 1-lot Gap 15-min v2 strategies together. Replace the ids with the ones the two create requests return.",
+    "strategyIds": [0, 0]
+  }
+}
+
+vars:pre-request {
+  gatewayUrl: http://localhost:8080
+}

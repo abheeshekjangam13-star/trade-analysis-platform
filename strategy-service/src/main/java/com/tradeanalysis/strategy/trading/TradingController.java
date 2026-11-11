@@ -64,9 +64,11 @@ public class TradingController {
         out.put("runnerEnabled", runner.getIfAvailable() != null);
         out.put("marketOpen", LiveStrategyRunner.marketOpen(clock.instant()));
         out.put("controls", trading.controls());
+        out.put("maxDayLoss", trading.currentMaxDayLoss());   // the caller's own, for all their strategies together
         Long who = trading.isAdmin() ? null : me;   // non-admins: their own numbers
         for (TradingMode m : who == null || trading.liveAllowed() ? List.of(TradingMode.PAPER, TradingMode.LIVE) : List.of(TradingMode.PAPER))
-            out.put(m.name().toLowerCase(), Map.of("ordersToday", orders.ordersToday(m, who), "realizedToday", orders.realizedToday(m, who)));
+            out.put(m.name().toLowerCase(), Map.of("ordersToday", orders.ordersToday(m, who), "realizedToday", orders.realizedToday(m, who),
+                    "dayPnl", me == null ? 0.0 : orders.dayPnl(m, me)));
         return out;
     }
 
@@ -83,6 +85,26 @@ public class TradingController {
                 .map(s -> Map.of("name", s.name(), "date", s.date().toString(), "preOpen", s.preOpen().toString(),
                         "tradingFrom", s.tradingFrom().toString(), "tradingTo", s.tradingTo().toString(), "close", s.close().toString()))
                 .orElse(null));
+        return out;
+    }
+
+    public record DayLossRequest(Double maxDayLoss) {}
+
+    @GetMapping("/day-loss")
+    @Operation(summary = "Your own max day loss (null = not set yet)")
+    public Map<String, Object> dayLoss() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("maxDayLoss", trading.currentMaxDayLoss());
+        return out;
+    }
+
+    @PutMapping("/day-loss")
+    @Operation(summary = "Set your own max day loss (₹): once today's loss across all your strategies (realized + open "
+            + "positions, paper and live counted apart) reaches it, your open strategy positions are closed and no new "
+            + "entries are taken that day. Needed before switching a strategy to PAPER or LIVE")
+    public Map<String, Object> setDayLoss(@RequestBody DayLossRequest r) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("maxDayLoss", trading.setMaxDayLoss(r == null ? null : r.maxDayLoss()));
         return out;
     }
 

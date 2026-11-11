@@ -279,7 +279,7 @@ public class StrategyDescriptionParser {
         };
         StringBuilder n = new StringBuilder("Nifty ");
         String dir = p.getOrDefault("directions", "BOTH");
-        n.append(dir.equals("BOTH") ? "CE/PE" : dir);
+        n.append(dir.equals("BOTH") || dir.equals("WITH_GAP") ? "CE/PE" : dir);
         switch (p.getOrDefault("gapFilter", "NONE")) {
             case "GAP_UP" -> n.append(" Gap-Up");
             case "GAP_DOWN" -> n.append(" Gap-Down");

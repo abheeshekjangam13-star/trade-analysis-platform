@@ -110,7 +110,10 @@ public class StrategyService {
         if ("NIFTY_OPENING_BREAKOUT".equals(type)) {
             clean.remove("lotSize");   // the index decides the lot size; a value saved earlier is dropped
             try {
-                com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine.validateParams(new com.tradeanalysis.common.indicator.Params(new java.util.HashMap<>(clean)));
+                var p = new com.tradeanalysis.common.indicator.Params(new java.util.HashMap<>(clean));
+                com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine.validateParams(p);
+                if (com.tradeanalysis.strategy.engine.PreviousRangeEngine.handles(p))
+                    com.tradeanalysis.strategy.engine.PreviousRangeEngine.validateParams(p);
             } catch (IllegalArgumentException e) {
                 throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
                         "Invalid parameters: " + e.getMessage());
@@ -121,33 +124,64 @@ public class StrategyService {
 
     public static final int MAX_LOTS = 50;
 
-    /**
-     * Copies a strategy the caller can see (their own, or any for an admin) into a new strategy owned by the
-     * caller, with their own number of lots. Everything else stays the same. The name defaults to
-     * "&lt;source&gt; (N lots)", made unique among the caller's strategies.
-     */
+    /** Copies a strategy with the caller's own number of lots only (see {@link #cloneStrategy}). */
     @Transactional
     public Strategy cloneWithLots(Long sourceId, int lots, String name) {
+        return cloneStrategy(sourceId, name, null, null, lots);
+    }
+
+    /**
+     * Copies a strategy the caller can see (their own, or any for an admin) into a new strategy owned by the caller.
+     * Everything can be changed in the copy: name, description and the full parameters (null = the source's), and
+     * {@code lots} on top of them. The type stays the same. The name defaults to "&lt;source&gt; (copy)" (or
+     * "(N lots)" when only the lots change), made unique among the caller's strategies. Counts towards the plan's
+     * strategy limit, like creating one.
+     */
+    @Transactional
+    public Strategy cloneStrategy(Long sourceId, String name, String description, Map<String, String> params, Integer lots) {
         Strategy src = get(sourceId);
-        if (!"NIFTY_OPENING_BREAKOUT".equals(src.getType()))
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
-                    "Only NIFTY_OPENING_BREAKOUT strategies trade in lots");
-        if (lots < 1 || lots > MAX_LOTS)
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
-                    "Lots must be between 1 and " + MAX_LOTS);
-        Long owner = CurrentUser.id().orElse(null);
+        Map<String, String> p = new java.util.LinkedHashMap<>(params != null ? params
+                : src.getParameters() == null ? Map.of() : src.getParameters());
+        if (lots != null) {
+            if (!"NIFTY_OPENING_BREAKOUT".equals(src.getType()))
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "Only NIFTY_OPENING_BREAKOUT strategies trade in lots");
+            if (lots < 1 || lots > MAX_LOTS)
+                throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "Lots must be between 1 and " + MAX_LOTS);
+            p.put("lots", String.valueOf(lots));
+        }
+        p = cleanParams(src.getType(), p);
+        boolean lotsOnly = params == null && lots != null;
+        String fallback = src.getName() + (lotsOnly ? " (" + lots + " lots)" : " (copy)");
+        String desc = description != null ? description
+                : (src.getDescription() == null || src.getDescription().isBlank() ? "" : src.getDescription() + "\n\n")
+                        + "Cloned from '" + src.getName() + "'" + (lotsOnly ? " with " + lots + " lots." : ".");
+        return saveCopy(src, CurrentUser.id().orElse(null), name, fallback, desc, p);
+    }
+
+    /**
+     * A strategy shared by an admin, accepted by the caller: their own copy with the same rules (see
+     * StrategyShareService). Counts towards the caller's plan limit.
+     */
+    @Transactional
+    public Strategy copyShared(Long sourceId, Long owner, String sharedBy) {
+        Strategy src = load(sourceId);
+        String desc = (src.getDescription() == null || src.getDescription().isBlank() ? "" : src.getDescription() + "\n\n")
+                + "Shared with you by " + sharedBy + ".";
+        return saveCopy(src, owner, null, src.getName(), desc,
+                new java.util.LinkedHashMap<>(src.getParameters() == null ? Map.of() : src.getParameters()));
+    }
+
+    private Strategy saveCopy(Strategy src, Long owner, String name, String fallback, String description, Map<String, String> params) {
         checkStrategyLimit(owner);
-        String wanted = name == null || name.isBlank() ? src.getName() + " (" + lots + " lots)" : name.trim();
-        if (name != null && !name.isBlank() && owner != null && stratRepo.existsByNameAndCreatedByUserId(wanted, owner))
+        boolean named = name != null && !name.isBlank();
+        String wanted = named ? name.trim() : fallback;
+        if (named && owner != null && stratRepo.existsByNameAndCreatedByUserId(wanted, owner))
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
                     "You already have a strategy named '" + wanted + "'");
         String unique = wanted;
         for (int n = 2; owner != null && stratRepo.existsByNameAndCreatedByUserId(unique, owner); n++) unique = wanted + " #" + n;
-
-        Map<String, String> params = new java.util.LinkedHashMap<>(src.getParameters() == null ? Map.of() : src.getParameters());
-        params.put("lots", String.valueOf(lots));
-        String description = (src.getDescription() == null || src.getDescription().isBlank() ? "" : src.getDescription() + "\n\n")
-                + "Cloned from '" + src.getName() + "' with " + lots + " lots.";
         Strategy copy = new Strategy(unique, description, src.getType(), params);
         copy.setCreatedByUserId(owner);
         copy.setClonedFromStrategyId(src.getId());
@@ -254,6 +288,12 @@ public class StrategyService {
         Strategy s = load(id);
         if (!canSee(s)) throw new NotFoundException("Strategy not found: " + id);
         return s;
+    }
+
+    /** Any strategy, deleted ones included, or null: for showing a share's strategy whatever happened to it. */
+    @Transactional(readOnly = true)
+    public Strategy findAny(Long id) {
+        return stratRepo.findById(id).filter(s -> !s.isDeleted()).orElse(null);
     }
 
     /** Any strategy, without the owner check: for the live runner, which trades for every user. */

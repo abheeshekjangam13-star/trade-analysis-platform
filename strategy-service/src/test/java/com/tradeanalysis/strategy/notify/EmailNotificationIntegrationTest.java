@@ -57,7 +57,7 @@ class EmailNotificationIntegrationTest {
 
     private static String signup(String user, String email, String phone) {
         return "{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + email + "\",\"phone\":\"" + phone
-                + "\",\"fullName\":\"" + user.toUpperCase() + "\",\"plan\":\"GOLD\"}";
+                + "\",\"fullName\":\"" + user.toUpperCase() + "\",\"acceptTerms\":true,\"plan\":\"GOLD\"}";
     }
 
     private long id(String username) { return users.findByUsernameIgnoreCase(username).orElseThrow().getId(); }
@@ -166,7 +166,7 @@ class EmailNotificationIntegrationTest {
     @Test @Order(8)
     void planChangesAndPasswordChangesAreEmailed() throws Exception {
         java.time.Instant in2Days = java.time.Instant.now().plus(java.time.Duration.ofDays(2));
-        call(put("/api/users/" + id("ravi") + "/plan").content("{\"plan\":\"PREMIUM\",\"expiresAt\":\"" + in2Days + "\"}"), "admin", 200);
+        call(put("/api/users/" + id("ravi") + "/plan").content("{\"acceptTerms\":true,\"plan\":\"PREMIUM\",\"expiresAt\":\"" + in2Days + "\"}"), "admin", 200);
         assertThat(latest("ravi", EmailNotification.Kind.PLAN_CHANGED)).satisfies(e -> {
             assertThat(e.getSubject()).isEqualTo("Your plan is now PREMIUM");
             assertThat(e.getBody()).contains("from GOLD to PREMIUM", "Valid until", "12 strategies", "paper and live trading");

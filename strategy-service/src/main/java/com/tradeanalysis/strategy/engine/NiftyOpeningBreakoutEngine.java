@@ -56,7 +56,19 @@ import java.util.stream.Collectors;
  *   initialStop (MIDPOINT): MIDPOINT of the reference candle, or OPPOSITE side (CE → reference low, PE → reference high),
  *   onlyOn (none): yyyy-MM-dd — trade on this date only,
  *   skipDays (none): comma-separated weekdays not to trade, e.g. "THU" or "MON,FRIDAY" (case-insensitive;
- *   3-letter or full names). A skipped day still supplies the previous close for the next day's gap
+ *   3-letter or full names). A skipped day still supplies the previous close for the next day's gap,
+ *   referenceMinutes (5): length of the reference range from referenceTime, a multiple of 5 up to 60 (15 = the
+ *   first 15-min candle, 09:15–09:30, built from the three 5-min candles); breakouts are looked for after it,
+ *   directions WITH_GAP: CE only on a gap-up open, PE only on a gap-down open (pair with gapFilter ANY_GAP),
+ *   initialStop BREAKOUT_CANDLE: CE → low of the 5-min breakout candle, PE → its high,
+ *   targetR (0 = off; not with targetPoints): target at this multiple of the initial risk |entry − initial stop|,
+ *   trailAfterR (0 = off; not with trailAfterPoints): like trailAfterPoints, with the trigger at this multiple of
+ *   the initial risk,
+ *   breakoutStrength (0 = off, 0–1): the breakout candle must close in this top fraction of its range for CE
+ *   ((close − low) / (high − low) ≥ x), or bottom fraction for PE; a weaker breakout is skipped and the next entry
+ *   needs a fresh cross,
+ *   trendSma (0 = off): CE only when the previous session's close is above the simple average of the last N session
+ *   closes, PE only when below (needs N sessions of 5-min history before the day; see {@link #warmupDays})
  */
 @Component
 public class NiftyOpeningBreakoutEngine {
@@ -70,6 +82,13 @@ public class NiftyOpeningBreakoutEngine {
     /** openTrades: trades still open at {@code now} (live mode only; a backtest squares them off at the end of data). */
     /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
     public static void validateParams(Params params) { Settings.from(params); }
+
+    /** Calendar days of 5-min history to load before the first trading day: the previous close, plus the trend average. */
+    public static int warmupDays(Params params) {
+        int n = Math.max(0, params.intOr("trendSma", 0));
+        if (n == 0) return 7;   // only the previous close is needed
+        return Math.max(7, (int) Math.ceil(n * 7 / 5.0) + 10);   // N sessions ≈ 7N/5 calendar days, plus holidays
+    }
 
     /** The underlying a strategy trades, from its parameters (NIFTY unless set to BANKNIFTY). */
     public static com.tradeanalysis.common.market.Underlying underlyingOf(Params params) {
@@ -89,18 +108,37 @@ public class NiftyOpeningBreakoutEngine {
 
     private record Exit(Candle bar, double price, String reason) {}
 
+    enum StopBasis { MIDPOINT, OPPOSITE, BREAKOUT_CANDLE }
+
     private record Settings(int lots, int lotSize, boolean allowCe, boolean allowPe, int maxTradesPerDay,
                             int trailMinutes, double targetPoints, GapFilter gapFilter, Threshold gap,
                             double costPerTrade, LocalTime entryFrom, LocalTime entryUntil, Threshold maxGap,
                             double trailAfterPoints, boolean breakevenOnTrail,
                             double failedBreakoutPoints, double maxStopPoints, double breakevenLockPoints,
-                            Set<DayOfWeek> skipDays, LocalTime referenceTime, boolean oppositeStop, LocalDate onlyOn,
-                            com.tradeanalysis.common.market.Underlying underlying) {
+                            Set<DayOfWeek> skipDays, LocalTime referenceTime, StopBasis stopBasis, LocalDate onlyOn,
+                            com.tradeanalysis.common.market.Underlying underlying, int referenceMinutes,
+                            boolean withGap, double targetR, double trailAfterR, double breakoutStrength, int trendSma) {
         static Settings from(Params p) {
             com.tradeanalysis.common.market.Underlying u = com.tradeanalysis.common.market.Underlying.of(p.stringOr("underlying", ""));
             String dirs = p.stringOr("directions", "BOTH").toUpperCase();
-            if (!Set.of("BOTH", "CE", "PE").contains(dirs))
-                throw new IllegalArgumentException("directions must be BOTH, CE or PE: " + dirs);
+            if (!Set.of("BOTH", "CE", "PE", "WITH_GAP").contains(dirs))
+                throw new IllegalArgumentException("directions must be BOTH, CE, PE or WITH_GAP: " + dirs);
+            int refMinutes = p.intOr("referenceMinutes", 5);
+            if (refMinutes < 5 || refMinutes > 60 || refMinutes % 5 != 0)
+                throw new IllegalArgumentException("referenceMinutes must be a multiple of 5 from 5 to 60: " + refMinutes);
+            double targetR = p.doubleOr("targetR", 0), trailAfterR = p.doubleOr("trailAfterR", 0);
+            if (targetR < 0 || trailAfterR < 0)
+                throw new IllegalArgumentException("targetR and trailAfterR can't be negative");
+            if (targetR > 0 && p.doubleOr("targetPoints", 0) > 0)
+                throw new IllegalArgumentException("Set targetR or targetPoints, not both");
+            if (trailAfterR > 0 && p.doubleOr("trailAfterPoints", 0) > 0)
+                throw new IllegalArgumentException("Set trailAfterR or trailAfterPoints, not both");
+            double strength = p.doubleOr("breakoutStrength", 0);
+            if (strength < 0 || strength > 1)
+                throw new IllegalArgumentException("breakoutStrength must be between 0 and 1: " + strength);
+            int trendSma = p.intOr("trendSma", 0);
+            if (trendSma < 0 || trendSma > 200)
+                throw new IllegalArgumentException("trendSma must be from 0 to 200 sessions: " + trendSma);
             // The lot size is the index's own (NIFTY 65, Bank Nifty 30), not a parameter: quantity = lots × lot size.
             return new Settings(p.intOr("lots", 2), u.defaultLotSize,
                     !dirs.equals("PE"), !dirs.equals("CE"),
@@ -116,14 +154,16 @@ public class NiftyOpeningBreakoutEngine {
                     parseDays(p.stringOr("skipDays", "")),
                     Optional.ofNullable(parseTime("referenceTime", p.stringOr("referenceTime", ""))).orElse(REF_CANDLE_TIME),
                     parseStop(p.stringOr("initialStop", "MIDPOINT")),
-                    parseDate("onlyOn", p.stringOr("onlyOn", "")), u);
+                    parseDate("onlyOn", p.stringOr("onlyOn", "")), u, refMinutes,
+                    dirs.equals("WITH_GAP"), targetR, trailAfterR, strength, trendSma);
         }
 
-        private static boolean parseStop(String v) {
+        private static StopBasis parseStop(String v) {
             return switch (v.trim().toUpperCase()) {
-                case "MIDPOINT", "" -> false;
-                case "OPPOSITE" -> true;
-                default -> throw new IllegalArgumentException("initialStop must be MIDPOINT or OPPOSITE: " + v);
+                case "MIDPOINT", "" -> StopBasis.MIDPOINT;
+                case "OPPOSITE" -> StopBasis.OPPOSITE;
+                case "BREAKOUT_CANDLE" -> StopBasis.BREAKOUT_CANDLE;
+                default -> throw new IllegalArgumentException("initialStop must be MIDPOINT, OPPOSITE or BREAKOUT_CANDLE: " + v);
             };
         }
 
@@ -221,9 +261,8 @@ public class NiftyOpeningBreakoutEngine {
     /** Live use: the same rules, but a trade still open at {@code now} stays open (in openTrades, with its current stop). */
     public BreakoutResult runLive(PriceSeries series, PriceSeries minutes, Params params, Long strategyId,
                                   Instant now, LocalDate tradeFrom) {
-        // The previous-day rules run in backtests only; live and paper trading would silently use the 09:15 reference.
-        if (PreviousRangeEngine.handles(params))
-            throw new IllegalArgumentException("The previous-day reference (referenceMode=PREVIOUS_DAY) is backtest-only for now");
+        // referenceMode=PREVIOUS_DAY: yesterday's high and low are the reference, not today's 09:15 candle.
+        if (PreviousRangeEngine.handles(params)) return new PreviousRangeEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
         return run(series, minutes, params, strategyId, now, tradeFrom, false);
     }
 
@@ -246,6 +285,7 @@ public class NiftyOpeningBreakoutEngine {
         List<DayReport> days = new ArrayList<>();
         List<NiftyTradeLog> openTrades = new ArrayList<>();
         Double prevSessionClose = null;
+        List<Double> sessionCloses = new ArrayList<>();   // every earlier session's close, for trendSma
 
         for (Map.Entry<LocalDate, List<Candle>> entry : byDay.entrySet()) {
             LocalDate date = entry.getKey();
@@ -254,6 +294,12 @@ public class NiftyOpeningBreakoutEngine {
                     .toList();
             Double prevClose0 = prevSessionClose;
             prevSessionClose = dayCandles.get(dayCandles.size() - 1).close().doubleValue();
+            // Average of the last trendSma closes before this day (null when off or not enough history)
+            Double trendAvg = cfg.trendSma() > 0 && sessionCloses.size() >= cfg.trendSma()
+                    ? sessionCloses.subList(sessionCloses.size() - cfg.trendSma(), sessionCloses.size()).stream()
+                            .mapToDouble(Double::doubleValue).average().orElseThrow()
+                    : null;
+            sessionCloses.add(prevSessionClose);
             if (tradeFrom != null && date.isBefore(tradeFrom)) continue;
 
             // The reference candle (09:15 unless referenceTime says otherwise); the gap is always the 09:15 open's.
@@ -279,23 +325,51 @@ public class NiftyOpeningBreakoutEngine {
                 days.add(new DayReport(date, null, "NO_DATA", "No " + cfg.referenceTime() + " reference candle", 0));
                 continue;
             }
+            if (cfg.trendSma() > 0 && trendAvg == null) {
+                days.add(new DayReport(date, gap, "NO_DATA", "Fewer than " + cfg.trendSma() + " earlier sessions for the trend average", 0));
+                continue;
+            }
             String blocked = cfg.dayBlockReason(gap, gapPoints);
             if (blocked != null) {
                 days.add(new DayReport(date, gap, "NO_TRADE", blocked, 0));
                 continue;
             }
 
-            double refHigh = refCandle.high().doubleValue();
-            double refLow  = refCandle.low().doubleValue();
+            // The reference range: the 5-min candles from referenceTime spanning referenceMinutes (one candle by default).
+            Instant refEnd = refCandle.timestamp().plus(Duration.ofMinutes(cfg.referenceMinutes()));
+            List<Candle> refCandles = dayCandles.stream()
+                    .filter(c -> !c.timestamp().isBefore(refCandle.timestamp()) && c.timestamp().isBefore(refEnd))
+                    .toList();
+            if (refCandles.size() < cfg.referenceMinutes() / 5) {
+                days.add(new DayReport(date, gap, "NO_DATA", "Incomplete " + cfg.referenceMinutes() + "-min reference range from "
+                        + cfg.referenceTime(), 0));
+                continue;
+            }
+            Candle lastRef = refCandles.get(refCandles.size() - 1);
+            double refHigh = refCandles.stream().mapToDouble(c -> c.high().doubleValue()).max().orElseThrow();
+            double refLow  = refCandles.stream().mapToDouble(c -> c.low().doubleValue()).min().orElseThrow();
+            // WITH_GAP: trade only in the direction of the open's gap.
+            boolean ceToday = cfg.allowCe() && (!cfg.withGap() || (gapPoints != null && gapPoints > 0));
+            boolean peToday = cfg.allowPe() && (!cfg.withGap() || (gapPoints != null && gapPoints < 0));
+            if (trendAvg != null) {   // trade only with the trend: CE above the average, PE below it
+                ceToday &= prevClose0 != null && prevClose0 > trendAvg;
+                peToday &= prevClose0 != null && prevClose0 < trendAvg;
+                if (!ceToday && !peToday) {
+                    days.add(new DayReport(date, gap, "NO_TRADE", String.format("Previous close %.2f is on the wrong side of the %d-day average %.2f",
+                            prevClose0, cfg.trendSma(), trendAvg), 0));
+                    continue;
+                }
+            }
 
             List<Candle> tradingCandles = dayCandles.stream()
-                    .filter(c -> c.timestamp().isAfter(refCandle.timestamp()))
+                    .filter(c -> c.timestamp().isAfter(lastRef.timestamp()))
                     .toList();
 
             int tradesThisDay  = 0;
             NiftyTradeLog open = null;
             TrailingStopLoss stop = null;
-            double prevClose   = refCandle.close().doubleValue();
+            double openTarget  = 0;   // target distance in points for the open trade (0 = none)
+            double prevClose   = lastRef.close().doubleValue();
 
             for (Candle candle : tradingCandles) {
                 if (candle.timestamp().plus(TrailingStopLoss.ENTRY_CANDLE).isAfter(now)) break; // still forming
@@ -315,7 +389,7 @@ public class NiftyOpeningBreakoutEngine {
 
                 // ── SL / target: walk the 1-min candles inside this 5-min candle ─
                 if (open != null) {
-                    Exit exit = checkExit(stop, open, cfg.targetPoints(), candle, oneMin, now);
+                    Exit exit = checkExit(stop, open, openTarget, candle, oneMin, now);
                     if (exit != null) {
                         open.close(exit.bar().timestamp(), exit.price(), exit.reason(), stop.currentStop());
                         logs.add(open);
@@ -337,20 +411,32 @@ public class NiftyOpeningBreakoutEngine {
 
                 // ── Entry check ─────────────────────────────────────────────
                 if (open == null && tradesThisDay < cfg.maxTradesPerDay() && cfg.entryWindowOpen(ist)) {
-                    boolean freshBullish = cfg.allowCe() && prevClose <= refHigh && spot > refHigh;
-                    boolean freshBearish = cfg.allowPe() && prevClose >= refLow  && spot < refLow;
+                    boolean freshBullish = ceToday && prevClose <= refHigh && spot > refHigh;
+                    boolean freshBearish = peToday && prevClose >= refLow  && spot < refLow;
+                    if ((freshBullish || freshBearish) && cfg.breakoutStrength() > 0) {
+                        double range = candle.high().doubleValue() - candle.low().doubleValue();
+                        double pos = range > 0 ? (spot - candle.low().doubleValue()) / range : 1.0;
+                        if ((freshBullish ? pos : 1 - pos) < cfg.breakoutStrength()) freshBullish = freshBearish = false;
+                    }
 
                     if (freshBullish || freshBearish) {
                         TrailingStopLoss.Direction dir = freshBullish
                                 ? TrailingStopLoss.Direction.BULLISH : TrailingStopLoss.Direction.BEARISH;
                         String optType = freshBullish ? "CE" : "PE";
                         int strike = cfg.underlying().strike(freshBullish, spot);
-                        stop = cfg.oppositeStop()
-                                ? TrailingStopLoss.openAt(dir, freshBullish ? refLow : refHigh, candle.timestamp(), cfg.trailMinutes())
-                                : TrailingStopLoss.open(dir, refHigh, refLow, candle.timestamp(), cfg.trailMinutes());
+                        stop = switch (cfg.stopBasis()) {
+                            case OPPOSITE -> TrailingStopLoss.openAt(dir, freshBullish ? refLow : refHigh, candle.timestamp(), cfg.trailMinutes());
+                            case BREAKOUT_CANDLE -> TrailingStopLoss.openAt(dir,
+                                    (freshBullish ? candle.low() : candle.high()).doubleValue(), candle.timestamp(), cfg.trailMinutes());
+                            case MIDPOINT -> TrailingStopLoss.open(dir, refHigh, refLow, candle.timestamp(), cfg.trailMinutes());
+                        };
                         if (cfg.maxStopPoints() > 0)
                             stop.tightenTo(freshBullish ? spot - cfg.maxStopPoints() : spot + cfg.maxStopPoints());
-                        if (cfg.trailAfterPoints() > 0) stop.trailOnlyAfter(spot, cfg.trailAfterPoints(), cfg.breakevenOnTrail(),
+                        // Initial risk in points; floored at 1 so a breakout candle closing on its extreme still gets a target.
+                        double risk = Math.max(1, Math.abs(spot - stop.currentStop()));
+                        openTarget = cfg.targetR() > 0 ? cfg.targetR() * risk : cfg.targetPoints();
+                        double trailAfter = cfg.trailAfterR() > 0 ? cfg.trailAfterR() * risk : cfg.trailAfterPoints();
+                        if (trailAfter > 0) stop.trailOnlyAfter(spot, trailAfter, cfg.breakevenOnTrail(),
                                 cfg.breakevenLockPoints());
                         open = new NiftyTradeLog(strategyId, series.symbol(), date,
                                 ++tradesThisDay, dir.name(), refHigh, refLow,

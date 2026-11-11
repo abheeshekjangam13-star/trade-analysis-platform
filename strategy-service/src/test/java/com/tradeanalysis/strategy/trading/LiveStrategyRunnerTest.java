@@ -80,6 +80,7 @@ class LiveStrategyRunnerTest {
             return new PriceSeries("NIFTY 50", iv, upto);
         });
         jdbc.update("DELETE FROM strategy_user_mode");
+        jdbc.update("UPDATE app_user SET max_day_loss = NULL");
         paper(56L, user("runner-a"));
     }
 
@@ -92,6 +93,42 @@ class LiveStrategyRunnerTest {
         StrategyLiveConfig c = new StrategyLiveConfig(strategyId, userId);
         c.set(TradingMode.PAPER, "MIS");
         configs.save(c);
+    }
+
+    @Test
+    void theUsersMaxDayLossClosesOpenPositionsAndBlocksNewEntries() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET max_day_loss = 3000 WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
+        CLOCK.set(at(TUE, 9, 26));
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("BUY 130 NIFTY26N0324150CE"));
+
+        // The option falls to 90: (90 − 120) × 130 = −3,900 open loss, past the 3,000 limit → closed.
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 90.0));
+        assertThat(runner.enforceDayLoss()).anyMatch(l -> l.contains("SELL 130 NIFTY26N0324150CE (MAX_DAY_LOSS)"));
+        LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+        assertThat(p.getStatus()).isEqualTo(LivePosition.Status.CLOSED);
+        assertThat(p.getExitReason()).isEqualTo("MAX_DAY_LOSS");
+        assertThat(p.getPnl()).isEqualTo(-3900.0 - 85);   // minus strategy #56's charges per trade
+
+        // The rest of the day: a new entry for any of the user's strategies is refused.
+        positions.deleteAll();
+        jdbc.update("INSERT INTO live_position (strategy_id, user_id, trade_date, mode, option_type, tradingsymbol, quantity, entry_candle, entry_spot, status, pnl, opened_at, closed_at) "
+                + "VALUES (56, ?, ?, 'PAPER', 'CE', 'X', 130, ?, 24000, 'CLOSED', -3900, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", a, TUE, at(TUE, 9, 0));
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("entry blocked: Your max day loss is reached"));
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE)).hasSize(1);   // only the old closed one
+    }
+
+    @Test
+    void anotherUserBelowTheirLimitKeepsTrading() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET max_day_loss = 50000 WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 90.0));
+        assertThat(runner.enforceDayLoss()).isEmpty();
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0).getStatus()).isEqualTo(LivePosition.Status.OPEN);
     }
 
     @Test
