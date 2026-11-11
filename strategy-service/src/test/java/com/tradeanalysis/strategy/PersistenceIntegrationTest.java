@@ -122,6 +122,18 @@ class PersistenceIntegrationTest {
         assertThat(r.get("items")).hasSize(1);
         assertThat(call(get("/api/portfolios/" + portfolio.get("id").asText() + "/reports"), 200)).hasSize(2);
 
+        // Re-running a window with the same capital replaces its report (and the backtest behind it); other windows
+        // and other capitals stay.
+        long oldBacktest = r.get("items").get(0).get("backtestResultId").asLong();
+        JsonNode rerun = call(post("/api/portfolios/" + portfolio.get("id").asText() + "/reports")
+                .param("windows", "30").param("capital", "50000"), 201);
+        call(post("/api/portfolios/" + portfolio.get("id").asText() + "/reports").param("windows", "30").param("capital", "75000"), 201);
+        JsonNode stored = call(get("/api/portfolios/" + portfolio.get("id").asText() + "/reports"), 200);
+        assertThat(stored).hasSize(3);   // 30 days at 50,000 (the re-run), 90 days at 50,000, 30 days at 75,000
+        assertThat(stored.findValuesAsText("id")).contains(rerun.get(0).get("id").asText()).doesNotContain(r.get("id").asText());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE id = ?", Integer.class, oldBacktest)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM nifty_trade_log WHERE backtest_result_id = ?", Integer.class, oldBacktest)).isZero();
+
         // Users and roles APIs (managing users needs an ADMIN).
         call(post("/api/users").content("{\"username\":\"ravi\"}"), 403);
         jdbc.update("INSERT INTO app_user_role (user_id, role_id) SELECT u.id, r.id FROM app_user u, app_role r WHERE u.username = 'abheeshek' AND r.name = 'ADMIN'");

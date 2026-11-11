@@ -263,8 +263,8 @@ public class StrategyService {
     }
 
     /**
-     * Soft-deletes a strategy: it disappears from every list and page, but the row, its backtests, reports and trades
-     * are kept for the record. Refused while it is being traded or is in a portfolio, and when the caller's plan has
+     * Deletes a strategy: it disappears from every list and page and its backtests and reports are deleted (see
+     * {@link #deleteHistory}); the hidden row and its paper/live trades stay, for admins only. Refused while it is being traded or is in a portfolio, and when the caller's plan has
      * used up its deletes (Free: 4).
      */
     @Transactional
@@ -282,6 +282,26 @@ public class StrategyService {
         deletes.check();
         s.softDelete(CurrentUser.id().orElse(null), Instant.now());
         stratRepo.save(s);
+        deleteHistory(id);
+    }
+
+    /**
+     * What a deleted strategy leaves behind is deleted with it: its backtests (daily and monthly reports cascade), their
+     * trade logs and its lines in stored portfolio reports (a report left empty goes too). The strategy row stays, hidden,
+     * so the plan's delete count and its shares still add up. Its paper and live orders and positions stay as the record,
+     * shown to admins only (see TradingService).
+     */
+    private void deleteHistory(Long id) {
+        List<Long> reports = jdbc.queryForList(
+                "SELECT DISTINCT portfolio_report_id FROM portfolio_report_item WHERE strategy_id = ?", Long.class, id);
+        jdbc.update("DELETE FROM portfolio_report_item WHERE strategy_id = ? "
+                + "OR backtest_result_id IN (SELECT b.id FROM backtest_result b WHERE b.strategy_id = ?)", id, id);
+        for (Long r : reports)
+            jdbc.update("DELETE FROM portfolio_report WHERE id = ? "
+                    + "AND NOT EXISTS (SELECT 1 FROM portfolio_report_item i WHERE i.portfolio_report_id = ?)", r, r);
+        jdbc.update("DELETE FROM nifty_trade_log WHERE strategy_id = ? "
+                + "OR backtest_result_id IN (SELECT b.id FROM backtest_result b WHERE b.strategy_id = ?)", id, id);
+        jdbc.update("DELETE FROM backtest_result WHERE strategy_id = ?", id);
     }
 
     /** A strategy the caller may see: their own, or any for an admin (else 404). Master strategies are admin-only. */

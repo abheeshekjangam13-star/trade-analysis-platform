@@ -23,13 +23,15 @@ public class TradingService {
     private final AppUserRepository users;
     private final ObjectProvider<LiveStrategyRunner> runner;
     private final KiteAccounts accounts;
+    private final com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo;
 
     public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
                           LivePositionRepository positions, OrderService orderService, StrategyService strategies,
-                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, KiteAccounts accounts) {
+                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, KiteAccounts accounts,
+                          com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo) {
         this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
         this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
-        this.accounts = accounts;
+        this.accounts = accounts; this.strategyRepo = strategyRepo;
     }
 
     public record StrategyMode(Long strategyId, String name, String type, String direction, TradingMode mode, String product) {}
@@ -164,6 +166,18 @@ public class TradingService {
         TradingControl c = controls.get();
         c.update(false, null, null, null, CurrentUser.id().orElse(null));
         return controls.save(c);
+    }
+
+    /**
+     * These orders or positions without those of deleted strategies: a deleted strategy's paper and live trades are kept
+     * as the record but shown to admins only. Manual orders (no strategy) stay.
+     */
+    public <T> java.util.List<T> withoutDeletedStrategies(java.util.List<T> rows, java.util.function.Function<T, Long> strategyOf) {
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        for (T r : rows) if (strategyOf.apply(r) != null) ids.add(strategyOf.apply(r));
+        if (ids.isEmpty()) return rows;
+        java.util.Set<Long> deleted = strategyRepo.findDeletedIds(ids);
+        return deleted.isEmpty() ? rows : rows.stream().filter(r -> !deleted.contains(strategyOf.apply(r))).toList();
     }
 
     /** Whether the caller is an ADMIN (non-admins only see paper trading). */

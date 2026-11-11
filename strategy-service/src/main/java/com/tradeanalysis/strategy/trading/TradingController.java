@@ -148,7 +148,8 @@ public class TradingController {
     public List<TradeOrder> orders(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         LocalDate day = date == null ? orders.today() : date;
         return trading.isAdmin() ? orderRepo.findByTradeDateOrderByCreatedAtDesc(day)          // admins: everyone's
-                : orderRepo.findByTradeDateAndUserIdOrderByCreatedAtDesc(day, CurrentUser.id().orElseThrow());
+                : trading.withoutDeletedStrategies(orderRepo.findByTradeDateAndUserIdOrderByCreatedAtDesc(day, CurrentUser.id().orElseThrow()),
+                        TradeOrder::getStrategyId);
     }
 
     @PostMapping("/orders")
@@ -178,7 +179,8 @@ public class TradingController {
     public List<LivePosition> positions(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         LocalDate day = date == null ? orders.today() : date;
         return trading.isAdmin() ? positionRepo.findByTradeDateOrderByOpenedAtDesc(day)
-                : positionRepo.findByTradeDateAndUserIdOrderByOpenedAtDesc(day, CurrentUser.id().orElseThrow());
+                : trading.withoutDeletedStrategies(positionRepo.findByTradeDateAndUserIdOrderByOpenedAtDesc(day, CurrentUser.id().orElseThrow()),
+                        LivePosition::getStrategyId);
     }
 
     /** At most this many days per history request. */
@@ -186,7 +188,7 @@ public class TradingController {
 
     @GetMapping("/positions/history")
     @Operation(summary = "Strategy positions (paper and live) between two days, oldest first: for the dashboard's history "
-            + "(default the last 90 days, at most " + MAX_HISTORY_DAYS + " days). Non-admins see their own")
+            + "(default the last 90 days, at most " + MAX_HISTORY_DAYS + " days). Non-admins see their own, without deleted strategies' trades")
     public List<LivePosition> positionHistory(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
@@ -196,7 +198,8 @@ public class TradingController {
         if (start.plusDays(MAX_HISTORY_DAYS).isBefore(end))
             throw new TradingException("Pick at most " + MAX_HISTORY_DAYS + " days");
         return trading.isAdmin() ? positionRepo.findByTradeDateBetweenOrderByTradeDateAscOpenedAtAsc(start, end)
-                : positionRepo.findByTradeDateBetweenAndUserIdOrderByTradeDateAscOpenedAtAsc(start, end, CurrentUser.id().orElseThrow());
+                : trading.withoutDeletedStrategies(positionRepo.findByTradeDateBetweenAndUserIdOrderByTradeDateAscOpenedAtAsc(
+                        start, end, CurrentUser.id().orElseThrow()), LivePosition::getStrategyId);
     }
 
     /** Your own Kite account (admins without one: the platform account). */

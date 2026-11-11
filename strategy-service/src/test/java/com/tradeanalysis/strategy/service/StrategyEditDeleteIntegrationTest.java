@@ -20,8 +20,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Paid plans may edit their own strategies (Free may not); every plan may delete them (soft delete: hidden, history
- * kept), Free up to 4 times. Master strategies are admin-only.
+ * Paid plans may edit their own strategies (Free may not); every plan may delete them (the row is hidden, its backtests
+ * and reports are deleted; its paper/live trades stay, for admins only), Free up to 4 times. Master strategies are admin-only.
  */
 @SpringBootTest(properties = {"auth.auto-register-users=false", "auth.trust-user-header=false",
         "spring.datasource.url=jdbc:h2:mem:edit-delete-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1"})
@@ -107,19 +107,26 @@ class StrategyEditDeleteIntegrationTest {
     }
 
     @Test @Order(3)
-    void deleteHidesTheStrategyKeepsItsHistoryAndFreesAPlace() throws Exception {
+    void deleteHidesTheStrategyDeletesItsHistoryAndFreesAPlace() throws Exception {
         long s = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Mine again'", Long.class);
         long bt = backtestRow(s, "sita");
         jdbc.update("INSERT INTO backtest_daily_report (backtest_result_id, trade_date, day_of_week, status, trades, net_pnl) "
                 + "VALUES (?, CURRENT_DATE, 'MON', 'NO_TRADE', 0, 0)", bt);
+        jdbc.update("INSERT INTO nifty_trade_log (backtest_result_id, strategy_id, trade_date, trade_number, reference_high, reference_low, "
+                + "entry_spot_price, strike_price, lots, lot_size, exit_spot_price, estimated_pnl) "
+                + "VALUES (?, ?, CURRENT_DATE, 1, 24100, 24000, 24110, 24100, 1, 65, 24160, 100)", bt, s);
+        long other = jdbc.queryForObject("SELECT id FROM strategy WHERE name = 'Other'", Long.class);
+        long otherBt = backtestRow(other, "sita");   // another strategy's history is not touched
 
         call(delete("/api/strategies/" + s), "sita", 204);
         call(get("/api/strategies/" + s), "sita", 404);
         assertThat(call(get("/api/strategies"), "sita", 200).findValuesAsText("id")).doesNotContain(String.valueOf(s));
-        // soft delete: the row and its history stay
+        // the row stays hidden (it counts as a delete); its backtests, reports and trade logs are gone
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM strategy WHERE id = ? AND deleted_at IS NOT NULL", Integer.class, s)).isOne();
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE strategy_id = ?", Integer.class, s)).isOne();
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_daily_report WHERE backtest_result_id = ?", Integer.class, bt)).isOne();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE strategy_id = ?", Integer.class, s)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_daily_report WHERE backtest_result_id = ?", Integer.class, bt)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM nifty_trade_log WHERE strategy_id = ?", Integer.class, s)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE id = ?", Integer.class, otherBt)).isOne();
         create("sita", "Mine again");   // the name is free again, and she's back under FREE's limit of 2
     }
 
@@ -168,7 +175,7 @@ class StrategyEditDeleteIntegrationTest {
 
         call(put("/api/trading/strategies/" + s).content("{\"mode\":\"OFF\"}"), "ravi", 200);
         assertThat(call(put("/api/strategies/" + s).content(newParams), "ravi", 200).get("parameters").get("lots").asText()).isEqualTo("3");
-        call(delete("/api/strategies/" + s), "ravi", 204);   // closed PAPER trades are kept with the hidden strategy
+        call(delete("/api/strategies/" + s), "ravi", 204);   // its closed PAPER trades stay, for admins only
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ?", Integer.class, s)).isOne();
 
         long p = create("ravi", "In a portfolio");
@@ -180,8 +187,12 @@ class StrategyEditDeleteIntegrationTest {
         long t = create("ravi", "Has live trades");
         jdbc.update("INSERT INTO live_position (strategy_id, user_id, trade_date, mode, option_type, quantity, entry_candle, entry_spot, "
                 + "status, opened_at) VALUES (?, ?, CURRENT_DATE, 'LIVE', 'CE', 65, CURRENT_TIMESTAMP, 24000, 'CLOSED', CURRENT_TIMESTAMP)", t, id("ravi"));
-        call(delete("/api/strategies/" + t), "ravi", 204);   // soft delete keeps the live trade records, so it may go
+        call(delete("/api/strategies/" + t), "ravi", 204);   // its LIVE trades stay, for admins only
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ?", Integer.class, t)).isOne();
+        // a deleted strategy's paper and live trades are shown to admins only
+        String days = "/api/trading/positions/history?from=" + java.time.LocalDate.now().minusDays(2) + "&to=" + java.time.LocalDate.now().plusDays(2);
+        assertThat(call(get(days), "ravi", 200).findValuesAsText("strategyId")).doesNotContain(String.valueOf(s), String.valueOf(t));
+        assertThat(call(get(days), "admin", 200).findValuesAsText("strategyId")).contains(String.valueOf(s), String.valueOf(t));
         assertThat(call(get("/api/users/me/usage"), "ravi", 200).get("maxDeletes").asInt()).isEqualTo(-1);   // GOLD: no limit
     }
 

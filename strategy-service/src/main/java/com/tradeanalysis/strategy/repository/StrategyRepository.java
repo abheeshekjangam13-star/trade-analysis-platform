@@ -18,5 +18,9 @@ public interface StrategyRepository extends JpaRepository<Strategy, Long> {
 
     java.util.List<Strategy> findByDeletedAtIsNull();
 
+    /** The deleted ones among these strategies: their trades are shown to admins only. */
+    @org.springframework.data.jpa.repository.Query("SELECT s.id FROM Strategy s WHERE s.id IN :ids AND s.deletedAt IS NOT NULL")
+    java.util.Set<Long> findDeletedIds(@org.springframework.data.repository.query.Param("ids") java.util.Collection<Long> ids);
+
     boolean existsByNameAndCreatedByUserIdAndIdNot(String name, Long createdByUserId, Long id);
 }

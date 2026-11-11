@@ -89,12 +89,7 @@ public class PortfolioService {
                 "SELECT DISTINCT i.backtest_result_id FROM portfolio_report_item i JOIN portfolio_report r ON r.id = i.portfolio_report_id "
                         + "WHERE r.portfolio_id = ?", Long.class, portfolioId);
         int deleted = jdbc.update("DELETE FROM portfolio_report WHERE portfolio_id = ?", portfolioId);
-        for (Long bt : backtests) {
-            Integer elsewhere = jdbc.queryForObject("SELECT COUNT(*) FROM portfolio_report_item WHERE backtest_result_id = ?", Integer.class, bt);
-            if (elsewhere != null && elsewhere > 0) continue;
-            jdbc.update("DELETE FROM nifty_trade_log WHERE backtest_result_id = ?", bt);
-            jdbc.update("DELETE FROM backtest_result WHERE id = ?", bt);   // daily/monthly reports cascade
-        }
+        deleteUnusedBacktests(backtests);
         return deleted;
     }
 
@@ -162,9 +157,38 @@ public class PortfolioService {
                 List<NiftyTradeLog> mine = kept.stream().filter(t -> e.getKey().equals(t.getBacktestResultId())).toList();
                 items.add(new PortfolioReportItem(e.getValue(), e.getKey(), PortfolioMath.summarize(mine)));
             }
-            saved.add(reports.save(new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
-                    capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items)));
+            PortfolioReport report = reports.save(new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
+                    capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items));
+            replaceOlderReports(report);
+            saved.add(report);
         }
         return saved;
+    }
+
+    /**
+     * A re-run replaces the portfolio's earlier reports for the same window, capital and index: they are deleted with
+     * the backtests they ran (and those backtests' trade logs and daily/monthly reports), unless another report still
+     * uses a backtest. Called after the new report is saved, so a failed run leaves the old one in place.
+     */
+    private void replaceOlderReports(PortfolioReport report) {
+        List<Long> older = jdbc.queryForList("SELECT id FROM portfolio_report WHERE portfolio_id = ? AND window_days = ? "
+                + "AND capital = ? AND symbol = ? AND id <> ?", Long.class, report.getPortfolioId(), report.getWindowDays(),
+                report.getCapital(), report.getSymbol(), report.getId());
+        for (Long id : older) {
+            List<Long> backtests = jdbc.queryForList(
+                    "SELECT DISTINCT backtest_result_id FROM portfolio_report_item WHERE portfolio_report_id = ?", Long.class, id);
+            jdbc.update("DELETE FROM portfolio_report WHERE id = ?", id);   // its items cascade
+            deleteUnusedBacktests(backtests);
+        }
+    }
+
+    /** Deletes these backtests with their trade logs (daily/monthly reports cascade), skipping any a report still uses. */
+    private void deleteUnusedBacktests(List<Long> backtests) {
+        for (Long bt : backtests) {
+            Integer elsewhere = jdbc.queryForObject("SELECT COUNT(*) FROM portfolio_report_item WHERE backtest_result_id = ?", Integer.class, bt);
+            if (elsewhere != null && elsewhere > 0) continue;
+            jdbc.update("DELETE FROM nifty_trade_log WHERE backtest_result_id = ?", bt);
+            jdbc.update("DELETE FROM backtest_result WHERE id = ?", bt);   // daily/monthly reports cascade
+        }
     }
 }
