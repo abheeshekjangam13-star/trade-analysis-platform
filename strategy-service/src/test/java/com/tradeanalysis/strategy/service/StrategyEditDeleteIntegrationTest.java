@@ -203,4 +203,23 @@ class StrategyEditDeleteIntegrationTest {
         JsonNode paper = call(put("/api/trading/strategies/" + mine).content("{\"mode\":\"PAPER\"}"), "sita", 403);
         assertThat(paper.get("message").asText()).contains("GOLD");
     }
+
+    @Test @Order(7)
+    void backtestsLeftByAnEarlierDeleteAreForAdminsOnly() throws Exception {
+        long s = create("ravi", "Deleted long ago");
+        long bt = backtestRow(s, "ravi");
+        jdbc.update("INSERT INTO nifty_trade_log (backtest_result_id, strategy_id, trade_date, trade_number, reference_high, reference_low, "
+                + "entry_spot_price, strike_price, lots, lot_size, exit_spot_price, estimated_pnl) "
+                + "VALUES (?, ?, DATE '2026-11-04', 1, 24100, 24000, 24110, 24100, 1, 65, 24160, 5115)", bt, s);
+        String trades = "/api/nifty-trades?from=2026-11-01&to=2026-11-30";
+        assertThat(call(get(trades), "ravi", 200).findValuesAsText("strategyId")).contains(String.valueOf(s));
+
+        // deleted before deletes removed the history: the backtest and its trades are still stored
+        jdbc.update("UPDATE strategy SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", s);
+        assertThat(call(get(trades), "ravi", 200).findValuesAsText("strategyId")).doesNotContain(String.valueOf(s));
+        call(get("/api/nifty-trades/backtest/" + bt), "ravi", 404);
+        call(get("/api/backtests/" + bt + "/daily"), "ravi", 404);
+        assertThat(call(get(trades), "admin", 200).findValuesAsText("strategyId")).contains(String.valueOf(s));
+        call(get("/api/nifty-trades/backtest/" + bt), "admin", 200);
+    }
 }

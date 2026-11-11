@@ -406,11 +406,13 @@ public class StrategyService {
         return out.entrySet().stream().map(e -> new Performance(e.getKey(), e.getValue())).toList();
     }
 
-    /** A backtest the caller ran (admins: any), else 404. */
+    /** A backtest the caller ran (admins: any), else 404. A deleted strategy's backtests are for admins only. */
     @Transactional(readOnly = true)
     public BacktestResult getBacktest(Long backtestId) {
         BacktestResult b = btRepo.findById(backtestId).orElseThrow(() -> new NotFoundException("Backtest not found: " + backtestId));
         if (!CurrentUser.owns(b.getRunByUserId())) throw new NotFoundException("Backtest not found: " + backtestId);
+        if (!CurrentUser.unrestricted() && b.getStrategy() != null && b.getStrategy().isDeleted())
+            throw new NotFoundException("Backtest not found: " + backtestId);
         return b;
     }
 
@@ -454,9 +456,17 @@ public class StrategyService {
         return mine(from == null && to == null ? niftyRepo.findAll() : niftyRepo.findByTradeDateBetween(lo, hi));
     }
 
+    /**
+     * The caller's own trades (admins: everyone's). Trades of deleted strategies are for admins only, so a user's
+     * totals only count the strategies they still have.
+     */
     private List<NiftyTradeLog> mine(List<NiftyTradeLog> trades) {
         if (CurrentUser.unrestricted()) return trades;
         java.util.Set<Long> own = new java.util.HashSet<>(btRepo.idsRunBy(CurrentUser.id().orElseThrow()));
-        return trades.stream().filter(t -> t.getBacktestResultId() != null && own.contains(t.getBacktestResultId())).toList();
+        List<NiftyTradeLog> kept = trades.stream().filter(t -> t.getBacktestResultId() != null && own.contains(t.getBacktestResultId())).toList();
+        java.util.Set<Long> strategyIds = new java.util.HashSet<>();
+        for (NiftyTradeLog t : kept) if (t.getStrategyId() != null) strategyIds.add(t.getStrategyId());
+        java.util.Set<Long> deleted = strategyIds.isEmpty() ? java.util.Set.of() : stratRepo.findDeletedIds(strategyIds);
+        return deleted.isEmpty() ? kept : kept.stream().filter(t -> !deleted.contains(t.getStrategyId())).toList();
     }
 }
