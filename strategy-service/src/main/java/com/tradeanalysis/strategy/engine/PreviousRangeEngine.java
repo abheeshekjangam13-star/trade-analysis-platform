@@ -28,10 +28,15 @@ import java.util.stream.Collectors;
  *   from entry when that is set (0 or missing = no cap). Target: targetPoints in favour (0 = none), checked on 1-min
  *   candles, stop first.
  * - Square-off at 15:20 IST.
+ * - Optional narrow-range filter: with narrowRangeDays N, trade only after an NR-N day, when yesterday's high-low range
+ *   was the smallest of the last N sessions (yesterday included; NR7 = 7, NR4 = 4). With excludeNarrowRangeDays M
+ *   (above N), skip the day when yesterday was also an NR-M day, so an NR4 strategy and an NR7 one never trade the
+ *   same day.
  *
  * Selected by {@code referenceMode=PREVIOUS_DAY} in the strategy's parameters; see {@link BacktestEngine}.
  * Parameters used: lots (2), underlying, targetPoints (0), maxStopPoints (0 = no cap), entryUntil (14:00), skipDays (none), costPerTrade (0),
- * directions (PE when empty, so older PE-only strategies keep their results; CE, PE or BOTH).
+ * directions (PE when empty, so older PE-only strategies keep their results; CE, PE or BOTH),
+ * narrowRangeDays (0 = off, 2-20), excludeNarrowRangeDays (0 = off, above narrowRangeDays, up to 20).
  */
 @Component
 public class PreviousRangeEngine {
@@ -101,6 +106,26 @@ public class PreviousRangeEngine {
             if (ref == null) {
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, null, "NO_DATA", "No 09:15 candle", 0));
                 continue;
+            }
+            if (cfg.narrowRangeDays() > 0) {
+                int needed = Math.max(cfg.narrowRangeDays(), cfg.excludeNarrowRangeDays());
+                if (i < needed) {
+                    days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_DATA",
+                            "Fewer than " + needed + " previous sessions for the narrow-range check", 0));
+                    continue;
+                }
+                double yRange = pHigh - pLow;
+                if (yRange > smallestRange(byDay, dates, i, cfg.narrowRangeDays())) {
+                    days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE",
+                            String.format("Yesterday's range %.2f was not the smallest of the last %d sessions (not NR%d)",
+                                    yRange, cfg.narrowRangeDays(), cfg.narrowRangeDays()), 0));
+                    continue;
+                }
+                if (cfg.excludeNarrowRangeDays() > 0 && yRange <= smallestRange(byDay, dates, i, cfg.excludeNarrowRangeDays())) {
+                    days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE",
+                            "Yesterday was also an NR" + cfg.excludeNarrowRangeDays() + " day (excluded)", 0));
+                    continue;
+                }
             }
             double open = ref.open().doubleValue();
             if (open < pLow || open > pHigh) {
@@ -191,10 +216,28 @@ public class PreviousRangeEngine {
         return c.timestamp().atZone(IST).toLocalTime();
     }
 
+    /** Smallest high-low range of the {@code n} sessions before {@code dates[i]} (yesterday and the n-1 before it). */
+    private static double smallestRange(Map<LocalDate, List<Candle>> byDay, List<LocalDate> dates, int i, int n) {
+        double min = Double.MAX_VALUE;
+        for (int k = i - n; k < i; k++) {
+            List<Candle> d = byDay.get(dates.get(k));
+            double hi = d.stream().mapToDouble(c -> c.high().doubleValue()).max().orElseThrow();
+            double lo = d.stream().mapToDouble(c -> c.low().doubleValue()).min().orElseThrow();
+            min = Math.min(min, hi - lo);
+        }
+        return min;
+    }
+
+    /** Trading sessions of history the narrow-range filter needs before the first trading day (0 when it is off). */
+    public static int sessionsNeeded(Params params) {
+        return Math.max(Math.max(0, params.intOr("narrowRangeDays", 0)), Math.max(0, params.intOr("excludeNarrowRangeDays", 0)));
+    }
+
     private record Exit(Candle bar, double price, String reason) {}
 
     private record Settings(int lots, int lotSize, double targetPoints, LocalTime entryUntil, Set<DayOfWeek> skipDays,
-                            double costPerTrade, Underlying underlying, boolean allowCe, boolean allowPe, double maxStopPoints) {
+                            double costPerTrade, Underlying underlying, boolean allowCe, boolean allowPe, double maxStopPoints,
+                            int narrowRangeDays, int excludeNarrowRangeDays) {
 
         /** The range stop, moved closer to entry when it is further away than maxStopPoints (CE below entry, PE above). */
         double capStop(boolean call, double entry, double rangeStop) {
@@ -212,9 +255,16 @@ public class PreviousRangeEngine {
             double cap = p.doubleOr("maxStopPoints", 0);
             if (cap < 0) throw new IllegalArgumentException("maxStopPoints can't be negative: " + cap);
             LocalTime entryUntil = until.isEmpty() ? DEFAULT_ENTRY_UNTIL : parseTime("entryUntil", until);
+            int nr = p.intOr("narrowRangeDays", 0), nrExclude = p.intOr("excludeNarrowRangeDays", 0);
+            if (nr != 0 && (nr < 2 || nr > 20))
+                throw new IllegalArgumentException("narrowRangeDays must be 0 (off) or 2-20: " + nr);
+            if (nrExclude != 0 && nr == 0)
+                throw new IllegalArgumentException("excludeNarrowRangeDays needs narrowRangeDays");
+            if (nrExclude != 0 && (nrExclude <= nr || nrExclude > 20))
+                throw new IllegalArgumentException("excludeNarrowRangeDays must be above narrowRangeDays and at most 20: " + nrExclude);
             return new Settings(p.intOr("lots", 2), u.defaultLotSize, p.doubleOr("targetPoints", 0), entryUntil,
                     parseDays(p.stringOr("skipDays", "")), p.doubleOr("costPerTrade", 0), u,
-                    !dirs.equals("PE"), !dirs.equals("CE"), cap);
+                    !dirs.equals("PE"), !dirs.equals("CE"), cap, nr, nrExclude);
         }
 
         private static LocalTime parseTime(String name, String v) {

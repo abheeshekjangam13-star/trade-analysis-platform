@@ -81,11 +81,22 @@ public class NiftyOpeningBreakoutEngine {
 
     /** openTrades: trades still open at {@code now} (live mode only; a backtest squares them off at the end of data). */
     /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
-    public static void validateParams(Params params) { Settings.from(params); }
+    public static void validateParams(Params params) {
+        Settings.from(params);
+        // The other reference modes check their own parameters too (saving, the description reader, the live runner).
+        if (PreviousRangeEngine.handles(params)) PreviousRangeEngine.validateParams(params);
+        if (GapFillEngine.handles(params)) GapFillEngine.validateParams(params);
+        if (CprEngine.handles(params)) CprEngine.validateParams(params);
+        if (EmaCrossEngine.handles(params)) EmaCrossEngine.validateParams(params);
+    }
 
-    /** Calendar days of 5-min history to load before the first trading day: the previous close, plus the trend average. */
+    /**
+     * Calendar days of 5-min history to load before the first trading day: the previous close, plus the trend average
+     * or the sessions the previous-day narrow-range filter compares.
+     */
     public static int warmupDays(Params params) {
-        int n = Math.max(0, params.intOr("trendSma", 0));
+        int n = Math.max(Math.max(0, params.intOr("trendSma", 0)),
+                PreviousRangeEngine.handles(params) ? PreviousRangeEngine.sessionsNeeded(params) : 0);
         if (n == 0) return 7;   // only the previous close is needed
         return Math.max(7, (int) Math.ceil(n * 7 / 5.0) + 10);   // N sessions ≈ 7N/5 calendar days, plus holidays
     }
@@ -265,6 +276,10 @@ public class NiftyOpeningBreakoutEngine {
         if (PreviousRangeEngine.handles(params)) return new PreviousRangeEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
         // referenceMode=GAP_FILL: trade back into the opening gap.
         if (GapFillEngine.handles(params)) return new GapFillEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
+        // referenceMode=CPR: break of yesterday's R1 / S1, stop at the pivot.
+        if (CprEngine.handles(params)) return new CprEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
+        // referenceMode=EMA_CROSS: 5-min fast/slow EMA crossover.
+        if (EmaCrossEngine.handles(params)) return new EmaCrossEngine().runLive(series, minutes, params, strategyId, now, tradeFrom);
         return run(series, minutes, params, strategyId, now, tradeFrom, false);
     }
 

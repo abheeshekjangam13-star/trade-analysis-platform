@@ -279,4 +279,56 @@ class StrategyDescriptionParserTest {
                 .containsEntry("gapFillTarget", "0.75").doesNotContainKey("targetPoints");
         assertThat(parse("CE only, target 50 points").parameters()).doesNotContainKey("referenceMode");   // no gap-fill words
     }
+
+    @Test
+    void nr7AndNr4PreviousDayBreakouts() {
+        var nr7 = parse("Nifty, both CE and PE, after an NR7 day (yesterday's high-low range was the smallest of the last 7 sessions), "
+                + "on days that open inside yesterday's high-low range. Enter CE when a 5-minute candle closes above yesterday's high, "
+                + "PE when it closes below yesterday's low (fresh cross, from the 09:20 candle). No new entries after 14:00. 1 trade per day. "
+                + "Stop at yesterday's low (CE) / high (PE), but never more than 30 points from entry. Target 80 points. "
+                + "Square-off at 15:20. 2 lots. Charges Rs 85 per trade.");
+        assertThat(nr7.parameters()).containsAllEntriesOf(Map.of("referenceMode", "PREVIOUS_DAY", "directions", "BOTH",
+                "narrowRangeDays", "7", "maxStopPoints", "30", "targetPoints", "80", "lots", "2"));
+        assertThat(nr7.warnings()).isEmpty();
+        assertThat(nr7.notUnderstood()).isEmpty();
+        assertThat(nr7.suggestedName()).isEqualTo("Nifty CE/PE Prev-Day NR7 Breakout 80 Target - stop cap 30 - 2 lots");
+
+        var nr4 = parse("Nifty, both CE and PE, after an NR4 day but not an NR7 day, on days that open inside yesterday's high-low range. "
+                + "Stop at yesterday's low (CE) / high (PE), but never more than 30 points from entry. Target 50 points.");
+        assertThat(nr4.parameters()).containsAllEntriesOf(Map.of("narrowRangeDays", "4", "excludeNarrowRangeDays", "7"));
+        assertThat(nr4.warnings()).isEmpty();
+        // Both sides named on a previous-day strategy: BOTH, not the engine's PE default.
+        assertThat(parse("CE above yesterday's high, PE below yesterday's low").parameters()).containsEntry("directions", "BOTH");
+    }
+
+    @Test
+    void narrowCprBreakout() {
+        var r = parse("Nifty narrow-CPR breakout, both CE and PE. Pivot levels from the previous session; trade only when the CPR is "
+                + "narrower than 0.15% and the day opens between S1 and R1. Enter CE when a 5-minute candle closes above R1, PE when it "
+                + "closes below S1 (fresh cross). No new entries after 14:00. 1 trade per day. Stop at the pivot, but never more than "
+                + "40 points from entry. Target 80 points. Square-off at 15:20. 2 lots. Charges Rs 85 per trade.");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of("referenceMode", "CPR", "directions", "BOTH", "maxCprWidthPct", "0.15",
+                "maxStopPoints", "40", "targetPoints", "80", "entryUntil", "14:00"));
+        assertThat(r.warnings()).isEmpty();
+        assertThat(r.notUnderstood()).isEmpty();
+        assertThat(r.suggestedName()).isEqualTo("Nifty CE/PE Narrow-CPR Breakout 80 Target - stop cap 40 - 2 lots");
+    }
+
+    @Test
+    void emaCrossoverBuysOptionsAndReadsAStartTime() {
+        var r = parse("Nifty 5-min EMA 9/21 crossover, both CE and PE. Buy CE when the 9 EMA crosses above the 21 EMA, PE when it crosses "
+                + "below. No entries before 09:45 and no new entries after 14:00. 1 trade per day. Stop at the low (CE) / high (PE) of the "
+                + "last 3 candles, but never more than 40 points from entry. Target 80 points. Square-off at 15:20. 2 lots. "
+                + "Charges Rs 85 per trade.");
+        assertThat(r.type()).isEqualTo("NIFTY_OPENING_BREAKOUT");
+        assertThat(r.parameters()).containsAllEntriesOf(Map.of("referenceMode", "EMA_CROSS", "fastEma", "9", "slowEma", "21",
+                "swingBars", "3", "entryFrom", "09:45", "entryUntil", "14:00", "maxStopPoints", "40", "targetPoints", "80"));
+        assertThat(r.warnings()).isEmpty();
+        assertThat(r.notUnderstood()).isEmpty();
+        assertThat(r.suggestedName()).isEqualTo("Nifty CE/PE EMA 9/21 Cross 80 Target - stop cap 40 - 2 lots");
+        // "No entries before" is a start time on the opening breakout too, not a cut-off.
+        assertThat(parse("CE only, no entries before 09:30").parameters()).containsEntry("entryFrom", "09:30").doesNotContainKey("entryUntil");
+        // The equity SMA strategy is untouched.
+        assertThat(parse("10/30 SMA crossover").type()).isEqualTo("SMA_CROSSOVER");
+    }
 }

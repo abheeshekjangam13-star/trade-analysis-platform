@@ -64,10 +64,6 @@ public class StrategyDescriptionParser {
             try {
                 Params p = new Params(new HashMap<>(scan.params));
                 NiftyOpeningBreakoutEngine.validateParams(p);
-                if (com.tradeanalysis.strategy.engine.PreviousRangeEngine.handles(p))
-                    com.tradeanalysis.strategy.engine.PreviousRangeEngine.validateParams(p);
-                if (com.tradeanalysis.strategy.engine.GapFillEngine.handles(p))
-                    com.tradeanalysis.strategy.engine.GapFillEngine.validateParams(p);
             } catch (IllegalArgumentException e) {
                 scan.warnings.add("These parameters would be rejected: " + e.getMessage());
             }
@@ -90,6 +86,8 @@ public class StrategyDescriptionParser {
     // ── Type ─────────────────────────────────────────────────────────────────
 
     private String detectType(Scan s) {
+        // An EMA crossover that buys CE/PE is the intraday option engine (EMA_CROSS), not the equity SMA strategy.
+        if (s.find("\\bema\\b") && s.find("\\b(ce|pe|calls?|puts?)\\b")) return "NIFTY_OPENING_BREAKOUT";
         if (s.find("\\b(sma|simple moving average|moving[- ]average)\\b.*\\bcross") || s.find("\\b\\d+\\s*/\\s*\\d+\\s*(sma|ma)\\b"))
             return "SMA_CROSSOVER";
         if (s.find("\\brsi\\b")) return "RSI_THRESHOLD";
@@ -109,9 +107,42 @@ public class StrategyDescriptionParser {
         s.ignore("\\b(market\\s+opens?|at\\s+market\\s+open)\\s*(\\(?\\s*(at\\s+)?9[:.]15\\s*(am|ist)?\\s*\\)?)?");
         s.ignore("\\benter\\s+the\\s+trade\\b");
 
+        // ── Pivot (CPR) breakout: R1 / S1 from yesterday, stop at the pivot (CprEngine) ──
+        boolean cpr = s.peek("\\bcpr\\b|\\bcentral\\s+pivot\\b|\\bpivot\\s+(point\\s+)?(breakout|levels?)\\b|\\b(above|below)\\s+(the\\s+)?(r1|s1)\\b");
+        if (cpr) {
+            s.params.put("referenceMode", "CPR");
+            s.findings.add(new Finding("referenceMode", "CPR", "CPR / pivot", "Pivot (CPR) breakout: CE above yesterday's R1, PE below S1"));
+            s.match("\\b(cpr|cpr\\s+band|cpr\\s+width)\\s+(is\\s+)?(narrower\\s+than|below|under|less\\s+than|at\\s+most|up\\s+to|<=?|≤)\\s*" + NUM + "\\s*%"
+                    + "|\\bnarrow[- ]cpr\\s*(days?)?\\s*\\(?\\s*(width\\s+)?(below|under|at\\s+most|up\\s+to|<=?|≤)\\s*" + NUM + "\\s*%\\s*\\)?",
+                    m -> s.setNum("maxCprWidthPct", m.group(4) != null ? m.group(4) : m.group(8), 0.01, 5, m));
+            s.match("\\bnarrow[- ]cpr\\b", m -> { if (!s.params.containsKey("maxCprWidthPct")) s.note(m, "Narrow CPR: give the width, e.g. \"CPR narrower than 0.15%\""); });
+            s.builtin("\\b(pivot|cpr)\\s+levels?\\s+(from|of)\\s+(the\\s+)?(previous|prior|yesterday'?s?)\\s+(session|day)\\b", "Pivot levels from yesterday's high, low and close");
+            s.builtin("\\bopens?\\s+between\\s+(the\\s+)?s1\\s+and\\s+(the\\s+)?r1\\b", "The day must open between S1 and R1");
+            s.builtin("\\b(a\\s+)?5[- ]?min(ute)?\\s+candle\\s+closes\\s+(above|below)\\s+(the\\s+)?(r1|s1)\\b|\\bcloses?\\s+(above|below)\\s+(the\\s+)?(r1|s1)\\b",
+                    "Entry on a 5-min close above R1 (CE) / below S1 (PE)");
+            s.builtin("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|=)\\s+(the\\s+)?pivot\\b", "Stop at the pivot");
+        }
+
+        // ── EMA crossover on 5-min candles (EmaCrossEngine) ──
+        boolean emaCross = s.peek("\\bema\\b");
+        if (emaCross) {
+            s.params.put("referenceMode", "EMA_CROSS");
+            s.findings.add(new Finding("referenceMode", "EMA_CROSS", "EMA crossover", "5-min EMA crossover: CE when the fast EMA crosses above the slow one, PE below"));
+            s.match("\\b(\\d{1,3})\\s*ema\\s+cross(es|ing)?\\s+(above|over|below|under)\\s+(the\\s+)?(\\d{1,3})\\s*ema\\b",
+                    m -> { s.setInt("fastEma", m.group(1), 2, 200, m); s.setInt("slowEma", m.group(5), 2, 400, m); });
+            s.match("\\bema\\s*\\(?\\s*(\\d{1,3})\\s*/\\s*(\\d{1,3})\\s*\\)?(\\s+cross(over|es)?)?\\b|\\b(\\d{1,3})\\s*/\\s*(\\d{1,3})\\s*ema(\\s+cross(over|es)?)?\\b",
+                    m -> { s.setInt("fastEma", first(m, 1, 5), 2, 200, m); s.setInt("slowEma", first(m, 2, 6), 2, 400, m); });
+            s.match("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|below|above)\\s+(the\\s+)?(low|high|lowest\\s+low|highest\\s+high)"
+                    + "(\\s*\\(?\\s*(ce|pe)\\s*\\)?\\s*(/|or|and)\\s*(the\\s+)?(low|high|lowest\\s+low|highest\\s+high)\\s*\\(?\\s*(ce|pe)\\s*\\)?)?"
+                    + "\\s+of\\s+the\\s+last\\s+(?<n>\\d{1,2})\\s+(5[- ]?min(ute)?\\s+)?candles\\b",
+                    m -> s.setInt("swingBars", m.group("n"), 1, 20, m));
+            s.builtin("\\b(ce|pe)\\s+when\\s+it\\s+crosses\\s+(above|below)\\b", "The other side on the opposite cross");
+            s.builtin("\\bema\\s+cross(over|es)?\\b|\\bcross(es)?\\s+(above|below)\\s+the\\s+slow\\s+ema\\b", "EMA crossover");
+        }
+
         // ── Reference: yesterday's high-low range instead of today's opening candle (PreviousRangeEngine) ──
         String YDAY = "(yesterday'?s?|previous[- ]day'?s?|prev(ious)?\\s+day'?s?|prior[- ]day'?s?|pdh|pdl)";
-        boolean prevDay = s.peek("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?(range|high|low)\\b|\\bpd[hl]\\b");
+        boolean prevDay = !cpr && !emaCross && s.peek("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?(range|high|low)\\b|\\bpd[hl]\\b");
         if (prevDay) {
             s.params.put("referenceMode", "PREVIOUS_DAY");
             s.findings.add(new Finding("referenceMode", "PREVIOUS_DAY", "yesterday's high and low",
@@ -122,6 +153,13 @@ public class StrategyDescriptionParser {
                     "Entry on a 5-min close beyond yesterday's low (PE) / high (CE)");
             s.builtin("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|=)\\s+" + YDAY + "\\s+(high|low)\\b",
                     "Stop at yesterday's high (PE) / low (CE)");
+            // Narrow-range days: NR7 = yesterday's range the smallest of the last 7 sessions. The exclusion comes first.
+            s.match("\\b(but\\s+)?not\\s+(also\\s+)?(an?\\s+)?nr\\s*-?(\\d{1,2})(\\s+days?)?\\b",
+                    m -> s.setInt("excludeNarrowRangeDays", m.group(4), 3, 20, m));
+            s.match("\\b(after\\s+)?(an?\\s+)?nr\\s*-?(\\d{1,2})(\\s+days?)?\\b",
+                    m -> s.setInt("narrowRangeDays", m.group(3), 2, 20, m));
+            s.match("\\b(when\\s+)?" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\s+(was|is)\\s+the\\s+(smallest|narrowest|lowest)\\s+(of|in)\\s+the\\s+last\\s+(?<n>\\d{1,2})\\s+(sessions|days|trading\\s+days)\\b",
+                    m -> s.setInt("narrowRangeDays", m.group("n"), 2, 20, m));
             s.builtin("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\b", "Yesterday's high-low range");
         }
         // ── Gap fill: after an opening gap, trade back towards yesterday's close once price re-enters the gap (GapFillEngine) ──
@@ -243,6 +281,11 @@ public class StrategyDescriptionParser {
                 if (ce && !pe) s.match("\\b(buy|long)?\\s*(ce|calls?)\\b", m -> s.set("directions", "CE", m, "Only CE (calls) mentioned"));
                 else if (pe && !ce) s.match("\\b(buy|long)?\\s*(pe|puts?)\\b", m -> s.set("directions", "PE", m, "Only PE (puts) mentioned"));
             }
+            // The previous-day engine defaults to PE (older PE-only strategies): name both sides and it trades both.
+            if (ce && pe && prevDay && !s.params.containsKey("directions")) {
+                s.params.put("directions", "BOTH");
+                s.findings.add(new Finding("directions", "BOTH", "CE and PE", "Both sides: CE above yesterday's high, PE below yesterday's low"));
+            }
         }
 
         // Quantity
@@ -322,6 +365,13 @@ public class StrategyDescriptionParser {
             }
         }
 
+        if (cpr || emaCross) {
+            // These engines take their stop from the pivot / the last candles and trade any opening: drop what they ignore.
+            for (String k : List.of("gapFilter", "gapPct", "gapPoints", "maxGapPct", "maxGapPoints", "initialStop", "referenceMinutes"))
+                if (s.params.remove(k) != null)
+                    s.warnings.add("\"" + k + "\" is not used by the " + (cpr ? "CPR" : "EMA crossover") + " strategy and was dropped");
+        }
+
         if ("GAP_FILL".equals(s.params.get("referenceMode"))) {
             // The gap-fill engine trades both gap directions by itself and stops at the 09:15 candle: drop what it ignores.
             String gf = s.params.remove("gapFilter");
@@ -343,11 +393,12 @@ public class StrategyDescriptionParser {
         s.match("\\b(entr(y|ies)|enter|trades?)\\s+(only\\s+)?(from|between)\\s+" + TIME + "\\s*(until|till|to|and|-|–)\\s*" + TIME,
                 m -> { s.setTime("entryFrom", m.group(5), m); s.setTime("entryUntil", m.group(7), m); });
         s.match("\\b(no\\s+(new\\s+)?(entr(y|ies)|trades?)|don'?t\\s+enter|do\\s+not\\s+enter|stop\\s+(taking\\s+)?entries)\\s+(after|from|beyond)\\s+" + TIME, m -> s.setTime("entryUntil", m.group(7), m));
+        // "No entries before 09:45" is a start time; read it before "entries before 14:00" takes it as a cut-off.
+        s.match("\\b(no\\s+(entr(y|ies)|trades?)|don'?t\\s+enter)\\s+before\\s+" + TIME, m -> s.setTime("entryFrom", m.group(4), m));
         s.match("\\b(entr(y|ies)|enter|trades?)\\s+(only\\s+)?(until|till|before|by)\\s+" + TIME, m -> s.setTime("entryUntil", m.group(5), m));
         s.match("\\b(on\\s+)?(5[- ]?min(ute)?\\s+)?(candles?|bars?)\\s+(starting|that\\s+start|which\\s+start)\\s+(before|by)\\s+" + TIME, m -> s.setTime("entryUntil", m.group(7), m));
         s.match("\\b(on\\s+)?(5[- ]?min(ute)?\\s+)?(candles?|bars?)\\s+(starting|that\\s+start|which\\s+start)\\s+(at\\s+or\\s+after|from|after)\\s+" + TIME, m -> s.setTime("entryFrom", m.group(7), m));
         s.match("\\b(entr(y|ies)|enter|trades?)\\s+(only\\s+)?(from|after|not\\s+before)\\s+" + TIME, m -> s.setTime("entryFrom", m.group(5), m));
-        s.match("\\b(no\\s+(entr(y|ies)|trades?)|don'?t\\s+enter)\\s+before\\s+" + TIME, m -> s.setTime("entryFrom", m.group(4), m));
         s.match("\\b(wait|start)\\s+(until|till|from)\\s+" + TIME, m -> s.setTime("entryFrom", m.group(3), m));
 
         // Breakeven, failed breakout, stop cap
@@ -413,7 +464,20 @@ public class StrategyDescriptionParser {
             case "FLAT" -> n.append(" Flat-Open");
             default -> { }
         }
-        if ("PREVIOUS_DAY".equals(p.get("referenceMode"))) n.append(" Prev-Day");
+        if ("PREVIOUS_DAY".equals(p.get("referenceMode"))) {
+            n.append(" Prev-Day");
+            if (p.containsKey("narrowRangeDays")) n.append(" NR").append(p.get("narrowRangeDays"));
+            if (p.containsKey("excludeNarrowRangeDays")) n.append(" not NR").append(p.get("excludeNarrowRangeDays"));
+        }
+        else if ("CPR".equals(p.get("referenceMode")) || "EMA_CROSS".equals(p.get("referenceMode"))) {
+            if ("CPR".equals(p.get("referenceMode")))
+                n.append(p.containsKey("maxCprWidthPct") ? " Narrow-CPR" : " CPR").append(" Breakout");
+            else n.append(" EMA ").append(p.getOrDefault("fastEma", "9")).append("/").append(p.getOrDefault("slowEma", "21")).append(" Cross");
+            if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
+            if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
+            if (p.containsKey("lots")) n.append(" - ").append(p.get("lots")).append(" lots");
+            return n.toString();
+        }
         else if ("GAP_FILL".equals(p.get("referenceMode"))) {
             n.append(dir.equals("PE") ? " Gap-Up Fill" : dir.equals("CE") ? " Gap-Down Fill" : " Gap Fill");
             String f = p.getOrDefault("gapFillTarget", "0.5");

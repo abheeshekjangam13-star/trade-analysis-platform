@@ -112,10 +112,6 @@ public class StrategyService {
             try {
                 var p = new com.tradeanalysis.common.indicator.Params(new java.util.HashMap<>(clean));
                 com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine.validateParams(p);
-                if (com.tradeanalysis.strategy.engine.PreviousRangeEngine.handles(p))
-                    com.tradeanalysis.strategy.engine.PreviousRangeEngine.validateParams(p);
-                if (com.tradeanalysis.strategy.engine.GapFillEngine.handles(p))
-                    com.tradeanalysis.strategy.engine.GapFillEngine.validateParams(p);
             } catch (IllegalArgumentException e) {
                 throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
                         "Invalid parameters: " + e.getMessage());

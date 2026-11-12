@@ -205,4 +205,82 @@ class PreviousRangeEngineTest {
         assertThat(PreviousRangeEngine.handles(params(Map.of()))).isTrue();
         assertThat(PreviousRangeEngine.handles(new Params(Map.of("referenceMode", "REFERENCE_CANDLE")))).isFalse();
     }
+
+    // ── Narrow-range filter (NR4 / NR7) ──
+
+    static final LocalDate NR_DAY = LocalDate.of(2026, 10, 28);
+
+    /** Seven sessions before NR_DAY with these high-low ranges, oldest first; each session is centred on 24,100. */
+    static List<Candle> sessions(double... ranges) {
+        List<Candle> out = new java.util.ArrayList<>();
+        for (int k = 0; k < ranges.length; k++) {
+            LocalDate d = NR_DAY.minusDays(ranges.length - k);
+            double hi = 24100 + ranges[k] / 2, lo = 24100 - ranges[k] / 2;
+            out.add(c(d, 9, 15, 24100, hi, lo, 24100));
+            out.add(c(d, 15, 25, 24100, 24100, 24100, 24100));
+        }
+        return out;
+    }
+
+    /** NR_DAY opens 24,100 inside yesterday's range and closes above its high at 09:25; the next minute hits +20. */
+    static NiftyOpeningBreakoutEngine.BreakoutResult nrRun(List<Candle> history, Map<String, String> extra) {
+        double yHigh = history.get(history.size() - 2).high().doubleValue();
+        List<Candle> five = new java.util.ArrayList<>(history);
+        five.add(c(NR_DAY, 9, 15, 24100, 24105, 24095, 24100));
+        five.add(c(NR_DAY, 9, 20, 24100, 24105, 24095, 24100));
+        five.add(c(NR_DAY, 9, 25, 24100, yHigh + 6, 24099, yHigh + 5));
+        List<Candle> one = List.of(c(NR_DAY, 9, 30, yHigh + 5, yHigh + 30, yHigh + 4, yHigh + 28));
+        java.util.HashMap<String, String> p = new java.util.HashMap<>(Map.of("directions", "BOTH", "targetPoints", "20"));
+        p.putAll(extra);
+        return new PreviousRangeEngine().run(new PriceSeries("NIFTY 50", Interval.MINUTE_5, five),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, one), params(p), 7L, NOW, NR_DAY);
+    }
+
+    @Test
+    void nr7TradesWhenYesterdaysRangeIsTheSmallestOfTheLastSevenSessions() {
+        var r = nrRun(sessions(300, 280, 260, 240, 220, 200, 100), Map.of("narrowRangeDays", "7"));
+        assertThat(r.tradeLogs()).hasSize(1);
+        NiftyTradeLog t = r.tradeLogs().get(0);
+        assertThat(t.getOptionType()).isEqualTo("CE");
+        assertThat(t.getEntrySpotPrice()).isEqualTo(24155.0);       // yesterday's high 24,150 + 5
+        assertThat(t.getExitReason()).isEqualTo("TARGET_HIT");
+    }
+
+    @Test
+    void nr7SkipsTheDayWhenAnEarlierSessionWasNarrower() {
+        var r = nrRun(sessions(300, 80, 260, 240, 220, 200, 100), Map.of("narrowRangeDays", "7"));
+        assertThat(r.tradeLogs()).isEmpty();
+        assertThat(r.days()).anySatisfy(d -> {
+            assertThat(d.date()).isEqualTo(NR_DAY);
+            assertThat(d.status()).isEqualTo("NO_TRADE");
+            assertThat(d.reason()).contains("not NR7");
+        });
+        // Only the last four sessions count for NR4, so the narrow one six days back does not matter.
+        assertThat(nrRun(sessions(300, 80, 260, 240, 220, 200, 100), Map.of("narrowRangeDays", "4")).tradeLogs()).hasSize(1);
+    }
+
+    @Test
+    void nr4NotNr7LeavesNr7DaysToTheOtherStrategy() {
+        var nr7Day = nrRun(sessions(300, 280, 260, 240, 220, 200, 100), Map.of("narrowRangeDays", "4", "excludeNarrowRangeDays", "7"));
+        assertThat(nr7Day.tradeLogs()).isEmpty();
+        assertThat(nr7Day.days()).anySatisfy(d -> assertThat(d.reason()).contains("also an NR7"));
+        var nr4Only = nrRun(sessions(300, 80, 260, 240, 220, 200, 100), Map.of("narrowRangeDays", "4", "excludeNarrowRangeDays", "7"));
+        assertThat(nr4Only.tradeLogs()).hasSize(1);
+    }
+
+    @Test
+    void narrowRangeNeedsEnoughHistoryAndValidSettings() {
+        var r = nrRun(sessions(200, 100), Map.of("narrowRangeDays", "7"));
+        assertThat(r.tradeLogs()).isEmpty();
+        assertThat(r.days()).anySatisfy(d -> assertThat(d.status()).isEqualTo("NO_DATA"));
+        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(params(Map.of("narrowRangeDays", "1"))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(params(Map.of("excludeNarrowRangeDays", "7"))))
+                .hasMessageContaining("needs narrowRangeDays");
+        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(params(Map.of("narrowRangeDays", "7", "excludeNarrowRangeDays", "4"))))
+                .hasMessageContaining("above narrowRangeDays");
+        // Enough calendar days of history are loaded for seven sessions.
+        assertThat(NiftyOpeningBreakoutEngine.warmupDays(params(Map.of("narrowRangeDays", "7")))).isGreaterThanOrEqualTo(20);
+        assertThat(NiftyOpeningBreakoutEngine.warmupDays(params(Map.of()))).isEqualTo(7);
+    }
 }
