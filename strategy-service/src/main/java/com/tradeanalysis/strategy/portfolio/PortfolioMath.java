@@ -21,6 +21,31 @@ final class PortfolioMath {
      */
     record CapitalUse(Double avg, Double max, Double peak, LocalDate peakOn, boolean ivAssumed) {}
 
+    /**
+     * The capital that would have taken every trade (left-out ones too) at the lots its strategy asked for: the most
+     * estimated premium open at once, walking entries (+) and exits (−) as {@link #capitalUse} does. Needs each trade's
+     * estimated entry premium (trades without one are left out); null when none has one.
+     */
+    static Double capitalToFitAll(List<NiftyTradeLog> trades) {
+        record Event(Instant at, double delta) {}
+        List<Event> events = new ArrayList<>();
+        for (NiftyTradeLog t : trades) {
+            if (t.getEstEntryPremium() == null || t.getEstEntryPremium() <= 0) continue;
+            int asked = t.getRequestedLots() > 0 ? t.getRequestedLots() : t.getLots();
+            double amount = t.getEstEntryPremium() * t.getLotSize() * asked;
+            Instant in = t.getEntryTimestamp() != null ? t.getEntryTimestamp()
+                    : t.getTradeDate().atTime(9, 20).atZone(IST).toInstant();
+            Instant out = t.getExitTimestamp() != null ? t.getExitTimestamp() : in.plusSeconds(60);
+            events.add(new Event(in, amount));
+            events.add(new Event(out, -amount));
+        }
+        if (events.isEmpty()) return null;
+        events.sort(Comparator.comparing(Event::at).thenComparingDouble(Event::delta));
+        double open = 0, peak = 0;
+        for (Event e : events) { open += e.delta(); peak = Math.max(peak, open); }
+        return (double) Math.round(peak);
+    }
+
     /** The capital in use at once is found by walking entries (+) and exits (−); an exit at the same instant frees capital first. */
     static CapitalUse capitalUse(List<NiftyTradeLog> trades) {
         List<NiftyTradeLog> used = trades.stream().filter(t -> t.getCapitalUsed() != null).toList();

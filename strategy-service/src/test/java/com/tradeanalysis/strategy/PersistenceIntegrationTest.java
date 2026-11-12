@@ -134,6 +134,27 @@ class PersistenceIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM backtest_result WHERE id = ?", Integer.class, oldBacktest)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM nifty_trade_log WHERE backtest_result_id = ?", Integer.class, oldBacktest)).isZero();
 
+        // A capital too small for some trades (the in-the-money one costs more than ₹1,000 a lot; the far out-of-the-money
+        // ones are cheap): the report leaves those out, and the stored trades say which (and carry the capital their
+        // backtest ran with), so the Trades page can show them as skipped.
+        JsonNode tiny = call(post("/api/portfolios/" + portfolio.get("id").asText() + "/reports")
+                .param("windows", "30").param("capital", "1000"), 201);
+        int left = tiny.get(0).get("skippedTrades").asInt();
+        assertThat(left).isPositive();
+        assertThat(tiny.get(0).get("trades").asInt() + left).isEqualTo(3);
+        assertThat(tiny.get(0).get("capitalToFitAll").asDouble()).isGreaterThan(1000);   // what would fit them all
+        JsonNode tinyTrades = call(get("/api/nifty-trades/backtest/" + tiny.get(0).get("items").get(0).get("backtestResultId").asText()), 200);
+        assertThat(tinyTrades).hasSize(3);
+        List<String> reasons = new java.util.ArrayList<>();
+        tinyTrades.forEach(t -> reasons.add(t.path("skipReason").isNull() || t.path("skipReason").isMissingNode() ? "TAKEN" : t.get("skipReason").asText()));
+        assertThat(reasons).filteredOn("CAPITAL"::equals).hasSize(left);
+        assertThat(reasons).filteredOn("TAKEN"::equals).hasSize(3 - left);
+        assertThat(tinyTrades.get(0).get("backtestCapital").asDouble()).isEqualTo(1000.0);
+        // A report with room for every trade marks none.
+        JsonNode roomy = call(get("/api/nifty-trades/backtest/" + rerun.get(0).get("items").get(0).get("backtestResultId").asText()), 200);
+        assertThat(roomy.findValues("skipReason")).allMatch(JsonNode::isNull);
+        assertThat(roomy.get(0).get("backtestCapital").asDouble()).isEqualTo(50000.0);
+
         // Users and roles APIs (managing users needs an ADMIN).
         call(post("/api/users").content("{\"username\":\"ravi\"}"), 403);
         jdbc.update("INSERT INTO app_user_role (user_id, role_id) SELECT u.id, r.id FROM app_user u, app_role r WHERE u.username = 'abheeshek' AND r.name = 'ADMIN'");

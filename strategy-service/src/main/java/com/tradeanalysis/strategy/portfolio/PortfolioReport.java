@@ -29,6 +29,8 @@ public class PortfolioReport {
     private int skippedTrades;
     private Double peakCapitalUsed, avgCapitalUsed, maxCapitalUsed;
     private LocalDate peakCapitalOn;
+    /** Capital that would have taken every trade at full lots (the most premium open at once); see PortfolioMath. */
+    private Double capitalToFitAll;
     private Boolean ivAssumed;
     private Long runByUserId;
     @Column(nullable = false) private Instant createdAt = Instant.now();
@@ -76,6 +78,8 @@ public class PortfolioReport {
     public Double getMaxCapitalUsed()       { return maxCapitalUsed; }
     public LocalDate getPeakCapitalOn()     { return peakCapitalOn; }
     public Boolean getIvAssumed()           { return ivAssumed; }
+    public Double getCapitalToFitAll()      { return capitalToFitAll; }
+    void setCapitalToFitAll(Double amount)  { this.capitalToFitAll = amount; }
     public Long getRunByUserId()            { return runByUserId; }
     public Instant getCreatedAt()           { return createdAt; }
     public List<PortfolioReportItem> getItems() { return items; }

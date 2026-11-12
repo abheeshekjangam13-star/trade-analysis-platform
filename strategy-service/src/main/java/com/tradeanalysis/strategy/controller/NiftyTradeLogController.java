@@ -24,12 +24,17 @@ public class NiftyTradeLogController {
         this.svc = svc; this.estimates = estimates; this.backtests = backtests;
     }
 
-    /** Adds each trade's estimated option premium and capital used (vs its backtest's capital); see OptionEstimates. */
+    /**
+     * Adds each trade's backtest capital, estimated option premium and capital used (vs that capital); see
+     * OptionEstimates. The same trade is stored once per backtest, and backtests run with different capitals size it
+     * with different lots, so callers need the capital to tell those copies apart.
+     */
     private List<NiftyTradeLog> withCapital(List<NiftyTradeLog> trades) {
         java.util.Set<Long> ids = new java.util.HashSet<>();
         for (NiftyTradeLog t : trades) if (t.getBacktestResultId() != null) ids.add(t.getBacktestResultId());
         java.util.Map<Long, Double> capital = new java.util.HashMap<>();
         backtests.findAllById(ids).forEach(b -> capital.put(b.getId(), b.getInitialCapital()));
+        for (NiftyTradeLog t : trades) if (t.getBacktestResultId() != null) t.setBacktestCapital(capital.get(t.getBacktestResultId()));
         estimates.estimate(trades, capital);
         return trades;
     }

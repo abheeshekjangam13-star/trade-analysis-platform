@@ -19,11 +19,14 @@ public class CapitalFit {
 
     public CapitalFit(OptionEstimates estimates) { this.estimates = estimates; }
 
-    /** The trades that fit (resized to the free capital at each entry) and how many were skipped for lack of capital. */
-    public record Fit(List<NiftyTradeLog> kept, int skipped) {}
+    /** The trades that fit (resized to the free capital at each entry) and the trades left out for lack of capital. */
+    public record Fit(List<NiftyTradeLog> kept, List<NiftyTradeLog> left) {
+        /** How many trades were left out. */
+        public int skipped() { return left.size(); }
+    }
 
     public Fit fit(List<NiftyTradeLog> trades, double capital) {
-        if (trades.isEmpty() || capital <= 0) return new Fit(trades, 0);
+        if (trades.isEmpty() || capital <= 0) return new Fit(trades, List.of());
         estimates.estimate(trades, Map.of());   // premiums per unit (the lot count does not change them)
         List<NiftyTradeLog> ordered = new ArrayList<>(trades);
         ordered.sort(Comparator.comparing(NiftyTradeLog::getEntryTimestamp));
@@ -31,21 +34,21 @@ public class CapitalFit {
         PriorityQueue<Held> open = new PriorityQueue<>(Comparator.comparing(Held::exit));
         double committed = 0;
         List<NiftyTradeLog> kept = new ArrayList<>();
-        int skipped = 0;
+        List<NiftyTradeLog> left = new ArrayList<>();
         for (NiftyTradeLog t : ordered) {
             Instant entry = t.getEntryTimestamp();
             while (!open.isEmpty() && !open.peek().exit().isAfter(entry)) committed -= open.poll().amount();
             double perLot = t.getEstEntryPremium() * t.getLotSize();
             int fits = perLot > 0 ? (int) Math.floor((capital - committed) / perLot + 1e-9) : t.getRequestedLots();
             int lots = Math.min(t.getRequestedLots(), fits);   // from what was asked for, so a trade can be fitted again
-            if (lots < 1) { skipped++; continue; }   // not even one lot is free at this entry: skip the trade
+            if (lots < 1) { left.add(t); continue; }   // not even one lot is free at this entry: skip the trade
             t.resize(lots);
             double amount = perLot * lots;
             committed += amount;
             open.add(new Held(exitOf(t), amount));
             kept.add(t);
         }
-        return new Fit(kept, skipped);
+        return new Fit(kept, left);
     }
 
     private static Instant exitOf(NiftyTradeLog t) {

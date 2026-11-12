@@ -46,7 +46,8 @@ public class CapitalUsageController {
         List<NiftyTradeLog> trades = new ArrayList<>();
         Map<Long, Double> capitals = new HashMap<>();
         for (Long id : new LinkedHashSet<>(ids)) {
-            trades.addAll(strategies.getNiftyTradeLogs(id));   // checks the caller may see it (else 404)
+            // checks the caller may see it (else 404); trades a portfolio left out for capital used none
+            strategies.getNiftyTradeLogs(id).stream().filter(t -> t.getSkipReason() == null).forEach(trades::add);
             capitals.put(id, capital);
         }
         estimates.estimate(trades, capitals);
@@ -80,7 +81,8 @@ public class CapitalUsageController {
         if (ids.size() > MAX_IDS) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At most " + MAX_IDS + " backtests at a time");
         List<Usage> out = new ArrayList<>();
         for (Long id : new LinkedHashSet<>(ids)) {
-            List<NiftyTradeLog> trades = strategies.getNiftyTradeLogs(id);   // checks the caller may see it (else 404)
+            List<NiftyTradeLog> trades = strategies.getNiftyTradeLogs(id).stream()   // checks the caller may see it (else 404)
+                    .filter(t -> t.getSkipReason() == null).toList();                   // left out for capital: none used
             double capital = backtests.findById(id).map(b -> b.getInitialCapital()).orElse(0.0);
             estimates.estimate(trades, Map.of(id, capital));
             DoubleSummaryStatistics s = trades.stream().filter(t -> t.getCapitalUsed() != null)

@@ -40,6 +40,7 @@ public class NiftyTradeLog {
     private Instant exitTimestamp;
     private double exitSpotPrice;
     private String exitReason;      // SL_HIT / TARGET_HIT / EOD_SQUAREOFF
+    private String skipReason;      // null = taken; CAPITAL = a portfolio report left it out (no capital free at entry)
 
     // Indicative P&L using spot delta × lotSize × lots × 0.5 (ATM delta ≈ 0.5), minus charges
     private double estimatedPnl;
@@ -145,6 +146,7 @@ public class NiftyTradeLog {
     @Transient private Double capitalUsedPct;    // of the backtest's capital
     @Transient private Double estIv;             // volatility used (India VIX / 100)
     @Transient private Boolean ivAssumed;        // true when India VIX wasn't available
+    @Transient private Double backtestCapital;   // capital the trade's backtest ran with (lots were sized to it)
 
     public void estimated(double premium, Double capital, double iv, boolean assumed) {
         this.estEntryPremium = Math.round(premium * 100) / 100.0;
@@ -160,4 +162,9 @@ public class NiftyTradeLog {
     public Double getCapitalUsedPct()     { return capitalUsedPct; }
     public Double getEstIv()              { return estIv; }
     public Boolean getIvAssumed()         { return ivAssumed; }
+    public Double getBacktestCapital()    { return backtestCapital; }
+    public String getSkipReason()         { return skipReason; }
+    /** Marks the trade as left out (e.g. CAPITAL: not even one lot was free at its entry); its P&L is what it would have made. */
+    public void markSkipped(String reason) { this.skipReason = reason; }
+    public void setBacktestCapital(Double capital) { this.backtestCapital = capital; }
 }

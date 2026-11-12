@@ -42,6 +42,7 @@ class CapitalFitPortfolioTest {
         assertThat(result.kept()).containsExactly(ofA);
         assertThat(ofA.getLots()).isEqualTo(2);
         assertThat(result.skipped()).isEqualTo(1);
+        assertThat(result.left()).containsExactly(ofB);   // kept so the Trades page can show it as skipped
     }
 
     @Test

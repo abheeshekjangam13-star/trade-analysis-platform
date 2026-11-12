@@ -152,17 +152,36 @@ public class PortfolioService {
             }
             com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(all, capital);
             List<NiftyTradeLog> kept = fit.kept();
+            storeFit(kept, fit.left());
             List<PortfolioReportItem> items = new ArrayList<>();
             for (Map.Entry<Long, Long> e : strategyOfBacktest.entrySet()) {
                 List<NiftyTradeLog> mine = kept.stream().filter(t -> e.getKey().equals(t.getBacktestResultId())).toList();
                 items.add(new PortfolioReportItem(e.getValue(), e.getKey(), PortfolioMath.summarize(mine)));
             }
-            PortfolioReport report = reports.save(new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
-                    capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items));
+            PortfolioReport made = new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
+                    capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items);
+            made.setCapitalToFitAll(PortfolioMath.capitalToFitAll(all));   // kept and left out, at the lots asked for
+            PortfolioReport report = reports.save(made);
             replaceOlderReports(report);
             saved.add(report);
         }
         return saved;
+    }
+
+    /**
+     * Stores the portfolio's capital fit on its trades, so the Trades page shows what the report counted: the lots (and
+     * P&L) each kept trade was taken with, and the trades left out for lack of capital, marked CAPITAL. The backtests a
+     * report runs are its own (fresh per run), so this changes no other report.
+     */
+    private void storeFit(List<NiftyTradeLog> kept, List<NiftyTradeLog> left) {
+        List<Object[]> rows = new ArrayList<>();
+        for (NiftyTradeLog t : kept) rows.add(new Object[]{t.getLots(), t.getEstimatedPnl(), null, t.getId()});
+        for (NiftyTradeLog t : left) {
+            t.markSkipped("CAPITAL");
+            rows.add(new Object[]{t.getLots(), t.getEstimatedPnl(), "CAPITAL", t.getId()});
+        }
+        if (!rows.isEmpty())
+            jdbc.batchUpdate("UPDATE nifty_trade_log SET lots = ?, estimated_pnl = ?, skip_reason = ? WHERE id = ?", rows);
     }
 
     /**

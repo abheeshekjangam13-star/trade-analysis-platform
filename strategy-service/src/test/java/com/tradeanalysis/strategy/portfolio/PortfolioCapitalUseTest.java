@@ -46,4 +46,16 @@ class PortfolioCapitalUseTest {
         assertThat(use.peak()).isNull();
         assertThat(use.avg()).isNull();
     }
+
+    @Test
+    void theCapitalToFitAllCountsEveryTradeAtTheLotsItAskedFor() {
+        // A asked for 2 lots but was cut to 1; B was left out. At full size they overlap: 26,000 + 13,000 = 39,000.
+        NiftyTradeLog a = trade(9, 20, 10, 0, 200, 2);
+        a.resize(1);
+        NiftyTradeLog b = trade(9, 30, 10, 30, 200, 1);
+        b.markSkipped("CAPITAL");
+        NiftyTradeLog c = trade(10, 45, 11, 0, 200, 1);
+        assertThat(PortfolioMath.capitalToFitAll(List.of(a, b, c))).isEqualTo(39_000.0);
+        assertThat(PortfolioMath.capitalToFitAll(List.of())).isNull();
+    }
 }
