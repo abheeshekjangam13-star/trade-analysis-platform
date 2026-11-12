@@ -95,7 +95,7 @@ class OrderSafetyTest {
         jdbc.update("INSERT INTO app_user_role (user_id, role_id) SELECT u.id, r.id FROM app_user u, app_role r WHERE u.username = 'boss' AND r.name = 'ADMIN'");
         JsonNode o = call(post("/api/trading/orders").content(order("LIVE", "BUY", 65)), "boss", 201);
         assertThat(o.get("status").asText()).isEqualTo("REJECTED");
-        assertThat(o.get("message").asText()).contains("Live trading is disabled");
+        assertThat(o.get("message").asText()).contains("Live trading is turned off by the admin");
         verify(kite, never()).placeOrder(any());
         call(get("/api/trading/strategies"), "trader2", 200);   // registers trader2
         long id = ownBreakout("trader2", "trader2 CE");
