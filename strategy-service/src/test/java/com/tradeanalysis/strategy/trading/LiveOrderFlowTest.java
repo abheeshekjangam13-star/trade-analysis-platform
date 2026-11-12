@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.trading;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +23,9 @@ class LiveOrderFlowTest {
 
     @BeforeEach
     void liveOn() { live(true); }
+
+    @AfterEach
+    void liveOffAgain() { live(false); }   // the default, for the other tests sharing this database
 
     private void live(boolean on) {
         TradingControl c = controls.get();
