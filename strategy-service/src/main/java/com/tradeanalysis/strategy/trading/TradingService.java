@@ -26,14 +26,15 @@ public class TradingService {
     private final ObjectProvider<LiveStrategyRunner> runner;
     private final KiteAccounts accounts;
     private final com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo;
+    private final LiveOrderBilling billing;
 
     public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
                           LivePositionRepository positions, OrderService orderService, StrategyService strategies,
                           AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, KiteAccounts accounts,
-                          com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo) {
+                          com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo, LiveOrderBilling billing) {
         this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
         this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
-        this.accounts = accounts; this.strategyRepo = strategyRepo;
+        this.accounts = accounts; this.strategyRepo = strategyRepo; this.billing = billing;
     }
 
     public record StrategyMode(Long strategyId, String name, String type, String direction, TradingMode mode, String product) {}
@@ -65,6 +66,7 @@ public class TradingService {
             requireLive();
             if (!orderService.liveEnabled()) throw new TradingException(OrderService.LIVE_OFF);
         }
+        if (mode == TradingMode.LIVE && !CurrentUser.admin()) checkLivePlan(s, strategyId);
         if (mode != TradingMode.OFF && !CurrentUser.admin() && currentMaxDayLoss() == null)
             throw new TradingException("Set your max day loss first (Trading → Max day loss): it caps your loss for a day "
                     + "across all your strategies together");
@@ -91,14 +93,35 @@ public class TradingService {
             } catch (TradingException e) {
                 // Plan, live-permission and day-loss refusals hold for every strategy: report them once.
                 String reason = String.valueOf(e.getReason());
-                if (e.getStatusCode().value() == 403 || reason.startsWith("Set your max day loss")
-                        || reason.startsWith("Live trading is disabled")) throw e;
+                if (e.getStatusCode().value() == 403 || e.getStatusCode().value() == 402 || reason.startsWith("Set your max day loss")
+                        || reason.startsWith(OrderService.LIVE_OFF)) throw e;
                 skipped.add(Map.of("strategyId", id, "reason", reason));
             } catch (RuntimeException e) {
                 skipped.add(Map.of("strategyId", id, "reason", String.valueOf(e.getMessage())));
             }
         }
         return new BulkResult(changed, skipped);
+    }
+
+    /**
+     * The caller's plan limits for switching a strategy to LIVE: its lots within the plan's lots per order, and room for
+     * one more live strategy. A 400 (not 403), so "Trade all" reports the strategies that don't fit and sets the rest.
+     */
+    private void checkLivePlan(Strategy s, Long strategyId) {
+        com.tradeanalysis.strategy.user.Plan plan = CurrentUser.limitedPlan().orElse(null);
+        if (plan == null) return;
+        int lots = new com.tradeanalysis.common.indicator.Params(s.getParameters() == null ? new HashMap<String, Object>() : new HashMap<String, Object>(s.getParameters())).intOr("lots", 2);
+        if (lots > plan.maxLiveLots())
+            throw new TradingException("Your " + plan.label() + " plan trades live up to " + plan.maxLiveLots() + " lots per order and this strategy uses "
+                    + lots + ": lower its lots or upgrade");
+        Long me = CurrentUser.id().orElse(null);
+        String credit = billing.refusal(me);
+        if (credit != null) throw new TradingException(HttpStatus.PAYMENT_REQUIRED, credit);
+        long live = configs.findByUserId(me).stream()
+                .filter(c -> c.getMode() == TradingMode.LIVE && !c.getStrategyId().equals(strategyId)).count();
+        if (live >= plan.maxLiveStrategies())
+            throw new TradingException("Your " + plan.label() + " plan allows " + plan.maxLiveStrategies() + " strategies trading live at once: "
+                    + "switch one off or upgrade");
     }
 
     /** The caller's own max day loss (null = not set). */

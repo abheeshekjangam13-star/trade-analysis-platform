@@ -38,12 +38,15 @@ public class OrderService {
     private final KiteAccounts accounts; // the order owner's own account: live orders
     private final Clock clock;
     private final com.tradeanalysis.strategy.user.AppUserRepository users;
+    private final StrategyLiveConfigRepository configs;
+    private final LiveOrderBilling billing;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
                         KiteApi kite, KiteAccounts accounts, Clock clock,
-                        com.tradeanalysis.strategy.user.AppUserRepository users) {
+                        com.tradeanalysis.strategy.user.AppUserRepository users, StrategyLiveConfigRepository configs,
+                        LiveOrderBilling billing) {
         this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
-        this.clock = clock; this.users = users;
+        this.clock = clock; this.users = users; this.configs = configs; this.billing = billing;
     }
 
     /** Whether live trading is on for the platform: an admin switches it on the Trading page (off by default). */
@@ -62,6 +65,9 @@ public class OrderService {
         validate(r, mode);
         TradeOrder order = orders.save(new TradeOrder(today(), mode, source, strategyId, r, userId));
         String refusal = reducing ? null : refusal(r, mode, userId);
+        if (refusal == null && !reducing && mode == TradingMode.LIVE) refusal = planRefusal(r, userId, strategyId);
+        // Live trading needs credit first: included orders or credits for the next order (exits are never charged).
+        if (refusal == null && !reducing && mode == TradingMode.LIVE) refusal = billing.refusal(userId);
         // Off stops new live risk only: orders that close a position (exits, kill switch) still go out.
         if (refusal == null && !reducing && mode == TradingMode.LIVE && !liveEnabled()) refusal = LIVE_OFF;
         if (refusal != null) {
@@ -78,6 +84,10 @@ public class OrderService {
                 String id = accounts.forUser(userId).placeOrder(new KiteApi.PlaceOrder(r.exchange(), r.tradingsymbol(), r.transactionType(), r.quantity(),
                         r.product(), r.orderType(), r.price(), r.triggerPrice(), "TAP" + (strategyId == null ? "M" : strategyId)));
                 order.placed(id, "Sent to Kite");
+                if (!reducing) {
+                    try { billing.charge(userId, order.getId()); }
+                    catch (RuntimeException e) { log.error("BILLING charge failed order={} user={}: {}", order.getId(), userId, e.getMessage(), e); }
+                }
                 log.info("ORDER_LIVE id={} kite={} {} {} x{}", order.getId(), id, r.transactionType(), r.tradingsymbol(), r.quantity());
             } catch (RuntimeException e) {
                 order.reject(e.getMessage());
@@ -102,6 +112,7 @@ public class OrderService {
                 KiteApi.BrokerOrder b = accounts.forUser(o.getUserId()).order(o.getBrokerOrderId());
                 o.update(mapStatus(b.status()), b.filledQuantity(), b.averagePrice(), b.statusMessage());
                 orders.save(o);
+                if (o.getStatus() == TradeOrder.Status.REJECTED) billing.refund(o.getId());   // Kite refused it after all: not charged
             } catch (RuntimeException e) {
                 log.warn("ORDER_SYNC_FAILED id={} kite={}: {}", o.getId(), o.getBrokerOrderId(), e.getMessage());
             }
@@ -197,6 +208,40 @@ public class OrderService {
         if (limit == null || limit <= 0) return null;
         double pnl = dayPnl(mode, userId);
         return pnl <= -limit ? String.format("Your max day loss is reached (today %.0f, limit %.0f): no new entries today", pnl, limit) : null;
+    }
+
+    /**
+     * Why the user's plan refuses this new live order, or null: more lots than the plan allows per order (from the
+     * option's lot size), or, for a strategy's entry, a strategy beyond the plan's number of live strategies (the
+     * user's LIVE strategies in id order; e.g. after a downgrade, the later ones stop entering). Admins: no limit.
+     */
+    String planRefusal(OrderRequest r, Long userId, Long strategyId) {
+        if (userId == null) return null;
+        com.tradeanalysis.strategy.user.AppUser u = users.findById(userId).orElse(null);
+        if (u == null || u.isAdmin()) return null;
+        com.tradeanalysis.strategy.user.Plan plan = u.effectivePlan(clock.instant());
+        int lotSize = lotSizeOf(r.tradingsymbol());
+        if (lotSize > 0 && r.quantity() > plan.maxLiveLots() * lotSize)
+            return "Your " + plan.label() + " plan trades live up to " + plan.maxLiveLots() + " lot" + (plan.maxLiveLots() == 1 ? "" : "s")
+                    + " per order (" + plan.maxLiveLots() * lotSize + " quantity); this order is " + r.quantity() + ". Lower the lots or upgrade.";
+        if (strategyId != null) {
+            List<Long> live = configs.findByUserId(userId).stream().filter(c -> c.getMode() == TradingMode.LIVE)
+                    .map(StrategyLiveConfig::getStrategyId).sorted().toList();
+            int at = live.indexOf(strategyId);
+            if (at >= plan.maxLiveStrategies())
+                return "Your " + plan.label() + " plan allows " + plan.maxLiveStrategies() + " strategies trading live at once and you have "
+                        + live.size() + " set to LIVE: switch some off or upgrade";
+        }
+        return null;
+    }
+
+    /** Contracts per lot of an NFO option symbol (NIFTY…, BANKNIFTY…), or 0 when unknown. */
+    static int lotSizeOf(String tradingsymbol) {
+        if (tradingsymbol == null) return 0;
+        String s = tradingsymbol.toUpperCase(java.util.Locale.ROOT);
+        if (s.startsWith("BANKNIFTY")) return com.tradeanalysis.common.market.Underlying.BANKNIFTY.defaultLotSize;
+        if (s.startsWith("NIFTY")) return com.tradeanalysis.common.market.Underlying.NIFTY.defaultLotSize;
+        return 0;
     }
 
     /** Limits count each user's own orders and P&L (each user trades live on their own Kite account). */

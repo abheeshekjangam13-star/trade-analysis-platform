@@ -67,6 +67,16 @@ public class EmailService {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
+    public void liveOrdersLow(AppUser u, int left, int granted, long creditPaise, long pricePaise) {
+        queue(u, EmailNotification.Kind.LIVE_ORDERS_LOW, UserEmails.liveOrdersLow(u, left, granted, creditPaise, pricePaise, appUrl));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void creditsAdded(AppUser u, long amountPaise, String paymentId, long balancePaise, long pricePaise) {
+        queue(u, EmailNotification.Kind.CREDITS_ADDED, UserEmails.creditsAdded(u, amountPaise, paymentId, balancePaise, pricePaise, appUrl));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
     public void planChanged(AppUser u, Plan from) { queue(u, EmailNotification.Kind.PLAN_CHANGED, UserEmails.planChanged(u, from, appUrl)); }
 
     @Transactional(propagation = Propagation.MANDATORY)

@@ -20,6 +20,7 @@ public class PaymentController {
     private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
 
     public record OrderRequest(Plan plan) {}
+    public record CreditsRequest(Integer amount) {}
     public record VerifyRequest(String orderId, String paymentId, String signature) {}
 
     private final PaymentService payments;
@@ -35,6 +36,13 @@ public class PaymentController {
     @Operation(summary = "Start paying for a plan: creates a Razorpay order to open Checkout with")
     public PaymentService.Checkout create(@RequestBody OrderRequest body) {
         return payments.createOrder(body == null ? null : body.plan());
+    }
+
+    @PostMapping("/credits")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Start adding credits for live orders (₹100–₹50,000): creates a Razorpay order to open Checkout with")
+    public PaymentService.Checkout credits(@RequestBody CreditsRequest body) {
+        return payments.createCreditOrder(body == null ? null : body.amount());
     }
 
     @PostMapping("/verify")

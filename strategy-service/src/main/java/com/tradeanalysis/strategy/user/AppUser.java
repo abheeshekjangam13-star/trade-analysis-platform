@@ -114,7 +114,7 @@ public class AppUser {
 
     /** What the user may do now: admins everything; a paid plan whose expiry has passed counts as FREE. */
     public Plan effectivePlan(Instant now) {
-        if (isAdmin()) return Plan.PREMIUM;
+        if (isAdmin()) return Plan.PREMIUM_PRO;   // the highest plan (admins also skip every plan limit)
         if (plan != Plan.FREE && planExpiresAt != null && !planExpiresAt.isAfter(now)) return Plan.FREE;
         return plan;
     }

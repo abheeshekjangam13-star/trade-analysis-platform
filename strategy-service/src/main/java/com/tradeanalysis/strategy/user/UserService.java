@@ -26,12 +26,15 @@ public class UserService {
     private final com.tradeanalysis.strategy.payment.RazorpayProperties razorpay;
     private final com.tradeanalysis.strategy.payment.PaymentOrderRepository payments;
 
+    private final com.tradeanalysis.strategy.trading.LiveOrderBilling billing;
+
     public UserService(AppUserRepository users, AppRoleRepository roles, AccessLogRepository accessLogs,
                        com.tradeanalysis.strategy.notify.EmailService emails,
                        com.tradeanalysis.strategy.payment.RazorpayProperties razorpay,
-                       com.tradeanalysis.strategy.payment.PaymentOrderRepository payments) {
+                       com.tradeanalysis.strategy.payment.PaymentOrderRepository payments,
+                       com.tradeanalysis.strategy.trading.LiveOrderBilling billing) {
         this.users = users; this.roles = roles; this.accessLogs = accessLogs; this.emails = emails; this.razorpay = razorpay;
-        this.payments = payments;
+        this.payments = payments; this.billing = billing;
     }
 
     /** With online payments on, GOLD/PREMIUM sign-ups pay in Checkout first and reach the admin only after paying. */
@@ -70,6 +73,8 @@ public class UserService {
         Set<String> r = new HashSet<>();
         u.getRoles().forEach(x -> r.add(x.getName()));
         u.setPlan(r.contains("PREMIUM") ? Plan.PREMIUM : r.contains("TRADER") ? Plan.GOLD : Plan.FREE, null);   // plan follows the role
+        users.flush();
+        billing.grant(u.getId(), u.getPlan(), "account created");
         emails.accountCreated(u);
         return u;
     }
@@ -185,6 +190,7 @@ public class UserService {
         if (expiresAt == null && p == u.getPrepaidPlan() && u.getPrepaidDays() != null)
             expiresAt = Instant.now().plus(Duration.ofDays(u.getPrepaidDays()));
         applyPlan(u, p, expiresAt);
+        billing.grant(u.getId(), p, "sign-up approved");
         // The sign-up payment for a paid plan runs from approval, so its valid-until date is the plan's end.
         if (expiresAt != null) {
             final Instant end = expiresAt;
@@ -242,7 +248,10 @@ public class UserService {
         Plan before = u.getPlan();
         Instant beforeUntil = u.getPlanExpiresAt();
         applyPlan(u, plan, expiresAt);
-        if (before != plan || !java.util.Objects.equals(beforeUntil, u.getPlanExpiresAt())) emails.planChanged(u, before);
+        if (before != plan || !java.util.Objects.equals(beforeUntil, u.getPlanExpiresAt())) {
+            emails.planChanged(u, before);
+            billing.grant(u.getId(), plan, "plan set by an admin");
+        }
         return u;
     }
 
@@ -254,6 +263,7 @@ public class UserService {
     public AppUser activatePaidPlan(Long userId, Plan plan, Instant until) {
         AppUser u = get(userId);
         applyPlan(u, plan, until);
+        billing.grant(u.getId(), plan, "payment");
         return u;
     }
 

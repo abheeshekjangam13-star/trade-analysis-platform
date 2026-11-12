@@ -38,11 +38,49 @@ public class PaymentService {
     private final EmailService emails;
     private final ObjectMapper json;
     private final Clock clock;
+    private final com.tradeanalysis.strategy.trading.LiveOrderBilling billing;
+
+    /** Credits a user may buy at once, in rupees. */
+    public static final int MIN_CREDITS = 100, MAX_CREDITS = 50_000;
 
     public PaymentService(RazorpayProperties props, RazorpayApi razorpay, PaymentOrderRepository orders, UserService users,
-                          EmailService emails, ObjectMapper json, Clock clock) {
+                          EmailService emails, ObjectMapper json, Clock clock,
+                          com.tradeanalysis.strategy.trading.LiveOrderBilling billing) {
         this.props = props; this.razorpay = razorpay; this.orders = orders; this.users = users;
-        this.emails = emails; this.json = json; this.clock = clock;
+        this.emails = emails; this.json = json; this.clock = clock; this.billing = billing;
+    }
+
+    /**
+     * Credits for live orders: a Razorpay order for {@code rupees} (₹100–₹50,000) that the UI opens Checkout with. Only
+     * users whose plan includes live trading buy credits; admins are never charged.
+     */
+    @Transactional
+    public Checkout createCreditOrder(Integer rupees) {
+        requireEnabled();
+        AppUser me = me();
+        if (me.isAdmin()) throw new ResponseStatusException(HttpStatus.CONFLICT, "Admins are not charged for live orders");
+        if (!me.effectivePlan(clock.instant()).liveTrading())
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Credits are for live orders: they come with a Premium plan");
+        if (rupees == null || rupees < MIN_CREDITS || rupees > MAX_CREDITS)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add between ₹" + MIN_CREDITS + " and ₹" + MAX_CREDITS);
+        long amount = rupees * 100L;
+        String receipt = "u" + me.getId() + "-credits-" + clock.instant().getEpochSecond();
+        RazorpayApi.Order o;
+        try {
+            o = razorpay.createOrder(amount, CURRENCY, receipt,
+                    Map.of("userId", String.valueOf(me.getId()), "username", me.getUsername(), "kind", "CREDITS"));
+        } catch (RuntimeException e) {
+            log.error("PAYMENT credits order create failed user={}: {}", me.getUsername(), e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Couldn't reach Razorpay; try again in a minute");
+        }
+        if (o.amount() != amount)
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Razorpay created an order for the wrong amount");
+        PaymentOrder saved = orders.save(PaymentOrder.credits(me.getId(), amount, CURRENCY, o.id()));
+        log.info("PAYMENT credits order created id={} rzp={} user={} amount={}", saved.getId(), o.id(), me.getUsername(), amount);
+        long orders = billing.pricePaise() > 0 ? amount / billing.pricePaise() : 0;
+        return new Checkout(saved.getId(), o.id(), amount, CURRENCY, props.keyId(), null, 0,
+                me.getFullName() == null ? me.getUsername() : me.getFullName(), me.getEmail(), me.getPhone(),
+                "Credits for " + orders + " live orders");
     }
 
     public record Checkout(Long id, String orderId, long amountPaise, String currency, String keyId, Plan plan, int days,
@@ -172,7 +210,8 @@ public class PaymentService {
                 String reason = payment.path("error_description").asText("Payment failed");
                 o.failed(paymentId, reason);
                 log.info("PAYMENT failed order={} payment={}", orderId, paymentId);
-                if (first) emails.paymentFailed(users.get(o.getUserId()), o.getPlan(), o.getAmountPaise(), reason);
+                if (first && o.getKind() == PaymentOrder.Kind.PLAN)
+                    emails.paymentFailed(users.get(o.getUserId()), o.getPlan(), o.getAmountPaise(), reason);
             }
             default -> log.info("PAYMENT webhook {} order={}: ignored", event, orderId);
         }
@@ -194,6 +233,14 @@ public class PaymentService {
             return new Outcome(o.getStatus(), o.getPlan(), o.getPlanValidUntil(), "Already activated");
         Instant now = clock.instant();
         AppUser u = users.get(o.getUserId());
+        if (o.getKind() == PaymentOrder.Kind.CREDITS) {
+            o.paid(paymentId, now, null);
+            var b = billing.add(u.getId(), 0, o.getAmountPaise(), "TOPUP", "Razorpay " + paymentId);
+            emails.creditsAdded(u, o.getAmountPaise(), paymentId, b.creditPaise(), b.pricePaise());
+            log.info("PAYMENT credits paid order={} payment={} user={} amount={}", o.getRazorpayOrderId(), paymentId, u.getUsername(), o.getAmountPaise());
+            return new Outcome(PaymentOrder.Status.PAID, null, null,
+                    "Credits added: your balance is ₹" + b.creditPaise() / 100 + " (" + b.ordersFromCredits() + " live orders)");
+        }
         if (u.getStatus() == AppUser.Status.PENDING) {   // paid at sign-up: the days start when the admin approves
             o.paid(paymentId, now, null);
             users.signupPaid(u.getId(), o.getPlan(), o.getDays(), o.getAmountPaise(), paymentId);

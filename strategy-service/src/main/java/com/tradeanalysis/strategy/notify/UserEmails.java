@@ -110,6 +110,34 @@ final class UserEmails {
                 .build();
     }
 
+    static Message liveOrdersLow(AppUser u, int left, int granted, long creditPaise, long pricePaise, String appUrl) {
+        long fromCredits = pricePaise > 0 ? creditPaise / pricePaise : 0;
+        return EmailTemplate.subject("You've used " + (granted - left) + " of your " + granted + " live orders: add credits")
+                .headline("Add credits to keep trading live")
+                .tone(Tone.WARNING)
+                .greeting(name(u))
+                .para("You've used " + (granted - left) + " of the " + granted + " live orders included with your plan, so "
+                        + left + " are left. When they and your credits run out, live trading stops for your account until you "
+                        + "add credits (open positions still close as usual).")
+                .details("Live orders left", String.valueOf(left), "Credits", amount(creditPaise)
+                                + (fromCredits > 0 ? " (" + fromCredits + " more orders)" : ""),
+                        "Price per extra order", amount(pricePaise))
+                .action("Add credits", appUrl + "/trading")
+                .build();
+    }
+
+    static Message creditsAdded(AppUser u, long amountPaise, String paymentId, long balancePaise, long pricePaise, String appUrl) {
+        return EmailTemplate.subject("Credits added: " + amount(amountPaise))
+                .headline("Your credits are ready")
+                .tone(Tone.SUCCESS)
+                .greeting(name(u))
+                .para("We received your payment of " + amount(amountPaise) + ". It's added to your credits for live orders.")
+                .details("Added", amount(amountPaise), "Credits now", amount(balancePaise),
+                        "Live orders it covers", String.valueOf(pricePaise > 0 ? balancePaise / pricePaise : 0), "Payment id", paymentId)
+                .action("Open Trading", appUrl + "/trading")
+                .build();
+    }
+
     static Message paymentFailed(AppUser u, Plan plan, long amountPaise, String reason, String appUrl) {
         return EmailTemplate.subject("Payment failed: " + plan + " plan not activated")
                 .headline("Your payment didn't go through")

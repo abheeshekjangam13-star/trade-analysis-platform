@@ -25,6 +25,7 @@ public final class Access {
                 || path.startsWith("/api/notifications")
                 || path.startsWith("/api/trading/kill-switch")
                 || path.startsWith("/api/trading/runner/")
+                || path.startsWith("/api/trading/billing/users")
                 || (path.equals("/api/trading/controls") && !read))
             return "Only an ADMIN can do this";
         if (read || path.startsWith("/api/auth/") || path.startsWith("/api/payments/")) return null;   // FREE users may pay

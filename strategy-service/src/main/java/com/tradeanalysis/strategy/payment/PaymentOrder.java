@@ -11,6 +11,8 @@ import java.time.Instant;
 public class PaymentOrder {
 
     public enum Status { CREATED, PAID, FAILED }
+    /** What the payment buys: a month of a plan, or credits for live orders. */
+    public enum Kind { PLAN, CREDITS }
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -19,8 +21,12 @@ public class PaymentOrder {
     private Long userId;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private Plan plan;
+    @Column(length = 20)
+    private Plan plan;   // null for CREDITS
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 12)
+    private Kind kind = Kind.PLAN;
 
     @Column(nullable = false)
     private int days;
@@ -57,6 +63,13 @@ public class PaymentOrder {
         this.currency = currency; this.razorpayOrderId = razorpayOrderId;
     }
 
+    /** Credits for live orders (no plan). */
+    public static PaymentOrder credits(Long userId, long amountPaise, String currency, String razorpayOrderId) {
+        PaymentOrder o = new PaymentOrder(userId, null, 0, amountPaise, currency, razorpayOrderId);
+        o.kind = Kind.CREDITS;
+        return o;
+    }
+
     void paid(String paymentId, Instant at, Instant validUntil) {
         status = Status.PAID; razorpayPaymentId = paymentId; paidAt = at; planValidUntil = validUntil; failureReason = null;
     }
@@ -73,6 +86,7 @@ public class PaymentOrder {
     public Long getId()                 { return id; }
     public Long getUserId()             { return userId; }
     public Plan getPlan()               { return plan; }
+    public Kind getKind()               { return kind; }
     public int getDays()                { return days; }
     public long getAmountPaise()        { return amountPaise; }
     public String getCurrency()         { return currency; }

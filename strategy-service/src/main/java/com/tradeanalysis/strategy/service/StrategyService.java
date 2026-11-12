@@ -96,7 +96,7 @@ public class StrategyService {
             if (lookbackDays > plan.maxBacktestDays())
                 throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
                         "Your " + plan + " plan backtests up to the last " + plan.maxBacktestDays() + " days"
-                                + (plan == com.tradeanalysis.strategy.user.Plan.PREMIUM ? "." : ": upgrade for longer backtests."));
+                                + (plan.atLeast(com.tradeanalysis.strategy.user.Plan.PREMIUM) ? "." : ": upgrade for longer backtests."));
         });
     }
 

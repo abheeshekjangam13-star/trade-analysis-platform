@@ -66,6 +66,9 @@ class KiteAccountIntegrationTest {
     private void plan(String user, String plan) throws Exception {
         call(get("/api/trading/kite-account"), user, 200);   // registers the user
         jdbc.update("UPDATE app_user SET plan = ?, plan_expires_at = NULL WHERE username = ?", plan, user);
+        // Set straight in the database, so credit the plan's included live orders as a payment would.
+        if (!plan.equals("FREE") && !plan.equals("GOLD"))
+            jdbc.update("UPDATE app_user SET live_orders_left = 100, live_orders_granted = 100, live_orders_warned = FALSE WHERE username = ?", user);
     }
 
     private static final String LIVE_ORDER = """
@@ -198,5 +201,108 @@ class KiteAccountIntegrationTest {
 
         assertThat(call(put("/api/trading/live").content("{\"enabled\":true}"), "liveadmin", 200).get("liveEnabled").asBoolean()).isTrue();
         assertThat(call(get("/api/trading/status"), "liveprem", 200).get("liveTradingEnabled").asBoolean()).isTrue();
+    }
+
+    @Test
+    void premiumTiersLimitLiveStrategiesAndLots() throws Exception {
+        plan("tier", "PREMIUM");
+        call(put("/api/trading/kite-account/app").content("{\"apiKey\":\"tier12key\",\"apiSecret\":\"tiersecret\"}"), "tier", 200);
+        doReturn(Map.of("access_token", "tok-t", "user_id", "TR1111", "user_name", "Tier"))
+                .when(accounts).createSession("tier12key", "req-t", "tiersecret");
+        call(post("/api/trading/kite-account/session").content("{\"requestToken\":\"req-t\"}"), "tier", 200);
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":20000}"), "tier", 200);
+        jdbc.update("UPDATE app_user SET plan = 'PREMIUM_PRO', plan_expires_at = NULL WHERE username = 'tier'");   // room to create 9
+        java.util.List<Long> ids = new java.util.ArrayList<>();
+        for (int i = 1; i <= 9; i++) ids.add(ownBreakout("tier", "tier CE " + i));
+        jdbc.update("UPDATE app_user SET plan = 'PREMIUM' WHERE username = 'tier'");
+
+        // Premium: 2 lots per order. A strategy with 4 lots can't go LIVE.
+        long big = ids.get(8);
+        jdbc.update("INSERT INTO strategy_param (strategy_id, param_key, param_value) VALUES (?, 'lots', '4')", big);
+        call(put("/api/trading/strategies/" + big).content("{\"mode\":\"LIVE\"}"), "tier", 400);
+        // Premium: 8 live strategies. The first 8 go LIVE; "Trade all" style bulk reports the rest.
+        for (int i = 0; i < 8; i++)
+            assertThat(call(put("/api/trading/strategies/" + ids.get(i)).content("{\"mode\":\"LIVE\"}"), "tier", 200).get("mode").asText()).isEqualTo("LIVE");
+        jdbc.update("DELETE FROM strategy_param WHERE strategy_id = ? AND param_key = 'lots'", big);
+        call(put("/api/trading/strategies/" + big).content("{\"mode\":\"LIVE\"}"), "tier", 400);   // a 9th live strategy
+
+        // Orders: more than 2 lots (130) is refused on Premium; Premium Plus allows 4 lots (260).
+        Long tier = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'tier'", Long.class);
+        when(own.placeOrder(any())).thenReturn("T-1");
+        OrderRequest four = new OrderRequest("NFO", "NIFTY26N0324150CE", "BUY", 260, "MIS", "LIMIT", 120.5, null);
+        jdbc.update("UPDATE trading_control SET max_quantity_per_order = 1000");
+        TradeOrder refused = orders.place(four, TradingMode.LIVE, "MANUAL", null, tier, false);
+        assertThat(refused.getStatus()).isEqualTo(TradeOrder.Status.REJECTED);
+        assertThat(refused.getMessage()).contains("Premium plan trades live up to 2 lots");
+        jdbc.update("UPDATE app_user SET plan = 'PREMIUM_PLUS' WHERE username = 'tier'");
+        assertThat(orders.place(four, TradingMode.LIVE, "MANUAL", null, tier, false).getStatus()).isEqualTo(TradeOrder.Status.OPEN);
+
+        // A downgrade with more LIVE strategies than the plan allows: the later ones stop entering.
+        jdbc.update("UPDATE app_user SET plan = 'PREMIUM' WHERE username = 'tier'");
+        jdbc.update("UPDATE strategy_user_mode SET mode = 'LIVE' WHERE strategy_id = ?", ids.get(7));
+        jdbc.update("INSERT INTO strategy_user_mode (strategy_id, user_id, mode, product, updated_at) "
+                + "SELECT ?, id, 'LIVE', 'MIS', CURRENT_TIMESTAMP FROM app_user WHERE username = 'tier'", big);
+        OrderRequest two = new OrderRequest("NFO", "NIFTY26N0324150CE", "BUY", 130, "MIS", "LIMIT", 120.5, null);
+        TradeOrder ninth = orders.place(two, TradingMode.LIVE, "STRATEGY", big, tier, false);
+        assertThat(ninth.getStatus()).isEqualTo(TradeOrder.Status.REJECTED);
+        assertThat(ninth.getMessage()).contains("allows 8 strategies trading live");
+        assertThat(orders.place(two, TradingMode.LIVE, "STRATEGY", ids.get(0), tier, false).getStatus()).isEqualTo(TradeOrder.Status.OPEN);
+    }
+
+    @Autowired LiveOrderBilling billing;
+
+    @Test
+    void liveTradingNeedsCreditAndStopsWhenItRunsOut() throws Exception {
+        plan("payer", "PREMIUM");
+        call(put("/api/trading/kite-account/app").content("{\"apiKey\":\"pay12key\",\"apiSecret\":\"paysecret\"}"), "payer", 200);
+        doReturn(Map.of("access_token", "tok-y", "user_id", "PY1111", "user_name", "Payer"))
+                .when(accounts).createSession("pay12key", "req-y", "paysecret");
+        call(post("/api/trading/kite-account/session").content("{\"requestToken\":\"req-y\"}"), "payer", 200);
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":20000}"), "payer", 200);
+        Long payer = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'payer'", Long.class);
+        jdbc.update("UPDATE app_user SET email = 'payer@example.com' WHERE id = ?", payer);   // so the notice can be emailed
+        jdbc.update("UPDATE app_user SET live_orders_left = 32, live_orders_granted = 100 WHERE id = ?", payer);   // 68 of 100 used
+        when(own.placeOrder(any())).thenReturn("P-1");
+        OrderRequest entry = new OrderRequest("NFO", "NIFTY26N0324150CE", "BUY", 65, "MIS", "LIMIT", 120.5, null);
+
+        // Each accepted entry uses an included order; the 70% mark (70 used) emails the user once.
+        orders.place(entry, TradingMode.LIVE, "MANUAL", null, payer, false);
+        assertThat(billing.balance(payer).liveOrdersLeft()).isEqualTo(31);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM email_notification WHERE user_id = ? AND kind = 'LIVE_ORDERS_LOW'", Integer.class, payer)).isZero();
+        orders.place(entry, TradingMode.LIVE, "MANUAL", null, payer, false);
+        assertThat(billing.balance(payer).low()).isTrue();
+        orders.place(entry, TradingMode.LIVE, "MANUAL", null, payer, false);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM email_notification WHERE user_id = ? AND kind = 'LIVE_ORDERS_LOW'", Integer.class, payer)).isEqualTo(1);
+        // Exits and paper orders are never charged.
+        orders.place(new OrderRequest("NFO", "NIFTY26N0324150CE", "SELL", 65, "MIS", "LIMIT", 125.0, null), TradingMode.LIVE, "MANUAL", null, payer, true);
+        assertThat(billing.balance(payer).liveOrdersLeft()).isEqualTo(29);
+
+        // Nothing left: new live orders are refused, a strategy can't go LIVE, and the status says so.
+        jdbc.update("UPDATE app_user SET live_orders_left = 0, credit_paise = 500 WHERE id = ?", payer);
+        TradeOrder refused = orders.place(entry, TradingMode.LIVE, "MANUAL", null, payer, false);
+        assertThat(refused.getStatus()).isEqualTo(TradeOrder.Status.REJECTED);
+        assertThat(refused.getMessage()).startsWith("No live orders left");
+        call(put("/api/trading/strategies/" + ownBreakout("payer", "payer CE")).content("{\"mode\":\"LIVE\"}"), "payer", 402);
+        assertThat(call(get("/api/trading/billing"), "payer", 200).get("canTradeLive").asBoolean()).isFalse();
+
+        // With credits, each order costs ₹10 from them; an order Kite rejects later is refunded.
+        jdbc.update("UPDATE app_user SET credit_paise = 2000 WHERE id = ?", payer);
+        TradeOrder paid = orders.place(entry, TradingMode.LIVE, "MANUAL", null, payer, false);
+        assertThat(billing.balance(payer).creditPaise()).isEqualTo(1000);
+        when(own.order("P-1")).thenReturn(new KiteApi.BrokerOrder("P-1", "REJECTED", "NIFTY26N0324150CE", "NFO", "BUY", 65, 0,
+                0, 120.5, "LIMIT", "MIS", null, "TAPM", "Insufficient margin"));
+        jdbc.update("UPDATE trade_order SET status = 'COMPLETE' WHERE user_id = ? AND id <> ? AND status = 'OPEN'", payer, paid.getId());
+        orders.syncLiveOrders();
+        assertThat(billing.balance(payer).creditPaise()).isEqualTo(2000);
+
+        // Admins add orders or credits by hand; others can't.
+        call(post("/api/trading/billing/users/" + payer).content("{\"orders\":10}"), "payer", 403);
+        call(get("/api/trading/kite-account"), "billadmin", 200);
+        jdbc.update("INSERT INTO app_user_role (user_id, role_id) SELECT u.id, r.id FROM app_user u, app_role r "
+                + "WHERE u.username = 'billadmin' AND r.name = 'ADMIN'");
+        JsonNode adj = call(post("/api/trading/billing/users/" + payer).content("{\"orders\":10,\"rupees\":50,\"note\":\"goodwill\"}"), "billadmin", 200);
+        assertThat(adj.get("balance").get("liveOrdersLeft").asInt()).isEqualTo(10);
+        assertThat(adj.get("balance").get("creditPaise").asLong()).isEqualTo(7000);
+        call(post("/api/trading/billing/users/" + payer).content("{\"orders\":-50}"), "billadmin", 409);   // below zero
     }
 }

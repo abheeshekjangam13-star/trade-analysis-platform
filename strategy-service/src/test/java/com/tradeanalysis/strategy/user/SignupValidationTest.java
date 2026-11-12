@@ -42,6 +42,20 @@ class SignupValidationTest {
         assertThat(Plan.PREMIUM.liveTrading()).isTrue();
         assertThat(Plan.PREMIUM.pricePerMonth()).isEqualTo(2499);
         assertThat(Plan.PREMIUM.discountPercent()).isEqualTo(50);
+        assertThat(Plan.PREMIUM.maxLiveStrategies()).isEqualTo(8);
+        assertThat(Plan.PREMIUM.maxLiveLots()).isEqualTo(2);
+        assertThat(Plan.PREMIUM_PLUS.pricePerMonth()).isEqualTo(4499);
+        assertThat(Plan.PREMIUM_PLUS.maxLiveStrategies()).isEqualTo(12);
+        assertThat(Plan.PREMIUM_PLUS.maxLiveLots()).isEqualTo(4);
+        assertThat(Plan.PREMIUM_PRO.pricePerMonth()).isEqualTo(7999);
+        assertThat(Plan.PREMIUM_PRO.maxLiveStrategies()).isEqualTo(20);
+        assertThat(Plan.PREMIUM_PRO.maxLiveLots()).isEqualTo(8);
+        assertThat(Plan.GOLD.maxLiveStrategies()).isZero();
+        assertThat(Plan.PREMIUM_PLUS.label()).isEqualTo("Premium Plus");
+        assertThat(Plan.GOLD.label()).isEqualTo("Gold");
+        assertThat(Plan.PREMIUM.next()).isEqualTo(Plan.PREMIUM_PLUS);
+        assertThat(Plan.PREMIUM_PRO.next()).isNull();
+        assertThat(Plan.PREMIUM_PRO.atLeast(Plan.PREMIUM)).isTrue();   // live trading checks use atLeast(PREMIUM)
         for (Plan p : Plan.values())   // the discount shown matches the price charged (to the rupee)
             assertThat(Math.round(p.listPricePerMonth() * (100 - p.discountPercent()) / 100.0)).isEqualTo(p.pricePerMonth());
     }

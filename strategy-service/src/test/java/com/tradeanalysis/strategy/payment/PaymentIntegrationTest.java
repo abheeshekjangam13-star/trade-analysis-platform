@@ -235,4 +235,36 @@ class PaymentIntegrationTest {
             assertThat(e.getBody()).contains("₹2499.00", "Your bank declined the payment", "/account");
         });
     }
+
+    @Test @Order(7)
+    void premiumCreditsItsIncludedLiveOrdersAndCreditsAreBoughtWithRazorpay() throws Exception {
+        // Only live-trading plans buy credits.
+        signupAndApprove("mohan", "9000000777");   // Free
+        call(post("/api/payments/credits").content("{\"amount\":500}"), "mohan", 403);
+
+        // Paying for Premium credits its 30 included live orders at once.
+        String planOrder = call(post("/api/payments/orders").content("{\"plan\":\"PREMIUM\"}"), "ravi", 201).get("orderId").asText();
+        call(post("/api/payments/verify").content(verifyBody(planOrder, "pay_p", RazorpaySignature.hmacHex("test_secret", planOrder + "|pay_p"))), "ravi", 200);
+        JsonNode b = call(get("/api/trading/billing"), "ravi", 200);
+        assertThat(b.get("balance").get("liveOrdersLeft").asInt()).isEqualTo(30);
+        assertThat(b.get("includedPerPlan").asInt()).isEqualTo(30);
+        assertThat(b.get("movements").get(0).get("source").asText()).isEqualTo("GRANT");
+
+        // Credits: ₹100–₹50,000; paid, they are added (once) and the user is emailed.
+        call(post("/api/payments/credits").content("{\"amount\":50}"), "ravi", 400);
+        JsonNode co = call(post("/api/payments/credits").content("{\"amount\":500}"), "ravi", 201);
+        assertThat(co.get("amountPaise").asLong()).isEqualTo(50000);
+        assertThat(co.get("description").asText()).isEqualTo("Credits for 50 live orders");
+        String orderId = co.get("orderId").asText();
+        String sig = RazorpaySignature.hmacHex("test_secret", orderId + "|pay_c");
+        assertThat(call(post("/api/payments/verify").content(verifyBody(orderId, "pay_c", sig)), "ravi", 200).get("message").asText())
+                .contains("₹500", "50 live orders");
+        call(post("/api/payments/verify").content(verifyBody(orderId, "pay_c", sig)), "ravi", 200);   // repeat: not added twice
+        JsonNode after = call(get("/api/trading/billing"), "ravi", 200).get("balance");
+        assertThat(after.get("creditPaise").asLong()).isEqualTo(50000);
+        assertThat(after.get("liveOrdersLeft").asInt()).isEqualTo(30);   // a top-up doesn't touch included orders
+        assertThat(emails.findByUserIdOrderByCreatedAtDesc(id("ravi"), PageRequest.of(0, 20)))
+                .anySatisfy(e -> assertThat(e.getKind()).isEqualTo(EmailNotification.Kind.CREDITS_ADDED));
+        assertThat(call(get("/api/payments"), "ravi", 200).get(0).get("kind").asText()).isEqualTo("CREDITS");
+    }
 }
