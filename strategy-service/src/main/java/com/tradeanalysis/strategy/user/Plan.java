@@ -83,7 +83,7 @@ public enum Plan {
     public int maxLiveStrategies() { return maxLiveStrategies; }
     /** The most lots a live order may have (strategy entries and order tickets; 0 = no live trading). */
     public int maxLiveLots()       { return maxLiveLots; }
-    /** Live orders included with each start or renewal of the plan (credited at once; 0 without live trading). */
+    /** Live orders included with the plan: topped up to this when it starts or renews (0 without live trading). */
     public int includedLiveOrders() { return liveTrading ? INCLUDED_LIVE_ORDERS : 0; }
     public static final int INCLUDED_LIVE_ORDERS = 30;
     /** The name shown to users, e.g. "Premium Plus". */

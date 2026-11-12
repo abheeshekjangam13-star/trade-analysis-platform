@@ -19,8 +19,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Live order billing. A live-trading plan includes {@link Plan#includedLiveOrders()} live orders, credited as soon as the
- * plan starts or renews (they add up). Each new live order Kite accepts uses one; once none are left, each costs
+ * Live order billing. A live-trading plan includes {@link Plan#includedLiveOrders()} live orders: when the plan starts or
+ * renews (or an admin sets it again), the included orders are topped up to that number. They never stack, so setting a
+ * plan several times can't give more than one allowance. Each new live order Kite accepts uses one; once none are left, each costs
  * {@code billing.extra-live-order-paise} (₹10) from the user's prepaid credits, bought with Razorpay. Exits, paper
  * orders and admins are never charged; an order Kite rejects is not charged (or is refunded when the rejection comes
  * later). When 70% of the latest allowance is used, the user is emailed once to add credits.
@@ -119,14 +120,20 @@ public class LiveOrderBilling {
         record(userId, tradeOrderId, "REFUND", orders, paise, "Rejected by Kite");
     }
 
-    /** Credits a live-trading plan's included orders (when it starts or renews); they add to what is left. */
+    /**
+     * Tops a live-trading plan's included orders up to {@link Plan#includedLiveOrders()} (when it starts or renews, or an
+     * admin sets it): unused ones don't carry over and repeats don't stack. Nothing is recorded when already full.
+     */
     @Transactional
     public void grant(Long userId, Plan plan, String why) {
         int n = plan == null ? 0 : plan.includedLiveOrders();
         if (userId == null || n <= 0) return;
-        jdbc.update("UPDATE app_user SET live_orders_left = live_orders_left + ?, live_orders_granted = live_orders_left + ?, "
-                + "live_orders_warned = FALSE WHERE id = ?", n, n, userId);
-        record(userId, null, "GRANT", n, 0, n + " live orders included with " + plan.label() + (why == null ? "" : " (" + why + ")"));
+        Integer left = jdbc.queryForObject("SELECT live_orders_left FROM app_user WHERE id = ? FOR UPDATE", Integer.class, userId);
+        int added = left == null ? n : Math.max(0, n - left);
+        if (added == 0) return;
+        jdbc.update("UPDATE app_user SET live_orders_left = ?, live_orders_granted = ?, live_orders_warned = FALSE WHERE id = ?", n, n, userId);
+        record(userId, null, "GRANT", added, 0, "Topped up to " + n + " live orders included with " + plan.label()
+                + (why == null ? "" : " (" + why + ")"));
     }
 
     /** Adds credits (a Razorpay top-up) and/or included orders (an admin adjustment); negative values take away. */

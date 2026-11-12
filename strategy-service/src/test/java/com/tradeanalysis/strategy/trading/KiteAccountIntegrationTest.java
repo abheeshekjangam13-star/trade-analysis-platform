@@ -304,5 +304,14 @@ class KiteAccountIntegrationTest {
         assertThat(adj.get("balance").get("liveOrdersLeft").asInt()).isEqualTo(10);
         assertThat(adj.get("balance").get("creditPaise").asLong()).isEqualTo(7000);
         call(post("/api/trading/billing/users/" + payer).content("{\"orders\":-50}"), "billadmin", 409);   // below zero
+
+        // Setting the plan again (any number of times) tops included orders up to 30; it never stacks.
+        jdbc.update("UPDATE app_user SET live_orders_left = 4 WHERE id = ?", payer);
+        for (int i = 0; i < 3; i++)
+            call(put("/api/users/" + payer + "/plan").content("{\"plan\":\"PREMIUM\",\"expiresAt\":\"" + java.time.Instant.now().plusSeconds(86400L * (30 + i)) + "\"}"), "billadmin", 200);
+        JsonNode after = call(get("/api/trading/billing/users/" + payer), "billadmin", 200).get("balance");
+        assertThat(after.get("liveOrdersLeft").asInt()).isEqualTo(30);
+        assertThat(after.get("liveOrdersGranted").asInt()).isEqualTo(30);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_order_charge WHERE user_id = ? AND source = 'GRANT'", Integer.class, payer)).isEqualTo(1);
     }
 }
