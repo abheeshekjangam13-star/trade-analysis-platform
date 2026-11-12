@@ -67,10 +67,8 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
-# Trading (paper/live orders through Kite). Live orders are refused unless TRADING_LIVE_ENABLED=true.
+# Trading (paper/live orders through Kite). Live trading is switched on or off by an admin on the Trading page.
 trading:
-  live:
-    enabled: ${TRADING_LIVE_ENABLED:false}
   runner:
     enabled: ${TRADING_RUNNER_ENABLED:true}       # runs PAPER/LIVE strategies every minute in market hours
     interval-ms: 60000

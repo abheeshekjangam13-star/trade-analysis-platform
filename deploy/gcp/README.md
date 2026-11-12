@@ -117,9 +117,10 @@ Caddy gets the HTTPS certificate automatically once the DNS record points at the
   keeps working). Users' own Kite apps need the same redirect URL.
 - **Log in to Kite** from Market data (admin) each trading day, as before.
 - **Email and Razorpay:** see section 8.
-- **Live trading** stays off (`TRADING_LIVE_ENABLED=false`). To turn it on: register the static IP with Zerodha
-  (Kite developer console → your app → IP whitelist), run strategies in PAPER first, then set it to `true` and
-  redeploy.
+- **Live trading** starts off. To turn it on: register the static IP with Zerodha (Kite developer console → your
+  app → IP whitelist), run strategies in PAPER first, then an admin turns it on with the **Live trading** switch on
+  the Trading page (no redeploy). Turning it off stops new live orders and entries at once; open live positions are
+  still managed and closed.
 
 ## 8. Email and payments (Razorpay)
 

@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** GOLD/PREMIUM users connect their own Kite app; PREMIUM users' live orders go to their own account. */
-@SpringBootTest(properties = {"trading.live.enabled=true",
+@SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:kite-account-it;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1"})
 @AutoConfigureMockMvc
 @ActiveProfiles("it")
@@ -45,7 +45,7 @@ class KiteAccountIntegrationTest {
         jdbc.update("DELETE FROM live_position");
         jdbc.update("DELETE FROM trade_order");
         jdbc.update("DELETE FROM kite_account");
-        jdbc.update("UPDATE trading_control SET kill_switch = FALSE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
+        jdbc.update("UPDATE trading_control SET kill_switch = FALSE, live_enabled = TRUE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
         doReturn(own).when(accounts).client(any());
         when(own.profile()).thenReturn(new KiteApi.Profile("ZX9999", "Priya", "ZERODHA"));
     }
@@ -180,5 +180,23 @@ class KiteAccountIntegrationTest {
 
         call(get("/api/trading/positions/history?from=2025-01-01&to=2026-11-30"), "hist_a", 400);   // more than 400 days
         call(get("/api/trading/positions/history?from=2026-11-30&to=2026-10-01"), "hist_a", 400);   // from after to
+    }
+
+    @Test
+    void onlyAnAdminSwitchesLiveTradingAndOffBlocksLiveForEveryone() throws Exception {
+        plan("liveprem", "PREMIUM");
+        call(put("/api/trading/live").content("{\"enabled\":false}"), "liveprem", 403);   // not an admin
+        call(get("/api/trading/kite-account"), "liveadmin", 200);                         // registers the admin
+        jdbc.update("INSERT INTO app_user_role (user_id, role_id) SELECT u.id, r.id FROM app_user u, app_role r "
+                + "WHERE u.username = 'liveadmin' AND r.name = 'ADMIN'");
+        call(put("/api/trading/live").content("{}"), "liveadmin", 400);                    // enabled is required
+
+        assertThat(call(put("/api/trading/live").content("{\"enabled\":false}"), "liveadmin", 200).get("liveEnabled").asBoolean()).isFalse();
+        assertThat(call(get("/api/trading/status"), "liveprem", 200).get("liveTradingEnabled").asBoolean()).isFalse();
+        // Off: a LIVE strategy can't be switched on, even by an admin.
+        call(put("/api/trading/strategies/" + ownBreakout("liveadmin", "admin live CE")).content("{\"mode\":\"LIVE\"}"), "liveadmin", 400);
+
+        assertThat(call(put("/api/trading/live").content("{\"enabled\":true}"), "liveadmin", 200).get("liveEnabled").asBoolean()).isTrue();
+        assertThat(call(get("/api/trading/status"), "liveprem", 200).get("liveTradingEnabled").asBoolean()).isTrue();
     }
 }

@@ -124,7 +124,7 @@ strategy — goes through one order service that records it in `trade_order` and
 Each strategy is `OFF` (default), `PAPER` or `LIVE`.
 
 **Safety rules** (exits that close a position are always allowed):
-- Live orders are refused unless strategy-service runs with `TRADING_LIVE_ENABLED=true` (default false).
+- Live orders are refused until an admin turns **Live trading** on (Trading page; off by default, stored in `trading_control.live_enabled`).
 - Switching a strategy to LIVE, placing manual LIVE orders, changing limits and releasing the kill switch need an
   **ADMIN** user (see Login below).
 - Kill switch (`POST /api/trading/kill-switch`, anyone): all strategies OFF, open live orders cancelled, open strategy

@@ -19,6 +19,7 @@ import java.util.*;
 public class TradingController {
 
     public record ModeRequest(TradingMode mode, String product) {}
+    public record LiveRequest(Boolean enabled) {}
     public record ControlsRequest(Integer maxOrdersPerDay, Integer maxQuantityPerOrder, Double dailyLossLimit) {}
     public record ManualOrder(String exchange, String tradingsymbol, String transactionType, Integer quantity, String product,
                               String orderType, Double price, Double triggerPrice, TradingMode mode, Boolean confirm) {}
@@ -120,6 +121,14 @@ public class TradingController {
     @PostMapping("/kill-switch")
     @Operation(summary = "Stop everything: no new orders, all strategies OFF, cancel open live orders, close strategy positions")
     public TradingService.KillResult kill() { return trading.engageKillSwitch(); }
+
+    @PutMapping("/live")
+    @Operation(summary = "Turn live trading on or off for everyone (ADMIN). Off: no new live orders or entries; open "
+            + "live positions are still managed and closed")
+    public TradingControl setLive(@RequestBody LiveRequest r) {
+        if (r == null || r.enabled() == null) throw new TradingException("Missing enabled (true or false)");
+        return trading.setLiveTrading(r.enabled());
+    }
 
     @DeleteMapping("/kill-switch")
     @Operation(summary = "Allow new orders again (ADMIN); strategies stay OFF until switched on")

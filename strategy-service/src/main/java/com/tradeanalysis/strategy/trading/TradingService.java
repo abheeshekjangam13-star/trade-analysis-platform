@@ -14,6 +14,8 @@ import java.util.*;
 @Service
 public class TradingService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TradingService.class);
+
     private final StrategyLiveConfigRepository configs;
     private final TradingControlRepository controls;
     private final TradeOrderRepository orders;
@@ -61,8 +63,7 @@ public class TradingService {
         if (product != null && !Set.of("MIS", "NRML").contains(product)) throw new TradingException("Product must be MIS or NRML");
         if (mode == TradingMode.LIVE) {
             requireLive();
-            if (!orderService.liveEnabled())
-                throw new TradingException("Live trading is disabled on this server (start strategy-service with TRADING_LIVE_ENABLED=true)");
+            if (!orderService.liveEnabled()) throw new TradingException(OrderService.LIVE_OFF);
         }
         if (mode != TradingMode.OFF && !CurrentUser.admin() && currentMaxDayLoss() == null)
             throw new TradingException("Set your max day loss first (Trading → Max day loss): it caps your loss for a day "
@@ -159,6 +160,19 @@ public class TradingService {
             catch (RuntimeException e) { details.add("position " + p.getId() + ": " + e.getMessage()); }
         }
         return new KillResult(cancelled, closed, stopped, details);
+    }
+
+    /**
+     * Turns live trading on or off for the whole platform (ADMIN). Off: no new live orders or live strategy entries for
+     * anyone; open live positions are still managed and closed as usual. LIVE strategies keep their mode and resume
+     * entries when it is turned on again.
+     */
+    public TradingControl setLiveTrading(boolean enabled) {
+        requireAdmin("turn live trading " + (enabled ? "on" : "off"));
+        TradingControl c = controls.get();
+        c.setLiveEnabled(enabled, CurrentUser.id().orElse(null));
+        log.warn("LIVE_TRADING_{} by user {}", enabled ? "ON" : "OFF", CurrentUser.id().orElse(null));
+        return controls.save(c);
     }
 
     public TradingControl releaseKillSwitch() {

@@ -2,7 +2,6 @@ package com.tradeanalysis.strategy.trading;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -15,7 +14,7 @@ import java.util.*;
  * The only way the platform sends orders. Validates, applies the safety rules and records every order (rejected ones
  * included) in trade_order. PAPER orders fill at once at the option's last traded price; LIVE orders go to the order
  * owner's own Kite account ({@link KiteAccounts#forUser}: admins without one use the platform account) and require
- * trading.live.enabled=true on the server.
+ * live trading to be on (an admin switches it on the Trading page; see {@link #liveEnabled}).
  *
  * Safety rules for orders that open or add risk (exits are always allowed, so positions can always be closed):
  * kill switch off, quantity ≤ max per order, orders today < max per day, today's realized loss < daily loss limit
@@ -38,17 +37,19 @@ public class OrderService {
     private final KiteApi kite;          // platform session: quotes for paper fills
     private final KiteAccounts accounts; // the order owner's own account: live orders
     private final Clock clock;
-    private final boolean liveEnabled;
     private final com.tradeanalysis.strategy.user.AppUserRepository users;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
-                        KiteApi kite, KiteAccounts accounts, Clock clock, @Value("${trading.live.enabled:false}") boolean liveEnabled,
+                        KiteApi kite, KiteAccounts accounts, Clock clock,
                         com.tradeanalysis.strategy.user.AppUserRepository users) {
         this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
-        this.clock = clock; this.liveEnabled = liveEnabled; this.users = users;
+        this.clock = clock; this.users = users;
     }
 
-    public boolean liveEnabled() { return liveEnabled; }
+    /** Whether live trading is on for the platform: an admin switches it on the Trading page (off by default). */
+    public boolean liveEnabled() { return controls.get().isLiveEnabled(); }
+
+    public static final String LIVE_OFF = "Live trading is turned off by the admin (Trading page): no new live orders";
 
     public LocalDate today() { return LocalDate.now(clock.withZone(IST)); }
 
@@ -61,8 +62,8 @@ public class OrderService {
         validate(r, mode);
         TradeOrder order = orders.save(new TradeOrder(today(), mode, source, strategyId, r, userId));
         String refusal = reducing ? null : refusal(r, mode, userId);
-        if (refusal == null && mode == TradingMode.LIVE && !liveEnabled)
-            refusal = "Live trading is disabled on this server (start strategy-service with TRADING_LIVE_ENABLED=true)";
+        // Off stops new live risk only: orders that close a position (exits, kill switch) still go out.
+        if (refusal == null && !reducing && mode == TradingMode.LIVE && !liveEnabled()) refusal = LIVE_OFF;
         if (refusal != null) {
             order.reject(refusal);
             log.warn("ORDER_REFUSED id={} {} {} {} x{}: {}", order.getId(), mode, r.transactionType(), r.tradingsymbol(), r.quantity(), refusal);
