@@ -198,6 +198,34 @@ public class TradingService {
         return controls.save(c);
     }
 
+    public record StopResult(int strategiesStopped, int positionsClosed, List<String> details) {}
+
+    /**
+     * The caller's own emergency stop: every one of their strategies OFF and their open strategy positions closed now
+     * (paper and live). Other users are not touched; the admin kill switch is separate.
+     */
+    public StopResult stopMine() {
+        Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        int stopped = 0;
+        for (StrategyLiveConfig cfg : configs.findByUserId(me)) {
+            if (cfg.getMode() == TradingMode.OFF) continue;
+            cfg.set(TradingMode.OFF, null);
+            configs.save(cfg);
+            stopped++;
+        }
+        List<String> details = new ArrayList<>();
+        int closed = 0;
+        LiveStrategyRunner r = runner.getIfAvailable();
+        for (LivePosition p : positions.findByStatus(LivePosition.Status.OPEN)) {
+            if (!me.equals(p.getUserId())) continue;
+            if (r == null) { details.add("position " + p.getId() + ": runner disabled, close it in Kite"); continue; }
+            try { details.add(r.exit(p, null, "STOPPED_BY_USER", null, "STOPPED_BY_USER", null)); closed++; }
+            catch (RuntimeException e) { details.add("position " + p.getId() + ": " + e.getMessage()); }
+        }
+        log.warn("STOP_MINE user={} strategies={} positions={}", me, stopped, closed);
+        return new StopResult(stopped, closed, details);
+    }
+
     public TradingControl releaseKillSwitch() {
         requireAdmin("turn the kill switch off");
         TradingControl c = controls.get();

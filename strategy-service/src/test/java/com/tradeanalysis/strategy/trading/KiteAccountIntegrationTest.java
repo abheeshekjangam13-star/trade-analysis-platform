@@ -314,4 +314,27 @@ class KiteAccountIntegrationTest {
         assertThat(after.get("liveOrdersGranted").asInt()).isEqualTo(30);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_order_charge WHERE user_id = ? AND source = 'GRANT'", Integer.class, payer)).isEqualTo(1);
     }
+
+    @Test
+    void todayListsMyTradingStrategiesAndStopMineTurnsThemOff() throws Exception {
+        plan("cockpit", "GOLD");
+        call(put("/api/trading/day-loss").content("{\"maxDayLoss\":5000}"), "cockpit", 200);
+        long mine = ownBreakout("cockpit", "cockpit CE");
+        long idle = ownBreakout("cockpit", "cockpit idle");
+        call(put("/api/trading/strategies/" + mine).content("{\"mode\":\"PAPER\"}"), "cockpit", 200);
+
+        JsonNode today = call(get("/api/trading/today"), "cockpit", 200);
+        assertThat(today.get("index").asText()).isEqualTo("NIFTY 50");
+        assertThat(today.get("strategies")).hasSize(1);   // only PAPER/LIVE ones
+        JsonNode st = today.get("strategies").get(0);
+        assertThat(st.get("strategyId").asLong()).isEqualTo(mine);
+        assertThat(st.get("mode").asText()).isEqualTo("PAPER");
+        assertThat(st.get("underlying").asText()).isEqualTo("NIFTY 50");
+        assertThat(st.get("state").asText()).isNotBlank();
+        assertThat(idle).isNotEqualTo(mine);
+
+        JsonNode stop = call(post("/api/trading/stop-mine"), "cockpit", 200);
+        assertThat(stop.get("strategiesStopped").asInt()).isEqualTo(1);
+        assertThat(call(get("/api/trading/today"), "cockpit", 200).get("strategies")).isEmpty();
+    }
 }
