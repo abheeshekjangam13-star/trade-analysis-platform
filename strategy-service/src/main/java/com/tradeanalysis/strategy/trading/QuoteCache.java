@@ -59,6 +59,9 @@ public class QuoteCache {
         return new Quotes(out, oldest);
     }
 
+    /** Forgets every price (tests: each starts without prices cached by another). */
+    void clear() { quotes.clear(); watched.clear(); lastCall = Instant.EPOCH; }
+
     /** Fetch when a symbol has no price yet, or prices are older than the interval and Kite may be called again. */
     private boolean needsFetch(List<String> symbols, Instant now) {
         boolean canCall = !now.isBefore(lastCall.plus(minInterval));

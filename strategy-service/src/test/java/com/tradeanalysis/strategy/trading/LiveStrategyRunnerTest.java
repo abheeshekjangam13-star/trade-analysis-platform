@@ -29,7 +29,8 @@ import static org.mockito.Mockito.when;
  * Kite and market data mocked. Tue 3 Nov 2026: +0.42% gap-up, 09:20 candle breaks above the 09:15 high → BUY;
  * the 09:27 one-minute low hits the 24,115 midpoint stop → SELL.
  */
-@SpringBootTest(properties = {"trading.runner.enabled=true", "trading.runner.initial-delay-ms=3600000"})
+// The schedules are off ("-", an hour's delay): the tests call runAll / check themselves.
+@SpringBootTest(properties = {"trading.runner.enabled=true", "trading.runner.cron=-", "trading.exit-watch.initial-delay-ms=3600000"})
 @ActiveProfiles("it")
 class LiveStrategyRunnerTest {
 
@@ -41,6 +42,8 @@ class LiveStrategyRunnerTest {
     static class Clocks { @Bean @org.springframework.context.annotation.Primary Clock testClock() { return CLOCK; } }
 
     @Autowired LiveStrategyRunner runner;
+    @Autowired LiveExitWatcher watcher;
+    @Autowired QuoteCache quoteCache;
     @Autowired TradingService trading;
     @Autowired LivePositionRepository positions;
     @Autowired TradeOrderRepository orders;
@@ -66,6 +69,7 @@ class LiveStrategyRunnerTest {
 
     @BeforeEach
     void setUp() {
+        quoteCache.clear();
         jdbc.update("DELETE FROM live_position");
         jdbc.update("DELETE FROM trade_order");
         jdbc.update("UPDATE trading_control SET kill_switch = FALSE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
@@ -155,6 +159,62 @@ class LiveStrategyRunnerTest {
         assertThat(orders.findByTradeDateOrderByCreatedAtDesc(TUE)).extracting(TradeOrder::getTransactionType).containsExactly("SELL", "BUY");
     }
 
+    /** Kite prices: the option, and the index the exit watcher reads. */
+    private void prices(double option, double nifty) {
+        when(kite.ltp(anyList())).thenAnswer(inv -> {
+            Map<String, Double> out = new java.util.HashMap<>();
+            for (String sym : inv.<List<String>>getArgument(0))
+                if (sym.startsWith("NFO:")) out.put(sym, option); else if (sym.equals("NSE:NIFTY 50")) out.put(sym, nifty);
+            return out;
+        });
+    }
+
+    @Test
+    void theExitWatcherSellsTheMomentTheIndexTouchesTheStopAndTheMinuteRunDoesNotSellAgain() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("BUY 130 NIFTY26N0324150CE"));   // CE from 24,190, stop 24,115
+
+        assertThat(watcher.check()).isEmpty();                                     // 24,180: between stop and target
+
+        prices(100.0, 24112);                                                      // 09:26:40 the index trades through the stop
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(40));
+        assertThat(watcher.check()).anyMatch(l -> l.contains("SELL 130 NIFTY26N0324150CE (SL_HIT)"));
+        LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+        assertThat(p.getStatus()).isEqualTo(LivePosition.Status.CLOSED);
+        assertThat(p.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(p.getExitSpot()).isEqualTo(24112.0);
+        assertThat(p.getPnl()).isEqualTo((100.0 - 120.0) * 130 - 85);
+
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(42));
+        assertThat(watcher.check()).isEmpty();                                     // closed: nothing more to watch
+        CLOCK.set(at(TUE, 9, 31));                                                 // the minute run sees the engine's stop too
+        runner.runAll();
+        assertThat(orders.findByTradeDateOrderByCreatedAtDesc(TUE)).extracting(TradeOrder::getTransactionType).containsExactly("SELL", "BUY");
+    }
+
+    @Test
+    void theExitWatcherTakesTheTargetToo() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();
+        prices(175.0, 24271);                                                      // entry 24,190 + 80 target points = 24,270
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(30));
+        assertThat(watcher.check()).anyMatch(l -> l.contains("(TARGET_HIT)"));
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0).getPnl()).isEqualTo((175.0 - 120.0) * 130 - 85);
+    }
+
+    @Test
+    void theExitWatcherDoesNothingWithoutAnIndexPrice() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 100.0));   // Kite gives no index price
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(30));
+        assertThat(watcher.check()).isEmpty();
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0).getStatus()).isEqualTo(LivePosition.Status.OPEN);
+    }
+
     @Test
     void doesNotEnterAStaleSignalOrWhileTheKillSwitchIsOn() {
         when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
@@ -168,6 +228,15 @@ class LiveStrategyRunnerTest {
         CLOCK.set(at(TUE, 9, 32));
         runner.runAll();
         assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE)).isEmpty();
+    }
+
+    @Test
+    void runsFiveSecondsAfterEachMinuteClosesInIst() throws Exception {
+        var scheduled = LiveStrategyRunner.class.getMethod("tick").getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+        assertThat(scheduled.cron()).isEqualTo("${trading.runner.cron:5 * * * * *}");
+        assertThat(scheduled.zone()).isEqualTo("Asia/Kolkata");
+        var next = org.springframework.scheduling.support.CronExpression.parse("5 * * * * *").next(at(TUE, 10, 5).atZone(IST));
+        assertThat(next.toLocalTime()).isEqualTo(LocalTime.of(10, 5, 5));   // the 10:00 candle closed at 10:05:00
     }
 
     @Test

@@ -6,6 +6,10 @@ server:
 spring:
   application:
     name: strategy-service
+  task:
+    scheduling:
+      pool:
+        size: 4        # the 1-second exit watcher must not wait behind the minute runner or other jobs
   datasource:
     # PostgreSQL: one database for all services; see README "Database (PostgreSQL)".
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}
@@ -71,8 +75,10 @@ springdoc:
 trading:
   runner:
     enabled: ${TRADING_RUNNER_ENABLED:true}       # runs PAPER/LIVE strategies every minute in market hours
-    interval-ms: 60000
+    cron: "5 * * * * *"                           # 5 s after each minute's close (IST), once Kite has the closed candle
     max-entry-delay-minutes: 5                    # never enter a signal older than this (e.g. after a late start)
+  exit-watch:
+    interval-ms: 1000                             # open positions are checked against the live index price every second
 
 
 # Login (see README "Login"). Leave AUTH_JWT_SECRET unset to use the random key kept in the auth_key table.

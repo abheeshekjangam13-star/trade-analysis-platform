@@ -23,13 +23,17 @@ import java.util.*;
 
 /**
  * Trades strategies switched to PAPER or LIVE, separately for every user who switched them on (each user has their
- * own positions and orders; the engine runs once per strategy). Every minute in market hours it reruns the backtest engine
+ * own positions and orders; the engine runs once per strategy). A few seconds after every minute's close in market hours
+ * (trading.runner.cron, 5 s past by default, so 5-minute signals go out right after their candle closes) it reruns the backtest engine
  * (NIFTY_OPENING_BREAKOUT, same parameters) on today's completed candles and makes positions follow it:
  * a new engine entry opens a position (BUY the option), an engine exit closes it (SELL). Because the engine is the
  * one the backtests use, live decisions follow exactly the backtested rules, decided on completed candles.
  *
  * An entry is only taken while fresh (signal candle closed at most trading.runner.max-entry-delay-minutes ago),
  * so a late start never enters an old trade.
+ *
+ * Between runs, {@link LiveExitWatcher} closes a position the moment the index touches its stop or target, through
+ * {@link #exitOnTouch}. Every change to positions happens under one lock, so the two never sell the same position twice.
  */
 @Component
 @ConditionalOnProperty(name = "trading.runner.enabled", havingValue = "true", matchIfMissing = true)
@@ -51,6 +55,8 @@ public class LiveStrategyRunner {
     private final Clock clock;
     private final Duration maxEntryDelay;
     private final Set<String> invalidWarned = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Held while positions are opened or closed: the minute run and the exit watcher never act on one at the same time. */
+    private final Object positionLock = new Object();
 
     public LiveStrategyRunner(StrategyLiveConfigRepository configs, LivePositionRepository positions, TradeOrderRepository orders,
                               TradingControlRepository controls, OrderService orderService, StrategyService strategies,
@@ -62,7 +68,7 @@ public class LiveStrategyRunner {
         this.maxEntryDelay = Duration.ofMinutes(maxEntryDelayMinutes);
     }
 
-    @Scheduled(fixedDelayString = "${trading.runner.interval-ms:60000}", initialDelayString = "${trading.runner.initial-delay-ms:30000}")
+    @Scheduled(cron = "${trading.runner.cron:5 * * * * *}", zone = "Asia/Kolkata")
     public void tick() {
         try { orderService.syncLiveOrders(); } catch (RuntimeException e) { log.warn("LIVE_SYNC_FAILED {}", e.getMessage()); }
         refreshLivePrices();
@@ -88,15 +94,31 @@ public class LiveStrategyRunner {
             }
             for (StrategyLiveConfig cfg : e.getValue()) {
                 try {
-                    report.add(ev.result == null ? ev.problem : reconcile(cfg, ev.strategy, ev.params, ev.result, ev.today, ev.now));
+                    synchronized (positionLock) {
+                        report.add(ev.result == null ? ev.problem : reconcile(cfg, ev.strategy, ev.params, ev.result, ev.today, ev.now));
+                    }
                 } catch (RuntimeException ex) {
                     log.error("RUNNER_FAILED strategy={} user={} mode={}: {}", cfg.getStrategyId(), cfg.getUserId(), cfg.getMode(), ex.getMessage(), ex);
                     report.add("#" + cfg.getStrategyId() + " user " + cfg.getUserId() + ": error — " + ex.getMessage());
                 }
             }
         }
-        report.addAll(enforceDayLoss());
+        synchronized (positionLock) { report.addAll(enforceDayLoss()); }
         return report;
+    }
+
+    /**
+     * Closes an open position now because the index touched its stop or target (from {@link LiveExitWatcher}). Reads the
+     * position again under the lock, so one the minute run already closed is left alone. Returns what it did, or null.
+     */
+    public String exitOnTouch(Long positionId, double spot, String reason) {
+        synchronized (positionLock) {
+            LivePosition p = positions.findById(positionId).orElse(null);
+            if (p == null || p.getStatus() != LivePosition.Status.OPEN) return null;
+            Strategy s = strategies.load(p.getStrategyId());
+            Params params = new Params(new HashMap<>(s.getParameters() == null ? Map.of() : s.getParameters()));
+            return "#" + p.getStrategyId() + " " + p.getMode() + " user " + p.getUserId() + ": " + exit(p, spot, reason, null, "STRATEGY", params);
+        }
     }
 
     /**

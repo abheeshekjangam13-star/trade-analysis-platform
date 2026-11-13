@@ -34,8 +34,13 @@ public class MarketDataService {
     static final Duration TOP_UP_MARKET = Duration.ofSeconds(10);
     static final Duration TOP_UP_CLOSED = Duration.ofMinutes(10);
 
+    /** How long after a candle closes Kite is given to finish it before it is fetched again as final. */
+    static final Duration SETTLE = Duration.ofSeconds(2);
+
     private final Clock clock;
     private final Map<String, Instant> lastTopUp = new ConcurrentHashMap<>();
+    /** Per symbol and interval: the latest close whose candle was fetched again once it had settled. */
+    private final Map<String, Instant> settled = new ConcurrentHashMap<>();
     private final Map<String, Object> writeLocks = new ConcurrentHashMap<>();
 
     /**
@@ -139,10 +144,40 @@ public class MarketDataService {
         if (first.isAfter(from.plus(Duration.ofDays(4)))) { // tolerate weekends/holidays at range start
             persist(symbol, interval, client.fetchRange(symbol, interval, from, first));
         }
-        if (last.plus(interval.duration()).isBefore(to)) {
-            // Re-fetch the last stored bar too: it may have been saved while still forming.
-            persist(symbol, interval, client.fetchRange(symbol, interval, last, to));
+        Instant refetchFrom = null;
+        // Re-fetch the last stored bar too: it may have been saved while still forming.
+        if (last.plus(interval.duration()).isBefore(to)) refetchFrom = last;
+        Instant justClosed = unsettledBar(symbol, interval, to);
+        if (justClosed != null && !justClosed.isAfter(last) && (refetchFrom == null || justClosed.isBefore(refetchFrom))) refetchFrom = justClosed;
+        if (refetchFrom != null) {
+            persist(symbol, interval, client.fetchRange(symbol, interval, refetchFrom, to));
+            markSettled(symbol, interval, refetchFrom);
         }
+    }
+
+    /**
+     * In market hours, the start of the candle that closed last, when it has not been fetched since it settled
+     * ({@link #SETTLE} after its close): a request a moment after the close can store it before Kite has its last
+     * ticks, and nothing else would fetch it again. Null when there is nothing to do.
+     */
+    private Instant unsettledBar(String symbol, Interval interval, Instant to) {
+        if (!isIntraday(interval)) return null;
+        Instant now = clock.instant();
+        if (!marketOpen(now)) return null;
+        long step = interval.duration().getSeconds();
+        Instant close = Instant.ofEpochSecond(Math.floorDiv(now.getEpochSecond(), step) * step);
+        if (to.isBefore(close) || now.isBefore(close.plus(SETTLE)) || close.equals(settled.get(symbol + "|" + interval))) return null;
+        return close.minus(interval.duration());
+    }
+
+    /** A fetch from {@code from} made now covers the last closed candle as final once it has settled. */
+    private void markSettled(String symbol, Interval interval, Instant from) {
+        if (!isIntraday(interval)) return;
+        Instant now = clock.instant();
+        long step = interval.duration().getSeconds();
+        Instant close = Instant.ofEpochSecond(Math.floorDiv(now.getEpochSecond(), step) * step);
+        if (!now.isBefore(close.plus(SETTLE)) && !from.isAfter(close.minus(interval.duration())))
+            settled.put(symbol + "|" + interval, close);
     }
 
     /**
