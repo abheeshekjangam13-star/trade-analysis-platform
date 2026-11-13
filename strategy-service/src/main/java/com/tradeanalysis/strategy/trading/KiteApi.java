@@ -31,4 +31,13 @@ public interface KiteApi {
     Map<String, Double> ltp(List<String> instruments);
     /** Option contracts of an index currently listed on NFO (NIFTY or BANKNIFTY). */
     List<OptionInstrument> optionsOf(com.tradeanalysis.common.market.Underlying underlying);
+
+    /** One 1-minute candle's start, high and low (the forming candle's high and low so far). */
+    record MinuteBar(java.time.Instant start, double high, double low) {}
+
+    /**
+     * An index's 1-minute candles from {@code from} to {@code to}, including the one still forming: its high and low
+     * cover every tick so far, which a once-a-second price can miss. Empty when unknown.
+     */
+    default List<MinuteBar> minuteBars(String indexSymbol, java.time.Instant from, java.time.Instant to) { return List.of(); }
 }

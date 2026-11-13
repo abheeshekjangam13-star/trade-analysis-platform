@@ -26,7 +26,7 @@ import java.util.*;
 /**
  * Trades strategies switched to PAPER or LIVE, separately for every user who switched them on (each user has their
  * own positions and orders; the engine runs once per strategy). A few seconds after every minute's close in market hours
- * (trading.runner.cron, 5 s past by default, so 5-minute signals go out right after their candle closes) it reruns the backtest engine
+ * (trading.runner.cron, 3 s past by default, just after market-data counts the closed candle as final, so 5-minute signals go out right after their candle closes) it reruns the backtest engine
  * (NIFTY_OPENING_BREAKOUT, same parameters) on today's completed candles and makes positions follow it:
  * a new engine entry opens a position (BUY the option), an engine exit closes it (SELL). Because the engine is the
  * one the backtests use, live decisions follow exactly the backtested rules, decided on completed candles.
@@ -70,7 +70,7 @@ public class LiveStrategyRunner {
         this.maxEntryDelay = Duration.ofMinutes(maxEntryDelayMinutes);
     }
 
-    @Scheduled(cron = "${trading.runner.cron:5 * * * * *}", zone = "Asia/Kolkata")
+    @Scheduled(cron = "${trading.runner.cron:3 * * * * *}", zone = "Asia/Kolkata")
     public void tick() {
         try { orderService.syncLiveOrders(); } catch (RuntimeException e) { log.warn("LIVE_SYNC_FAILED {}", e.getMessage()); }
         refreshLivePrices();

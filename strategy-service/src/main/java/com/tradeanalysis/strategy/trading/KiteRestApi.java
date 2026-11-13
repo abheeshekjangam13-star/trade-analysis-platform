@@ -122,6 +122,31 @@ public class KiteRestApi implements KiteApi {
         return parseOptions(csv, underlying.optionName);
     }
 
+    /** Kite instrument tokens of the indices strategies trade (NSE, fixed). */
+    static final Map<String, Long> INDEX_TOKENS = Map.of("NIFTY 50", 256265L, "NIFTY BANK", 260105L);
+    private static final java.time.format.DateTimeFormatter KITE_TIME =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneId.of("Asia/Kolkata"));
+
+    @Override public List<MinuteBar> minuteBars(String indexSymbol, java.time.Instant from, java.time.Instant to) {
+        Long token = INDEX_TOKENS.get(indexSymbol.toUpperCase(java.util.Locale.ROOT));
+        if (token == null) return List.of();
+        Object data = call(c -> c.get().uri("/instruments/historical/{token}/minute?from={f}&to={t}",
+                token, KITE_TIME.format(from), KITE_TIME.format(to)));
+        return parseMinuteBars(map(data).get("candles"));
+    }
+
+    /** Kite candles: [timestamp, open, high, low, close, volume], timestamp like 2026-11-13T10:58:00+0530. */
+    static List<MinuteBar> parseMinuteBars(Object candles) {
+        List<MinuteBar> out = new ArrayList<>();
+        java.time.format.DateTimeFormatter ts = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
+        for (Object row : list(candles)) {
+            List<Object> r = list(row);
+            if (r.size() < 4) continue;
+            out.add(new MinuteBar(java.time.OffsetDateTime.parse(r.get(0).toString(), ts).toInstant(), num(r.get(2)), num(r.get(3))));
+        }
+        return out;
+    }
+
     /**
      * Options of one index from the NFO list, by its option name ("NIFTY", "BANKNIFTY").
      * Columns: instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange

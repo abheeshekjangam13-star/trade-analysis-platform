@@ -75,10 +75,11 @@ springdoc:
 trading:
   runner:
     enabled: ${TRADING_RUNNER_ENABLED:true}       # runs PAPER/LIVE strategies every minute in market hours
-    cron: "5 * * * * *"                           # 5 s after each minute's close (IST), once Kite has the closed candle
+    cron: "3 * * * * *"                           # 3 s after each minute's close (IST): market-data treats a candle as final 2 s after its close
     max-entry-delay-minutes: 5                    # never enter a signal older than this (e.g. after a late start)
   exit-watch:
     interval-ms: 1000                             # open positions are checked against the live index price every second
+    candle-every-ms: 3000                         # and against the forming 1-minute candle's high/low (catches sub-second touches)
 
 
 # Login (see README "Login"). Leave AUTH_JWT_SECRET unset to use the random key kept in the auth_key table.

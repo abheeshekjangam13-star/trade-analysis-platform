@@ -205,6 +205,36 @@ class LiveStrategyRunnerTest {
     }
 
     @Test
+    void theExitWatcherCatchesATouchOnlyTheMinuteCandleSaw() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();                                                           // CE from 24,190, stop 24,115; entered 09:25
+        watcher.readCandlesNextCheck();
+        // Every price the watcher saw was 24,180, but the forming 09:26 candle dipped to 24,114 between two of them.
+        // The 09:25 candle went lower still, but that was the entry minute: it doesn't count.
+        when(kite.minuteBars(eq("NIFTY 50"), any(), any())).thenReturn(List.of(
+                new KiteApi.MinuteBar(at(TUE, 9, 25), 24195, 24100),
+                new KiteApi.MinuteBar(at(TUE, 9, 26), 24185, 24114)));
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(20));
+        assertThat(watcher.check()).anyMatch(l -> l.contains("SELL 130 NIFTY26N0324150CE (SL_HIT)"));
+        LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+        assertThat(p.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(p.getExitSpot()).isEqualTo(24115.0);                            // at the stop, as the backtests do
+    }
+
+    @Test
+    void theEntryMinutesCandleNeverClosesAPosition() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();
+        watcher.readCandlesNextCheck();
+        when(kite.minuteBars(eq("NIFTY 50"), any(), any())).thenReturn(List.of(new KiteApi.MinuteBar(at(TUE, 9, 25), 24195, 24100)));
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(20));
+        assertThat(watcher.check()).isEmpty();
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0).getStatus()).isEqualTo(LivePosition.Status.OPEN);
+    }
+
+    @Test
     void theExitWatcherTakesTheTargetToo() {
         prices(120.0, 24180);
         CLOCK.set(at(TUE, 9, 26));
@@ -242,12 +272,12 @@ class LiveStrategyRunnerTest {
     }
 
     @Test
-    void runsFiveSecondsAfterEachMinuteClosesInIst() throws Exception {
+    void runsThreeSecondsAfterEachMinuteClosesInIst() throws Exception {
         var scheduled = LiveStrategyRunner.class.getMethod("tick").getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
-        assertThat(scheduled.cron()).isEqualTo("${trading.runner.cron:5 * * * * *}");
+        assertThat(scheduled.cron()).isEqualTo("${trading.runner.cron:3 * * * * *}");
         assertThat(scheduled.zone()).isEqualTo("Asia/Kolkata");
-        var next = org.springframework.scheduling.support.CronExpression.parse("5 * * * * *").next(at(TUE, 10, 5).atZone(IST));
-        assertThat(next.toLocalTime()).isEqualTo(LocalTime.of(10, 5, 5));   // the 10:00 candle closed at 10:05:00
+        var next = org.springframework.scheduling.support.CronExpression.parse("3 * * * * *").next(at(TUE, 10, 5).atZone(IST));
+        assertThat(next.toLocalTime()).isEqualTo(LocalTime.of(10, 5, 3));   // the 10:00 candle closed at 10:05:00
     }
 
     @Test
