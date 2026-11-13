@@ -1,5 +1,7 @@
 package com.tradeanalysis.strategy.trading;
 
+import com.tradeanalysis.strategy.engine.CandleMemo;
+
 import com.tradeanalysis.common.dto.Interval;
 import com.tradeanalysis.common.dto.PriceSeries;
 import com.tradeanalysis.common.indicator.Params;
@@ -79,6 +81,17 @@ public class LiveStrategyRunner {
 
     /** Runs every PAPER/LIVE strategy once now (engine once per strategy, positions per user); a line per user and strategy. */
     public List<String> runAll() {
+        long started = System.nanoTime();
+        // Every strategy reads the same index candles: fetch them once per run, not twice per strategy (with 18
+        // strategies that took most of the minute, so the last ones acted on a closed candle ~50 s late).
+        CandleMemo candles = new CandleMemo(clock.instant());
+        List<String> report = candles.with(this::runEach);
+        log.info("RUNNER_TIMING lines={} candleFetches={} total={}ms", report.size(), candles.fetches(),
+                (System.nanoTime() - started) / 1_000_000);
+        return report;
+    }
+
+    private List<String> runEach() {
         List<String> report = new ArrayList<>();
         Map<Long, List<StrategyLiveConfig>> byStrategy = new TreeMap<>();
         for (StrategyLiveConfig cfg : configs.findByModeNot(TradingMode.OFF))
@@ -180,9 +193,9 @@ public class LiveStrategyRunner {
             return new Evaluation(s, null, null, today, now, "#" + s.getId() + ": only NIFTY_OPENING_BREAKOUT can trade live");
         Params params = new Params(new HashMap<>(s.getParameters()));
         String symbol = underlying(params).indexSymbol;   // NIFTY 50 or NIFTY BANK, as the strategy says
-        PriceSeries five = marketData.getRange(symbol, Interval.MINUTE_5,
+        PriceSeries five = CandleMemo.getRange(marketData, symbol, Interval.MINUTE_5,
                 today.minusDays(NiftyOpeningBreakoutEngine.warmupDays(params)).atStartOfDay(IST).toInstant(), now);
-        PriceSeries one = marketData.getRange(symbol, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
+        PriceSeries one = CandleMemo.getRange(marketData, symbol, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
         try {
             NiftyOpeningBreakoutEngine.validateParams(params);
         } catch (IllegalArgumentException e) {   // saved before parameters were checked: skip it, warn once a day

@@ -22,7 +22,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * The live runner with the real engine and master strategy #56 (CE gap-up) on made-up candles, in PAPER mode,
@@ -121,6 +121,17 @@ class LiveStrategyRunnerTest {
                 + "VALUES (56, ?, ?, 'PAPER', 'CE', 'X', 130, ?, 24000, 'CLOSED', -3900, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", a, TUE, at(TUE, 9, 0));
         assertThat(runner.runAll()).anyMatch(l -> l.contains("entry blocked: Your max day loss is reached"));
         assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE)).hasSize(1);   // only the old closed one
+    }
+
+    @Test
+    void oneMinuteRunReadsTheIndexCandlesOncePerIntervalForAllItsStrategies() {
+        paper(55L, user("runner-b"));   // a second strategy on the same index
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
+        CLOCK.set(at(TUE, 9, 26));
+        clearInvocations(marketData);
+        runner.runAll();
+        verify(marketData, times(1)).getRange(anyString(), eq(Interval.MINUTE_1), any(), any());
+        verify(marketData, atMost(2)).getRange(anyString(), eq(Interval.MINUTE_5), any(), any());   // widened once if the warm-ups differ
     }
 
     @Test

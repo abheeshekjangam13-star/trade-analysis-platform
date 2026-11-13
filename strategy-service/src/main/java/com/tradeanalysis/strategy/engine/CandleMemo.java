@@ -30,7 +30,8 @@ public final class CandleMemo {
     private final java.util.concurrent.atomic.AtomicInteger fetches = new java.util.concurrent.atomic.AtomicInteger();
 
     public CandleMemo() { this(Instant.now()); }
-    CandleMemo(Instant opened) { this.opened = opened; }
+    /** A memo for a run that started at {@code opened} (ranges fetched up to then count as "up to now"). */
+    public CandleMemo(Instant opened) { this.opened = opened; }
 
     /** Runs the task with this memo serving its candle reads (on the calling thread). */
     public <T> T with(Supplier<T> task) {
@@ -41,7 +42,7 @@ public final class CandleMemo {
     }
 
     /** The candles in [from, to]: from the current memo when there is one, else from market-data. */
-    static PriceSeries getRange(MarketDataClient md, String symbol, Interval interval, Instant from, Instant to) {
+    public static PriceSeries getRange(MarketDataClient md, String symbol, Interval interval, Instant from, Instant to) {
         CandleMemo memo = CURRENT.get();
         return memo == null ? md.getRange(symbol, interval, from, to) : memo.read(md, symbol, interval, from, to);
     }
