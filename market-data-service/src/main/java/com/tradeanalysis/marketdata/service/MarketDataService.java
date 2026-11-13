@@ -97,8 +97,10 @@ public class MarketDataService {
 
     private PriceSeries readRange(String symbol, Interval interval, Instant from, Instant to) {
         String sym = symbol.toUpperCase();
-        backfill(sym, interval, from, to);
-        List<Candle> candles = repo.findInRange(sym, interval.name(), from, to)
+        List<CandleEntity> unchanged = backfill(sym, interval, from, to);
+        // Read the range again only when backfill changed it; otherwise its read is the answer (a 360-day 1-minute
+        // range is ~135k rows, so the second read was half the database work of every backtest).
+        List<Candle> candles = (unchanged != null ? unchanged : repo.findInRange(sym, interval.name(), from, to))
                 .stream().map(this::toDto).toList();
         if (candles.isEmpty()) throw new NotFoundException("No data in range for symbol: " + sym);
         return new PriceSeries(sym, interval, candles);
@@ -119,8 +121,13 @@ public class MarketDataService {
         }
     }
 
-    private void backfill(String symbol, Interval interval, Instant from, Instant to) {
+    /**
+     * Fetches from Kite whatever part of [from, to] is missing or may be stale. Returns the stored range as read when
+     * nothing was fetched or deleted (so the caller needn't read it again), else null.
+     */
+    private List<CandleEntity> backfill(String symbol, Interval interval, Instant from, Instant to) {
         List<CandleEntity> stored = repo.findInRange(symbol, interval.name(), from, to);
+        boolean changed = false;
 
         // Intraday bars not on an interval boundary (e.g. 11:15:58) came from an unaligned Kite
         // request; they never match the 09:15 reference bar and must be replaced.
@@ -132,17 +139,19 @@ public class MarketDataService {
                 log.warn("Deleting {} misaligned {} candles for {}", misaligned.size(), interval, symbol);
                 repo.deleteAll(misaligned);
                 stored = repo.findInRange(symbol, interval.name(), from, to);
+                changed = true;
             }
         }
 
         if (stored.isEmpty()) {
             persist(symbol, interval, client.fetchRange(symbol, interval, from, to));
-            return;
+            return null;
         }
         Instant first = stored.get(0).getTimestamp();
         Instant last  = stored.get(stored.size() - 1).getTimestamp();
         if (first.isAfter(from.plus(Duration.ofDays(4)))) { // tolerate weekends/holidays at range start
             persist(symbol, interval, client.fetchRange(symbol, interval, from, first));
+            changed = true;
         }
         Instant refetchFrom = null;
         // Re-fetch the last stored bar too: it may have been saved while still forming.
@@ -152,7 +161,70 @@ public class MarketDataService {
         if (refetchFrom != null) {
             persist(symbol, interval, client.fetchRange(symbol, interval, refetchFrom, to));
             markSettled(symbol, interval, refetchFrom);
+            changed = true;
         }
+        if (fillGaps(symbol, interval, stored)) changed = true;
+        return changed ? null : stored;
+    }
+
+    /** At most this many missing or partial days are fetched per request, so one request never stalls on Kite. */
+    static final int MAX_GAP_DAYS_PER_REQUEST = 10;
+    /** symbol|interval|date already re-fetched in this process: a day Kite can't complete (e.g. a short special session) is tried once. */
+    private final Set<String> gapTried = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Fills holes in the middle of the stored intraday candles, which the start/end checks above never see: a whole
+     * trading day missing (the index has a daily candle for it but there are no intraday candles), or a past day with
+     * fewer candles than a full 09:15–15:30 session. Only days strictly between the first and last stored day and
+     * before today. Returns whether it fetched.
+     */
+    private boolean fillGaps(String symbol, Interval interval, List<CandleEntity> stored) {
+        if (!isIntraday(interval) || stored.isEmpty()) return false;
+        LocalDate today = LocalDate.ofInstant(clock.instant(), IST);
+        LocalDate first = stored.get(0).getTimestamp().atZone(IST).toLocalDate();
+        LocalDate last = stored.get(stored.size() - 1).getTimestamp().atZone(IST).toLocalDate();
+        if (!first.plusDays(1).isBefore(last)) return false;
+        Map<LocalDate, Integer> perDay = new HashMap<>();
+        for (CandleEntity e : stored) perDay.merge(e.getTimestamp().atZone(IST).toLocalDate(), 1, Integer::sum);
+        int fullDay = fullSessionCandles(interval);
+        Set<LocalDate> sessions = null;   // the index's trading days, from its daily candles (read only if needed)
+
+        List<LocalDate> gaps = new ArrayList<>();
+        for (LocalDate d = first.plusDays(1); d.isBefore(last) && d.isBefore(today); d = d.plusDays(1)) {
+            if (d.getDayOfWeek() == DayOfWeek.SATURDAY || d.getDayOfWeek() == DayOfWeek.SUNDAY) continue;
+            int n = perDay.getOrDefault(d, 0);
+            if (n >= fullDay) continue;
+            if (n == 0) {   // missing day or holiday: only a day the index traded (has a daily candle) is a gap
+                if (sessions == null) sessions = dailySessions(symbol, first, last);
+                if (!sessions.contains(d)) continue;
+            }
+            if (gapTried.add(symbol + "|" + interval + "|" + d)) gaps.add(d);
+            if (gaps.size() >= MAX_GAP_DAYS_PER_REQUEST) break;
+        }
+        boolean fetched = false;
+        for (LocalDate d : gaps) {
+            try {
+                List<Candle> got = client.fetchRange(symbol, interval, d.atTime(9, 15).atZone(IST).toInstant(), d.atTime(15, 30).atZone(IST).toInstant());
+                log.info("GAP_FILL {} {} {}: had {} of {} candles, fetched {}", symbol, interval, d, perDay.getOrDefault(d, 0), fullDay, got.size());
+                persist(symbol, interval, got);
+                fetched = true;
+            } catch (RuntimeException e) {
+                log.warn("GAP_FILL {} {} {} failed: {}", symbol, interval, d, e.getMessage());
+            }
+        }
+        return fetched;
+    }
+
+    /** Candles in a full 09:15–15:30 session (375 minutes): 375 one-minute, 75 five-minute, 7 hourly. */
+    static int fullSessionCandles(Interval interval) {
+        return (int) Math.ceil(375 * 60.0 / interval.duration().getSeconds());
+    }
+
+    private Set<LocalDate> dailySessions(String symbol, LocalDate from, LocalDate to) {
+        Set<LocalDate> days = new HashSet<>();
+        repo.findInRange(symbol, Interval.DAY_1.name(), from.atStartOfDay(IST).toInstant(), to.plusDays(1).atStartOfDay(IST).toInstant())
+                .forEach(e -> days.add(e.getTimestamp().atZone(IST).toLocalDate()));
+        return days;
     }
 
     /**

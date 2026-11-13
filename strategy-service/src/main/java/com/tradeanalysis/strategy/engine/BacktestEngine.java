@@ -4,6 +4,8 @@ import com.tradeanalysis.common.dto.*;
 import com.tradeanalysis.common.indicator.Params;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.model.Strategy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -24,6 +26,9 @@ import java.util.*;
 public class BacktestEngine {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+    private static final Logger log = LoggerFactory.getLogger(BacktestEngine.class);
+    /** More separate runs of missing days than this: simulate the whole window once instead. */
+    static final int MAX_BLOCKS = 4;
 
     private final MarketDataClient           mdClient;
     private final IndicatorClient            indClient;
@@ -33,11 +38,13 @@ public class BacktestEngine {
     private final CprEngine                  cprEngine;
     private final EmaCrossEngine             emaCrossEngine;
     private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
+    private final BacktestDayCache dayCache;
 
     public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient,
                           NiftyOpeningBreakoutEngine niftyEngine, PreviousRangeEngine previousRangeEngine,
                           com.tradeanalysis.strategy.estimate.CapitalFit capitalFit, GapFillEngine gapFillEngine,
-                          CprEngine cprEngine, EmaCrossEngine emaCrossEngine) {
+                          CprEngine cprEngine, EmaCrossEngine emaCrossEngine, BacktestDayCache dayCache) {
+        this.dayCache = dayCache;
         this.gapFillEngine = gapFillEngine;
         this.cprEngine = cprEngine;
         this.emaCrossEngine = emaCrossEngine;
@@ -88,35 +95,48 @@ public class BacktestEngine {
         return new BacktestOutput(finalEquity, totalReturn, maxDD, total, wins, sharpe, signals, List.of());
     }
 
+    /** Milliseconds spent per stage, for the BACKTEST_TIMING log line. */
+    private static final class Timing {
+        long fetch5m, fetch1m, fetchDays, simulate;
+        static long ms(long startNanos) { return (System.nanoTime() - startNanos) / 1_000_000; }
+    }
+
     private BacktestOutput runNiftyBreakout(Strategy strategy, String symbol, int lookbackDays, double capital) {
+        long started = System.nanoTime();
+        Timing timing = new Timing();
         // Calendar-day window, starting at IST midnight so the first day's 09:15 candle is included.
-        // 5-min data starts a few days earlier only to give the first day a previous close (gap filter).
         Instant to   = Instant.now();
-        LocalDate tradeFrom = LocalDate.now(IST).minusDays(lookbackDays);
-        Instant from = tradeFrom.atStartOfDay(IST).toInstant();
-        PriceSeries series = mdClient.getRange(symbol, Interval.MINUTE_5,
-                tradeFrom.minusDays(NiftyOpeningBreakoutEngine.warmupDays(new Params(toObjectMap(strategy.getParameters()))))
-                        .atStartOfDay(IST).toInstant(), to);
-        PriceSeries minutes = mdClient.getRange(symbol, Interval.MINUTE_1, from, to);
+        LocalDate today = LocalDate.ofInstant(to, IST);
+        LocalDate tradeFrom = today.minusDays(lookbackDays);
         Params params = new Params(toObjectMap(strategy.getParameters()));
-        // Which engine runs is decided by the strategy's parameters: referenceMode=PREVIOUS_DAY goes to the
-        // previous-day PE engine; everything else runs on the 09:15 reference candle as before.
-        NiftyOpeningBreakoutEngine.BreakoutResult result;
-        if (PreviousRangeEngine.handles(params)) {
-            PreviousRangeEngine.validateParams(params);
-            result = previousRangeEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
-        } else if (GapFillEngine.handles(params)) {   // referenceMode=GAP_FILL: back into the opening gap
-            GapFillEngine.validateParams(params);
-            result = gapFillEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
-        } else if (CprEngine.handles(params)) {   // referenceMode=CPR: break of yesterday's R1 / S1
-            CprEngine.validateParams(params);
-            result = cprEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
-        } else if (EmaCrossEngine.handles(params)) {   // referenceMode=EMA_CROSS: 5-min EMA crossover
-            EmaCrossEngine.validateParams(params);
-            result = emaCrossEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+
+        // Days already simulated by an earlier run are reused; only the rest are simulated (see BacktestDayCache).
+        // The EMA crossover carries its EMAs across the whole loaded window, so a day depends on where the window
+        // starts: it always runs in full.
+        boolean cacheable = !EmaCrossEngine.handles(params);
+        String key = cacheable ? dayCache.key(strategy.getId(), symbol, strategy.getParameters()) : null;
+        Map<LocalDate, BacktestDayCache.Day> stored = cacheable ? dayCache.load(key, tradeFrom, today.minusDays(1)) : Map.of();
+        List<LocalDate> sessions = cacheable && !stored.isEmpty() ? sessions(symbol, tradeFrom, today.minusDays(1), timing) : List.of();
+
+        List<NiftyOpeningBreakoutEngine.BreakoutResult> simulated = new ArrayList<>();
+        Map<LocalDate, BacktestDayCache.Day> reused = new TreeMap<>();
+        List<LocalDate[]> blocks = sessions.isEmpty() ? null : missingBlocks(sessions, stored.keySet(), today);
+        if (blocks == null || blocks.size() > MAX_BLOCKS) {
+            simulated.add(simulate(strategy, symbol, params, tradeFrom, today, to, timing));   // the whole window
         } else {
-            result = niftyEngine.run(series, minutes, params, strategy.getId(), to, tradeFrom);
+            for (LocalDate d : sessions) if (stored.containsKey(d)) reused.put(d, stored.get(d));
+            for (LocalDate[] b : blocks) {
+                if (hasPastSession(sessions, b[0], today)) { simulated.add(simulate(strategy, symbol, params, b[0], b[1], to, timing)); continue; }
+                // Only today is left (every past day is stored). On a weekend, a holiday or before 09:15 it has no
+                // candles, and market-data answers an empty range with an error: that just means nothing to simulate.
+                try { simulated.add(simulate(strategy, symbol, params, b[0], b[1], to, timing)); }
+                catch (RuntimeException e) { log.debug("BACKTEST_CACHE nothing to simulate for {}..{}: {}", b[0], b[1], e.getMessage()); }
+            }
         }
+
+        List<BacktestDayCache.Day> fresh = byDay(simulated);
+        if (cacheable) dayCache.store(key, fresh, today);   // before the capital limit resizes the trades
+        NiftyOpeningBreakoutEngine.BreakoutResult result = assemble(reused.values(), fresh);
 
         // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
         com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);
@@ -126,8 +146,122 @@ public class BacktestEngine {
         double totalPnl = logs.stream().mapToDouble(NiftyTradeLog::getEstimatedPnl).sum();
         double totalReturn = capital > 0 ? (totalPnl / capital) * 100 : 0;
 
+        log.info("BACKTEST_TIMING strategy={} {} days={} reusedDays={} simulatedDays={} blocks={} fetch5m={}ms fetch1m={}ms fetchDays={}ms simulate={}ms total={}ms",
+                strategy.getId(), symbol, lookbackDays, reused.size(), fresh.size(), simulated.size(),
+                timing.fetch5m, timing.fetch1m, timing.fetchDays, timing.simulate, Timing.ms(started));
         return new BacktestOutput(capital + totalPnl, totalReturn, maxDrawdownPct(capital, logs),
                 total, wins, 0.0, result.signals(), logs, result.days(), fit.skipped());
+    }
+
+    /** Simulates the trading days from {@code from} to {@code until} (inclusive; today runs up to now). */
+    private NiftyOpeningBreakoutEngine.BreakoutResult simulate(Strategy strategy, String symbol, Params params,
+                                                                LocalDate from, LocalDate until, Instant now, Timing timing) {
+        // 5-min data starts a few days earlier only to give the first day its history (previous close, SMA, ...).
+        Instant end = until.isBefore(LocalDate.ofInstant(now, IST)) ? until.plusDays(1).atStartOfDay(IST).toInstant().minusSeconds(1) : now;
+        long t = System.nanoTime();
+        PriceSeries series = mdClient.getRange(symbol, Interval.MINUTE_5,
+                from.minusDays(NiftyOpeningBreakoutEngine.warmupDays(params)).atStartOfDay(IST).toInstant(), end);
+        timing.fetch5m += Timing.ms(t);
+        t = System.nanoTime();
+        PriceSeries minutes = mdClient.getRange(symbol, Interval.MINUTE_1, from.atStartOfDay(IST).toInstant(), end);
+        timing.fetch1m += Timing.ms(t);
+        t = System.nanoTime();
+        NiftyOpeningBreakoutEngine.BreakoutResult r = engineFor(params, series, minutes, strategy.getId(), now, from);
+        timing.simulate += Timing.ms(t);
+        return r;
+    }
+
+    /**
+     * Which engine runs is decided by the strategy's parameters: referenceMode=PREVIOUS_DAY goes to the previous-day
+     * engine, GAP_FILL, CPR and EMA_CROSS to theirs; everything else runs on the 09:15 reference candle.
+     */
+    private NiftyOpeningBreakoutEngine.BreakoutResult engineFor(Params params, PriceSeries series, PriceSeries minutes,
+                                                                 Long strategyId, Instant to, LocalDate tradeFrom) {
+        if (PreviousRangeEngine.handles(params)) {
+            PreviousRangeEngine.validateParams(params);
+            return previousRangeEngine.run(series, minutes, params, strategyId, to, tradeFrom);
+        } else if (GapFillEngine.handles(params)) {   // referenceMode=GAP_FILL: back into the opening gap
+            GapFillEngine.validateParams(params);
+            return gapFillEngine.run(series, minutes, params, strategyId, to, tradeFrom);
+        } else if (CprEngine.handles(params)) {   // referenceMode=CPR: break of yesterday's R1 / S1
+            CprEngine.validateParams(params);
+            return cprEngine.run(series, minutes, params, strategyId, to, tradeFrom);
+        } else if (EmaCrossEngine.handles(params)) {   // referenceMode=EMA_CROSS: 5-min EMA crossover
+            EmaCrossEngine.validateParams(params);
+            return emaCrossEngine.run(series, minutes, params, strategyId, to, tradeFrom);
+        }
+        return niftyEngine.run(series, minutes, params, strategyId, to, tradeFrom);
+    }
+
+    /** Whether a past trading day (before today) falls in the block starting at {@code from}. */
+    static boolean hasPastSession(List<LocalDate> sessions, LocalDate from, LocalDate today) {
+        return sessions.stream().anyMatch(d -> !d.isBefore(from) && d.isBefore(today));
+    }
+
+    /** The index's trading days from its daily candles (empty if they can't be had: the window then runs in full). */
+    private List<LocalDate> sessions(String symbol, LocalDate from, LocalDate to, Timing timing) {
+        if (to.isBefore(from)) return List.of();
+        long t = System.nanoTime();
+        try {
+            PriceSeries daily = mdClient.getRange(symbol, Interval.DAY_1, from.atStartOfDay(IST).toInstant(),
+                    to.plusDays(1).atStartOfDay(IST).toInstant().minusSeconds(1));
+            return daily.candles().stream().map(c -> c.timestamp().atZone(IST).toLocalDate()).distinct().sorted().toList();
+        } catch (RuntimeException e) {
+            log.warn("BACKTEST_CACHE no daily candles for {} {}..{}: {}", symbol, from, to, e.getMessage());
+            return List.of();
+        } finally {
+            timing.fetchDays += Timing.ms(t);
+        }
+    }
+
+    /**
+     * The runs of consecutive trading days (from, until) that still need simulating: past sessions not stored, then
+     * today (always simulated, it isn't over), joined to the run before it when that run ends on the last session.
+     */
+    static List<LocalDate[]> missingBlocks(List<LocalDate> sessions, Set<LocalDate> stored, LocalDate today) {
+        List<LocalDate[]> blocks = new ArrayList<>();
+        LocalDate start = null, prev = null;
+        for (LocalDate d : sessions) {
+            if (stored.contains(d)) {
+                if (start != null) { blocks.add(new LocalDate[]{start, prev}); start = null; }
+            } else if (start == null) start = d;
+            prev = d;
+        }
+        if (start != null) blocks.add(new LocalDate[]{start, today});   // runs on to today
+        else blocks.add(new LocalDate[]{sessions.isEmpty() ? today : prev.plusDays(1), today});
+        return blocks;
+    }
+
+    /** One simulation's output split by day, for storing. */
+    static List<BacktestDayCache.Day> byDay(List<NiftyOpeningBreakoutEngine.BreakoutResult> results) {
+        Map<LocalDate, BacktestDayCache.Day> days = new TreeMap<>();
+        for (NiftyOpeningBreakoutEngine.BreakoutResult r : results) {
+            for (NiftyOpeningBreakoutEngine.DayReport d : r.days())
+                days.put(d.date(), new BacktestDayCache.Day(d.date(), d, new ArrayList<>(), new ArrayList<>()));
+            for (NiftyTradeLog t : r.tradeLogs())
+                days.computeIfAbsent(t.getTradeDate(), k -> new BacktestDayCache.Day(k, null, new ArrayList<>(), new ArrayList<>())).trades().add(t);
+            for (Signal s : r.signals()) {
+                LocalDate k = s.timestamp().atZone(IST).toLocalDate();
+                days.computeIfAbsent(k, x -> new BacktestDayCache.Day(x, null, new ArrayList<>(), new ArrayList<>())).signals().add(s);
+            }
+        }
+        return new ArrayList<>(days.values());
+    }
+
+    /** Reused and newly simulated days as one result, in day order (trades by day and number, signals by time). */
+    static NiftyOpeningBreakoutEngine.BreakoutResult assemble(Collection<BacktestDayCache.Day> reused, Collection<BacktestDayCache.Day> fresh) {
+        TreeMap<LocalDate, BacktestDayCache.Day> all = new TreeMap<>();
+        reused.forEach(d -> all.put(d.date(), d));
+        fresh.forEach(d -> all.put(d.date(), d));
+        List<Signal> signals = new ArrayList<>();
+        List<NiftyTradeLog> trades = new ArrayList<>();
+        List<NiftyOpeningBreakoutEngine.DayReport> days = new ArrayList<>();
+        for (BacktestDayCache.Day d : all.values()) {
+            if (d.report() != null) days.add(d.report());
+            d.trades().stream().sorted(Comparator.comparingInt(NiftyTradeLog::getTradeNumber)).forEach(trades::add);
+            d.signals().stream().sorted(Comparator.comparing(Signal::timestamp)).forEach(signals::add);
+        }
+        return new NiftyOpeningBreakoutEngine.BreakoutResult(signals, trades, days);
     }
 
     /** Largest peak-to-trough fall in account equity (capital + cumulative P&L), as % of the peak. */

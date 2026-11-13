@@ -26,6 +26,8 @@ import java.util.Map;
 @Service
 public class StrategyService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(StrategyService.class);
+
     private final StrategyRepository       stratRepo;
     private final BacktestResultRepository btRepo;
     private final NiftyTradeLogRepository  niftyRepo;
@@ -353,6 +355,7 @@ public class StrategyService {
                 out.totalTrades(), out.winningTrades(), out.sharpeRatio(), out.signals());
         result.setRunContext(lookbackDays, CurrentUser.id().orElse(null));
         result.setSkippedTrades(out.skippedTrades());
+        long saveStarted = System.nanoTime();
         BacktestResult saved = btRepo.save(result);
 
         if (!out.tradeLogs().isEmpty()) {
@@ -362,6 +365,8 @@ public class StrategyService {
         // Stored reports for the UI: one row per trading day and per month.
         dailyRepo.saveAll(ReportBuilder.daily(saved.getId(), out.days(), out.tradeLogs()));
         monthlyRepo.saveAll(ReportBuilder.monthly(saved.getId(), out.days(), out.tradeLogs()));
+        log.info("BACKTEST_SAVED id={} strategy={} trades={} days={} save={}ms", saved.getId(), strategyId,
+                out.tradeLogs().size(), out.days().size(), (System.nanoTime() - saveStarted) / 1_000_000);
 
         return saved;
     }
