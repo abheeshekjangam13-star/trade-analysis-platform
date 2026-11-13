@@ -159,11 +159,11 @@ public class BacktestEngine {
         // 5-min data starts a few days earlier only to give the first day its history (previous close, SMA, ...).
         Instant end = until.isBefore(LocalDate.ofInstant(now, IST)) ? until.plusDays(1).atStartOfDay(IST).toInstant().minusSeconds(1) : now;
         long t = System.nanoTime();
-        PriceSeries series = mdClient.getRange(symbol, Interval.MINUTE_5,
+        PriceSeries series = CandleMemo.getRange(mdClient, symbol, Interval.MINUTE_5,
                 from.minusDays(NiftyOpeningBreakoutEngine.warmupDays(params)).atStartOfDay(IST).toInstant(), end);
         timing.fetch5m += Timing.ms(t);
         t = System.nanoTime();
-        PriceSeries minutes = mdClient.getRange(symbol, Interval.MINUTE_1, from.atStartOfDay(IST).toInstant(), end);
+        PriceSeries minutes = CandleMemo.getRange(mdClient, symbol, Interval.MINUTE_1, from.atStartOfDay(IST).toInstant(), end);
         timing.fetch1m += Timing.ms(t);
         t = System.nanoTime();
         NiftyOpeningBreakoutEngine.BreakoutResult r = engineFor(params, series, minutes, strategy.getId(), now, from);
@@ -203,7 +203,7 @@ public class BacktestEngine {
         if (to.isBefore(from)) return List.of();
         long t = System.nanoTime();
         try {
-            PriceSeries daily = mdClient.getRange(symbol, Interval.DAY_1, from.atStartOfDay(IST).toInstant(),
+            PriceSeries daily = CandleMemo.getRange(mdClient, symbol, Interval.DAY_1, from.atStartOfDay(IST).toInstant(),
                     to.plusDays(1).atStartOfDay(IST).toInstant().minusSeconds(1));
             return daily.candles().stream().map(c -> c.timestamp().atZone(IST).toLocalDate()).distinct().sorted().toList();
         } catch (RuntimeException e) {

@@ -37,6 +37,7 @@ public class StrategyService {
     private final com.tradeanalysis.strategy.user.SharedStrategies shared;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final com.tradeanalysis.strategy.user.DeleteAllowance deletes;
+    private final BacktestRows rows;
 
     public StrategyService(StrategyRepository stratRepo,
                            BacktestResultRepository btRepo,
@@ -50,6 +51,7 @@ public class StrategyService {
         this.deletes = deletes;
         this.shared = shared;
         this.jdbc = jdbc;
+        this.rows = new BacktestRows(jdbc);
         this.stratRepo = stratRepo;
         this.btRepo    = btRepo;
         this.niftyRepo = niftyRepo;
@@ -358,13 +360,12 @@ public class StrategyService {
         long saveStarted = System.nanoTime();
         BacktestResult saved = btRepo.save(result);
 
-        if (!out.tradeLogs().isEmpty()) {
-            out.tradeLogs().forEach(log -> log.setBacktestResultId(saved.getId()));
-            niftyRepo.saveAll(out.tradeLogs());
-        }
-        // Stored reports for the UI: one row per trading day and per month.
-        dailyRepo.saveAll(ReportBuilder.daily(saved.getId(), out.days(), out.tradeLogs()));
-        monthlyRepo.saveAll(ReportBuilder.monthly(saved.getId(), out.days(), out.tradeLogs()));
+        // Batched inserts (see BacktestRows): the trades, and the stored reports for the UI, one row per trading day
+        // and per month.
+        out.tradeLogs().forEach(log -> log.setBacktestResultId(saved.getId()));
+        rows.insertTrades(out.tradeLogs());
+        rows.insertDaily(ReportBuilder.daily(saved.getId(), out.days(), out.tradeLogs()));
+        rows.insertMonthly(ReportBuilder.monthly(saved.getId(), out.days(), out.tradeLogs()));
         log.info("BACKTEST_SAVED id={} strategy={} trades={} days={} save={}ms", saved.getId(), strategyId,
                 out.tradeLogs().size(), out.days().size(), (System.nanoTime() - saveStarted) / 1_000_000);
 

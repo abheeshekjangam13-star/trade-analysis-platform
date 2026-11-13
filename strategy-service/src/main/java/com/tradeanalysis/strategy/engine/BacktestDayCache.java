@@ -11,6 +11,8 @@ import com.tradeanalysis.common.dto.Signal;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +23,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.sql.Types;
 import java.util.*;
 
 /**
@@ -54,6 +58,7 @@ public class BacktestDayCache {
 
     private final BacktestDayCacheRepository repo;
     private final Clock clock;
+    private final JdbcTemplate jdbc;   // null in unit tests: stores through the repository
     private final ObjectMapper json = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.NONE)
@@ -64,7 +69,9 @@ public class BacktestDayCache {
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
             .addMixIn(NiftyTradeLog.class, TradeFields.class);
 
-    public BacktestDayCache(BacktestDayCacheRepository repo, Clock clock) { this.repo = repo; this.clock = clock; }
+    @Autowired
+    public BacktestDayCache(BacktestDayCacheRepository repo, Clock clock, JdbcTemplate jdbc) { this.repo = repo; this.clock = clock; this.jdbc = jdbc; }
+    BacktestDayCache(BacktestDayCacheRepository repo, Clock clock) { this(repo, clock, null); }
 
     /** The fingerprint of everything that decides a day's outcome. */
     public String key(Long strategyId, String symbol, Map<String, String> parameters) {
@@ -105,6 +112,16 @@ public class BacktestDayCache {
             catch (Exception e) { log.warn("BACKTEST_CACHE could not store {}: {}", d.date(), e.getMessage()); }
         }
         if (rows.isEmpty()) return 0;
+        if (jdbc != null) {
+            // One batched insert. A day another run stored meanwhile (e.g. the same strategy in two reports at once) is
+            // skipped by the database: a failed insert would otherwise spoil the whole backtest's transaction.
+            List<Object[]> args = rows.stream().map(r -> new Object[]{r.getCacheKey(), r.getTradeDate(), r.getPayload(),
+                    r.getLastUsedAt().atOffset(ZoneOffset.UTC), r.getLastUsedAt().atOffset(ZoneOffset.UTC)}).toList();
+            jdbc.batchUpdate("INSERT INTO backtest_day_cache (cache_key, trade_date, payload, created_at, last_used_at) "
+                    + "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING", args,
+                    new int[]{Types.VARCHAR, Types.DATE, Types.VARCHAR, Types.TIMESTAMP_WITH_TIMEZONE, Types.TIMESTAMP_WITH_TIMEZONE});
+            return rows.size();
+        }
         try {
             repo.saveAll(rows);
             return rows.size();

@@ -36,6 +36,20 @@ public final class CurrentUser {
         return c == null || c.admin() || (ownerId != null && ownerId.equals(c.id()));
     }
 
+    /**
+     * The task, run as the current caller on whichever thread runs it. A worker thread starts with no caller, which
+     * would count as {@link #unrestricted()}: anything run on a pool for a request must go through this.
+     */
+    public static <T> java.util.concurrent.Callable<T> carry(java.util.function.Supplier<T> task) {
+        Caller caller = CALLER.get();
+        return () -> {
+            Caller before = CALLER.get();
+            if (caller == null) CALLER.remove(); else CALLER.set(caller);
+            try { return task.get(); }
+            finally { if (before == null) CALLER.remove(); else CALLER.set(before); }
+        };
+    }
+
     static void set(Long userId, boolean admin, Plan plan) { CALLER.set(new Caller(userId, admin, plan)); }
     static void set(Long userId, boolean admin)            { set(userId, admin, null); }
     static void set(Long userId)                           { set(userId, false); }

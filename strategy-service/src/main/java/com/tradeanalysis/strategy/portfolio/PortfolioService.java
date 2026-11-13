@@ -1,6 +1,7 @@
 package com.tradeanalysis.strategy.portfolio;
 
 import com.tradeanalysis.common.exception.NotFoundException;
+import com.tradeanalysis.strategy.engine.CandleMemo;
 import com.tradeanalysis.strategy.model.BacktestResult;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.service.StrategyService;
@@ -13,11 +14,17 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import jakarta.annotation.PreDestroy;
 
 @Service
 public class PortfolioService {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PortfolioService.class);
 
     private final PortfolioRepository portfolios;
     private final PortfolioReportRepository reports;
@@ -129,6 +136,10 @@ public class PortfolioService {
     /**
      * Runs a fresh backtest of every strategy for each window, combines their trades and stores one report per
      * window. Backtests (with their daily/monthly reports) are saved as they complete.
+     *
+     * <p>The strategies run {@link #PARALLEL} at a time, all reading one shared copy of the candles ({@link CandleMemo}).
+     * Each strategy runs its windows longest first: the long window stores every day it simulates (BacktestDayCache), so
+     * the shorter ones only reuse them.
      */
     public List<PortfolioReport> run(Long portfolioId, List<Integer> windows, double capital, String symbol) {
         Portfolio portfolio = get(portfolioId);
@@ -139,14 +150,16 @@ public class PortfolioService {
         // Blank = each strategy on the index it trades (NIFTY or Bank Nifty), so one portfolio can mix them.
         boolean ownIndex = symbol == null || symbol.isBlank();
         String label = ownIndex ? "Each strategy's index" : symbol.trim();
+        Map<Long, Map<Integer, BacktestResult>> backtests = backtestAll(portfolio.getStrategyIds(), windows,
+                ownIndex ? null : symbol, capital);
         List<PortfolioReport> saved = new ArrayList<>();
         for (int window : windows) {
-            // Each strategy's backtest is saved as it completes; then all their trades share one capital pool. A trade
-            // that the free capital can't buy at its entry is left out, as in a single backtest (CapitalFit).
+            // All the strategies' trades share one capital pool. A trade that the free capital can't buy at its entry
+            // is left out, as in a single backtest (CapitalFit).
             List<NiftyTradeLog> all = new ArrayList<>();
             Map<Long, Long> strategyOfBacktest = new LinkedHashMap<>();
             for (Long strategyId : portfolio.getStrategyIds()) {
-                BacktestResult bt = strategies.backtest(strategyId, ownIndex ? null : symbol, window, capital);
+                BacktestResult bt = backtests.get(strategyId).get(window);
                 all.addAll(strategies.getNiftyTradeLogs(bt.getId()));
                 strategyOfBacktest.put(bt.getId(), strategyId);
             }
@@ -166,6 +179,47 @@ public class PortfolioService {
             saved.add(report);
         }
         return saved;
+    }
+
+    /** Strategies backtested at once in a report: enough to overlap the waits on the database and market-data. */
+    static final int PARALLEL = 3;
+    private final ExecutorService pool = Executors.newFixedThreadPool(PARALLEL, r -> {
+        Thread t = new Thread(r, "portfolio-backtest");
+        t.setDaemon(true);
+        return t;
+    });
+
+    @PreDestroy
+    void stopPool() { pool.shutdownNow(); }
+
+    /** Every strategy's backtest for every window, as strategy → window → backtest. Fails if any backtest fails. */
+    private Map<Long, Map<Integer, BacktestResult>> backtestAll(Collection<Long> strategyIds, List<Integer> windows, String symbol,
+                                                               double capital) {
+        List<Integer> longestFirst = windows.stream().distinct().sorted(Comparator.reverseOrder()).toList();
+        CandleMemo candles = new CandleMemo();
+        Map<Long, Future<Map<Integer, BacktestResult>>> running = new LinkedHashMap<>();
+        for (Long strategyId : new LinkedHashSet<>(strategyIds)) {
+            running.put(strategyId, pool.submit(CurrentUser.carry(() -> candles.with(() -> {
+                Map<Integer, BacktestResult> byWindow = new HashMap<>();
+                for (int window : longestFirst) byWindow.put(window, strategies.backtest(strategyId, symbol, window, capital));
+                return byWindow;
+            }))));
+        }
+        Map<Long, Map<Integer, BacktestResult>> done = new HashMap<>();
+        try {
+            for (Map.Entry<Long, Future<Map<Integer, BacktestResult>>> e : running.entrySet()) done.put(e.getKey(), e.getValue().get());
+        } catch (ExecutionException e) {
+            running.values().forEach(f -> f.cancel(true));
+            if (e.getCause() instanceof RuntimeException re) throw re;
+            if (e.getCause() instanceof Error err) throw err;
+            throw new IllegalStateException(e.getCause());
+        } catch (InterruptedException e) {
+            running.values().forEach(f -> f.cancel(true));
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while backtesting", e);
+        }
+        log.info("PORTFOLIO_BACKTESTS strategies={} windows={} candleFetches={}", done.size(), longestFirst, candles.fetches());
+        return done;
     }
 
     /**

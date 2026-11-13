@@ -12,7 +12,7 @@ spring:
         size: 4        # the 1-second exit watcher must not wait behind the minute runner or other jobs
   datasource:
     # PostgreSQL: one database for all services; see README "Database (PostgreSQL)".
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}?reWriteBatchedInserts=true   # batches go as multi-row INSERTs
     username: ${DB_USER:trade}
     password: ${DB_PASSWORD:choose-a-password}
   jpa:
