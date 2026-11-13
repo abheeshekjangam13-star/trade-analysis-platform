@@ -33,7 +33,13 @@ public class StrategyStatusService {
     private static final Pattern NOT_YET = Pattern.compile("(?i)no (fresh )?breakout|no close beyond|no ema|before the entry cutoff|in the entry window");
 
     public enum State { IN_TRADE, DONE, WAITING, NO_TRADE_TODAY, PROBLEM }
-    public record Trigger(String side, double level, double distance) {}
+    /**
+     * A level that would open a trade, the points still to go, and the stop and target the trade would start with if it
+     * opened right at the level (null when the rule doesn't fix one in advance, e.g. a breakout-candle stop without a cap).
+     */
+    public record Trigger(String side, double level, double distance, Double stop, Double target) {
+        public Trigger(String side, double level, double distance) { this(side, level, distance, null, null); }
+    }
     public record Position(String optionType, String tradingsymbol, double entrySpot, Double stop, Double target, Double entryPrice,
                            int quantity, Instant openedAt) {}
     public record Status(Long strategyId, String name, TradingMode mode, String underlying, State state, String note, Double spot,
@@ -68,7 +74,7 @@ public class StrategyStatusService {
         Double prevClose = null;
         try {
             var hit = barsCache;
-            if (hit == null || Duration.between(hit.at(), now).compareTo(CACHE) >= 0) {
+            if (hit == null || !fresh(hit.at(), now)) {
                 PriceSeries five = marketData.getRange(index, Interval.MINUTE_5, today.minusDays(5).atStartOfDay(IST).toInstant(), now);
                 List<Candle> done = five.candles().stream().filter(c -> c.timestamp().plus(Duration.ofMinutes(5)).compareTo(now) <= 0)
                         .sorted(Comparator.comparing(Candle::timestamp)).toList();
@@ -85,6 +91,17 @@ public class StrategyStatusService {
         }
         Double spot = bars.isEmpty() ? prevClose : Double.valueOf(bars.get(bars.size() - 1).c());   // no unboxing of a null close
         return new Today(index, spot, prevClose, bars, forUser(userId));
+    }
+
+    /**
+     * A cached result is good for a minute, but never past a 5-minute candle close (plus a few seconds for the candle to
+     * reach market data), so a new candle and any signal on it show right away. IST is UTC+5:30, so closes fall on whole
+     * 5 minutes of epoch time.
+     */
+    static boolean fresh(Instant at, Instant now) {
+        long close = 300, grace = 5;
+        return Duration.between(at, now).compareTo(CACHE) < 0
+                && Math.floorDiv(at.getEpochSecond() - grace, close) == Math.floorDiv(now.getEpochSecond() - grace, close);
     }
 
     private record Chart(Instant at, Double previousClose, List<Bar> bars) {}
@@ -146,7 +163,7 @@ public class StrategyStatusService {
 
     private Engine engine(Strategy s, Params p, Instant now) {
         Engine hit = cache.get(s.getId());
-        if (hit != null && Duration.between(hit.at(), now).compareTo(CACHE) < 0) return hit;
+        if (hit != null && fresh(hit.at(), now)) return hit;
         Engine fresh;
         try {
             LocalDate today = now.atZone(IST).toLocalDate();
@@ -204,10 +221,51 @@ public class StrategyStatusService {
             down = range.stream().mapToDouble(c -> c.low().doubleValue()).min().orElseThrow();
         } else return List.of();   // EMA cross, gap fill: no fixed level
         double s = spot == null ? Double.NaN : spot;
+        Double pivot = null;
+        if (mode.equals("CPR")) {
+            double h = prev.stream().mapToDouble(c -> c.high().doubleValue()).max().orElseThrow();
+            double l = prev.stream().mapToDouble(c -> c.low().doubleValue()).min().orElseThrow();
+            pivot = (h + l + prev.get(prev.size() - 1).close().doubleValue()) / 3;
+        }
         List<Trigger> out = new ArrayList<>();
-        if (ce) out.add(new Trigger("CE", round(up), round(up - s)));
-        if (pe) out.add(new Trigger("PE", round(down), round(s - down)));
+        if (ce) out.add(trigger(p, mode, true, up, down, pivot, up - s));
+        if (pe) out.add(trigger(p, mode, false, down, up, pivot, s - down));
         return out;
+    }
+
+    /**
+     * The trade a trigger would open at its level, by the engines' rules: previous day → the other side of yesterday's
+     * range; CPR → the pivot; opening range → initialStop (MIDPOINT of the range, OPPOSITE side, or BREAKOUT_CANDLE,
+     * unknown until that candle). maxStopPoints pulls the stop to at most that far from entry. Target: targetPoints,
+     * or targetR × the initial risk (opening range only).
+     */
+    private static Trigger trigger(Params p, String mode, boolean call, double level, double other, Double pivot, double distance) {
+        // Plain ifs, not ?: chains: a ?: mixing double and a null Double unboxes the null and throws.
+        double cap = p.doubleOr("maxStopPoints", 0);
+        Double stop = null;
+        if (mode.equals("PREVIOUS_DAY")) stop = other;
+        else if (mode.equals("CPR")) stop = pivot;
+        else {
+            String basis = p.stringOr("initialStop", "MIDPOINT").trim().toUpperCase(Locale.ROOT);
+            if (basis.equals("OPPOSITE")) stop = other;
+            else if (!basis.equals("BREAKOUT_CANDLE")) stop = (level + other) / 2;
+        }
+        if (cap > 0) {
+            double capped = call ? level - cap : level + cap;
+            if (stop == null) stop = capped;
+            else stop = call ? Math.max(stop, capped) : Math.min(stop, capped);
+        }
+        double tp = p.doubleOr("targetPoints", 0), tr = mode.isEmpty() ? p.doubleOr("targetR", 0) : 0;
+        Double target = null;
+        if (tp > 0) target = call ? level + tp : level - tp;
+        else if (tr > 0 && stop != null) {
+            double reward = tr * Math.max(1, Math.abs(level - stop));
+            target = call ? level + reward : level - reward;
+        }
+        Double roundedStop = null, roundedTarget = null;
+        if (stop != null) roundedStop = round(stop);
+        if (target != null) roundedTarget = round(target);
+        return new Trigger(call ? "CE" : "PE", round(level), round(distance), roundedStop, roundedTarget);
     }
 
     private static double round(double v) { return Double.isNaN(v) ? v : Math.round(v * 100) / 100.0; }

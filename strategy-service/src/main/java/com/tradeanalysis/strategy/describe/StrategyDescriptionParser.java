@@ -448,6 +448,9 @@ public class StrategyDescriptionParser {
 
     // ── Name ─────────────────────────────────────────────────────────────────
 
+    /** "1 lot", "3 lots". */
+    static String lots(String n) { return n + ("1".equals(n.trim()) ? " lot" : " lots"); }
+
     private static String suggestName(String type, Map<String, String> p) {
         if (!type.equals("NIFTY_OPENING_BREAKOUT")) return switch (type) {
             case "SMA_CROSSOVER" -> "SMA " + p.getOrDefault("fast", "10") + "/" + p.getOrDefault("slow", "30") + " crossover";
@@ -475,7 +478,7 @@ public class StrategyDescriptionParser {
             else n.append(" EMA ").append(p.getOrDefault("fastEma", "9")).append("/").append(p.getOrDefault("slowEma", "21")).append(" Cross");
             if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
             if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
-            if (p.containsKey("lots")) n.append(" - ").append(p.get("lots")).append(" lots");
+            if (p.containsKey("lots")) n.append(" - ").append(lots(p.get("lots")));
             return n.toString();
         }
         else if ("GAP_FILL".equals(p.get("referenceMode"))) {
@@ -483,7 +486,7 @@ public class StrategyDescriptionParser {
             String f = p.getOrDefault("gapFillTarget", "0.5");
             n.append(f.equals("1") ? " Full" : " " + Math.round(Double.parseDouble(f) * 100) + "%");
             if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
-            if (p.containsKey("lots")) n.append(" - ").append(p.get("lots")).append(" lots");
+            if (p.containsKey("lots")) n.append(" - ").append(lots(p.get("lots")));
             return n.toString();
         }
         else if (p.containsKey("referenceMinutes") && !p.get("referenceMinutes").equals("5")) n.append(" ").append(p.get("referenceMinutes")).append("-min");
@@ -491,7 +494,7 @@ public class StrategyDescriptionParser {
         if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
         else if (p.containsKey("targetR")) n.append(" ").append(trim(p.get("targetR"))).append("R Target");
         if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
-        if (p.containsKey("lots")) n.append(" - ").append(p.get("lots")).append(" lots");
+        if (p.containsKey("lots")) n.append(" - ").append(lots(p.get("lots")));
         return n.toString();
     }
 

@@ -13,6 +13,12 @@ class StrategyDescriptionParserTest {
     private StrategyDescriptionParser.Result parse(String d) { return parser.parse(d); }
 
     @Test
+    void oneLotIsSingular() {
+        assertThat(StrategyDescriptionParser.lots("1")).isEqualTo("1 lot");
+        assertThat(StrategyDescriptionParser.lots("3")).isEqualTo("3 lots");
+    }
+
+    @Test
     void freeFormCeGapUpStrategy() {
         var r = parse("CE only on gap-up days above 0.2%, 3 lots, lot size 65, max 1 trade per day. "
                 + "Trail SL on 5-min candle lows, target 80 points, no entry after 14:00, skip Thursdays, charges Rs 85 per trade.");
