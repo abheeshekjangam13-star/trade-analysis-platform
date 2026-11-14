@@ -210,6 +210,38 @@ final class UserEmails {
                 .build();
     }
 
+    /**
+     * The Android app invitation an admin sends to chosen users: what SysGrow is, who it's for, how to install it from
+     * the link (no Play Store yet) and how to turn on phone alerts. The admin's optional note is shown in a box.
+     */
+    static Message appInvite(AppUser u, String appUrl, String note) {
+        return EmailTemplate.subject("SysGrow is now on your Android phone")
+                .headline("Get the SysGrow app on Android")
+                .tone(Tone.SUCCESS)
+                .greeting(name(u))
+                .para("SysGrow now works as an app on your Android phone. Build NIFTY option strategies, backtest them on"
+                        + " past market data, and follow them in paper or live trading on your own Zerodha Kite account,"
+                        + " all from your pocket.")
+                .box("A note from the SysGrow team", note, Tone.INFO)
+                .para("Who it's for:")
+                .bullets(List.of(
+                        "Traders who want rule-based NIFTY option strategies instead of gut-feel trades",
+                        "Working professionals who can't watch the market all day and want the plan to run on its own",
+                        "Learners who want to test ideas on past data before risking any money",
+                        "Zerodha Kite users who want paper or live trading that follows the backtested rules exactly"))
+                .para("Install it in under a minute (no Play Store needed):")
+                .bullets(List.of(
+                        "Open the link below in Chrome on your Android phone",
+                        "Log in with your username '" + u.getUsername() + "'",
+                        "Tap \"Install app\" at the top (or Chrome menu ⋮ → Install app / Add to Home screen)",
+                        "Open SysGrow from your home screen, go to My account and turn on phone alerts"))
+                .para("With alerts on, your phone tells you when an order is placed, when a position exits (target or"
+                        + " stop loss hit), when the market opens, and when it's time to log in to Kite for the day.")
+                .action("Open SysGrow on your phone", appUrl + "/login")
+                .footnote("Backtest results are estimates; past results don't guarantee future returns. Not investment advice.")
+                .build();
+    }
+
     static Message test(AppUser u, String appUrl) {
         return EmailTemplate.subject("Test email from SysGrow")
                 .headline("Email delivery works")

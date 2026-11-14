@@ -56,6 +56,7 @@ public class LiveStrategyRunner {
     private final KiteApi kite;
     private final Clock clock;
     private final Duration maxEntryDelay;
+    private final TradeAlerts alerts;
     private final Set<String> invalidWarned = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Held while positions are opened or closed: the minute run and the exit watcher never act on one at the same time. */
     private final Object positionLock = new Object();
@@ -63,7 +64,9 @@ public class LiveStrategyRunner {
     public LiveStrategyRunner(StrategyLiveConfigRepository configs, LivePositionRepository positions, TradeOrderRepository orders,
                               TradingControlRepository controls, OrderService orderService, StrategyService strategies,
                               MarketDataClient marketData, NiftyOpeningBreakoutEngine engine, NiftyOptions options, KiteApi kite,
-                              Clock clock, @Value("${trading.runner.max-entry-delay-minutes:5}") long maxEntryDelayMinutes) {
+                              Clock clock, @Value("${trading.runner.max-entry-delay-minutes:5}") long maxEntryDelayMinutes,
+                              TradeAlerts alerts) {
+        this.alerts = alerts;
         this.configs = configs; this.positions = positions; this.orders = orders; this.controls = controls;
         this.orderService = orderService; this.strategies = strategies; this.marketData = marketData; this.engine = engine;
         this.options = options; this.kite = kite; this.clock = clock;
@@ -277,6 +280,7 @@ public class LiveStrategyRunner {
             try { orderService.cancel(entry.getId()); } catch (RuntimeException e) { log.warn("Cancel entry {} failed: {}", entry.getId(), e.getMessage()); }
             p.closed(null, exitSpot, "ENTRY_NOT_FILLED", 0.0, "Entry was not filled; cancelled");
             positions.save(p);
+            alerts.positionClosed(p);
             return "entry cancelled (not filled)";
         }
         int qty = entry != null && entry.getFilledQuantity() > 0 ? entry.getFilledQuantity() : p.getQuantity();
@@ -287,6 +291,7 @@ public class LiveStrategyRunner {
         if (entry != null) p.entryPrice(entry.getAveragePrice());
         p.closed(o, exitSpot, reason, pnl(p, o, estimate, params), o.getMessage());
         positions.save(p);
+        alerts.positionClosed(p);
         return "SELL " + qty + " " + p.getTradingsymbol() + " (" + reason + ")";
     }
 

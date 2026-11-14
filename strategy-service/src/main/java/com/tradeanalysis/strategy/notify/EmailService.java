@@ -9,6 +9,12 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Queues account emails in the outbox. Call inside the transaction that changes the user, so the email is saved only
@@ -111,6 +117,36 @@ public class EmailService {
     public void dailyPlanReminders() {
         int n = planReminders(Instant.now());
         if (n > 0) org.slf4j.LoggerFactory.getLogger(EmailService.class).info("EMAIL plan reminders queued: {}", n);
+    }
+
+    /** What happened to an app invitation: who got it queued and who was skipped (with why). */
+    public record AppInviteResult(List<String> queued, List<String> skipped) {}
+
+    /**
+     * Queues the Android app invitation to the users an admin picked. Only ACTIVE users with an email address get it;
+     * the others are listed in {@code skipped} with the reason. Sending again is allowed (e.g. a reminder).
+     */
+    @Transactional
+    public AppInviteResult appInvite(Collection<Long> userIds, String note) {
+        List<String> queued = new ArrayList<>(), skipped = new ArrayList<>();
+        String n = note == null || note.isBlank() ? null : note.trim();
+        for (Long id : new LinkedHashSet<>(userIds)) {
+            AppUser u = users.findById(id).orElse(null);
+            if (u == null) { skipped.add("#" + id + ": no such user"); continue; }
+            if (u.getStatus() != AppUser.Status.ACTIVE) { skipped.add(u.getUsername() + ": not active (" + u.getStatus() + ")"); continue; }
+            if (!hasEmail(u)) { skipped.add(u.getUsername() + ": no email address"); continue; }
+            queue(u, EmailNotification.Kind.APP_INVITE, UserEmails.appInvite(u, appUrl, n));
+            queued.add(u.getUsername());
+        }
+        return new AppInviteResult(queued, skipped);
+    }
+
+    /** When each user was last sent the app invitation (user id → time), for the admin's list. */
+    @Transactional(readOnly = true)
+    public Map<Long, Instant> lastAppInvites() {
+        Map<Long, Instant> out = new HashMap<>();
+        for (Object[] row : repo.lastSentByKind(EmailNotification.Kind.APP_INVITE)) out.put((Long) row[0], (Instant) row[1]);
+        return out;
     }
 
     /** ADMIN check of the mail setup: queues a test email to this user. Returns its id (or null without an address). */

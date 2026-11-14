@@ -40,13 +40,14 @@ public class OrderService {
     private final com.tradeanalysis.strategy.user.AppUserRepository users;
     private final StrategyLiveConfigRepository configs;
     private final LiveOrderBilling billing;
+    private final TradeAlerts alerts;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
                         KiteApi kite, KiteAccounts accounts, Clock clock,
                         com.tradeanalysis.strategy.user.AppUserRepository users, StrategyLiveConfigRepository configs,
-                        LiveOrderBilling billing) {
+                        LiveOrderBilling billing, TradeAlerts alerts) {
         this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
-        this.clock = clock; this.users = users; this.configs = configs; this.billing = billing;
+        this.clock = clock; this.users = users; this.configs = configs; this.billing = billing; this.alerts = alerts;
     }
 
     /** Whether live trading is on for the platform: an admin switches it on the Trading page (off by default). */
@@ -62,6 +63,12 @@ public class OrderService {
      * @return the recorded order; status REJECTED (with the reason in message) if a safety rule or the broker refused it
      */
     public TradeOrder place(OrderRequest r, TradingMode mode, String source, Long strategyId, Long userId, boolean reducing) {
+        TradeOrder o = placeOrder(r, mode, source, strategyId, userId, reducing);
+        alerts.orderPlaced(o, reducing);   // phone alert (background; never throws)
+        return o;
+    }
+
+    private TradeOrder placeOrder(OrderRequest r, TradingMode mode, String source, Long strategyId, Long userId, boolean reducing) {
         validate(r, mode);
         TradeOrder order = orders.save(new TradeOrder(today(), mode, source, strategyId, r, userId));
         String refusal = reducing ? null : refusal(r, mode, userId);
