@@ -115,8 +115,8 @@ public class EmailService {
 
     /** Beta step 1: the admin nominated this user; they're asked to request the app link on My account. */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void betaInvite(AppUser u, long totalUsers, String note) {
-        queue(u, EmailNotification.Kind.BETA_INVITE, UserEmails.betaInvite(u, appUrl, totalUsers, note));
+    public void betaInvite(AppUser u, String note) {
+        queue(u, EmailNotification.Kind.BETA_INVITE, UserEmails.betaInvite(u, appUrl, note));
     }
 
     /** Beta step 2: the user asked for the app link; it goes out with the install steps. */

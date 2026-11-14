@@ -67,7 +67,7 @@ class BetaAppIntegrationTest {
         assertThat(emailsFor("ravi")).filteredOn(e -> e.getKind() == EmailNotification.Kind.BETA_INVITE).singleElement().satisfies(e -> {
             assertThat(e.getSubject()).contains("Congratulations");
             assertThat(e.getBody()).contains("Congratulations, ravi!", "As part of SysGrow's continuous growth, we are pleased to inform you",
-                    "10% of our 4 users", "works only on Android phones", "not yet available for iPhone", "Thanks for being with us",
+                    "10% of our 1,564 users", "works only on Android phones", "not yet available for iPhone", "Thanks for being with us",
                     "Send me the app link", "https://app.test/account#beta-app");
         });
 
@@ -104,5 +104,34 @@ class BetaAppIntegrationTest {
         assertThat(call(get("/api/users/me/beta"), "meena", 200).get("nominated").asBoolean()).isFalse();
         call(post("/api/users/me/beta/request-link"), "meena", 403);
         assertThat(emailsFor("meena")).noneMatch(e -> e.getKind() == EmailNotification.Kind.APP_INVITE);
+    }
+
+    @Test @Order(5)
+    void adminWithdrawsAnInvitationWithoutEmailingAndCanInviteAgain() throws Exception {
+        call(post("/api/users/beta/withdraw").content("{\"userIds\":[" + id("ravi") + "]}"), "ravi", 403);
+        int emailsBefore = emailsFor("ravi").size();
+
+        JsonNode r = call(post("/api/users/beta/withdraw").content("{\"userIds\":[" + id("ravi") + "," + id("meena") + "]}"), "admin", 200);
+        assertThat(r.get("withdrawn")).extracting(JsonNode::asText).containsExactly("ravi");
+        assertThat(r.get("skipped").get(0).asText()).contains("meena", "not invited");
+        call(post("/api/users/beta/withdraw").content("{\"userIds\":[]}"), "admin", 400);
+
+        assertThat(call(get("/api/users/me/beta"), "ravi", 200).get("nominated").asBoolean()).isFalse();
+        assertThat(call(get("/api/users/beta"), "admin", 200).get("users").has(String.valueOf(id("ravi")))).isFalse();
+        call(post("/api/users/me/beta/request-link"), "ravi", 403);
+        assertThat(emailsFor("ravi")).hasSize(emailsBefore);
+
+        // Inviting again sends the same congratulations email again.
+        call(post("/api/users/beta/nominate").content("{\"userIds\":[" + id("ravi") + "]}"), "admin", 200);
+        assertThat(call(get("/api/users/me/beta"), "ravi", 200).get("nominated").asBoolean()).isTrue();
+        assertThat(emailsFor("ravi")).filteredOn(e -> e.getKind() == EmailNotification.Kind.BETA_INVITE).hasSize(2)
+                .allSatisfy(e -> assertThat(e.getBody()).contains("Congratulations, ravi!", "10% of our 1,564 users"));
+    }
+
+    @Test @Order(6)
+    void resendingToAnInvitedUserSendsTheSameEmailAgain() throws Exception {
+        call(post("/api/users/beta/nominate").content("{\"userIds\":[" + id("ravi") + "]}"), "admin", 200);
+        assertThat(emailsFor("ravi")).filteredOn(e -> e.getKind() == EmailNotification.Kind.BETA_INVITE).hasSize(3)
+                .extracting(EmailNotification::getSubject).containsOnly("Congratulations! You're invited to try the SysGrow beta app");
     }
 }

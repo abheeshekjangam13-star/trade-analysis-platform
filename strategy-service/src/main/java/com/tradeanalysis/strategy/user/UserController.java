@@ -44,6 +44,16 @@ public class UserController {
         return beta.nominate(body.userIds(), body.note(), CurrentUser.id().orElse(null));
     }
 
+    public record BetaWithdrawal(List<Long> userIds) {}
+
+    @PostMapping("/api/users/beta/withdraw")
+    @Operation(summary = "ADMIN: withdraw beta app invitations; the users lose the app-link option on My account (no email is sent)")
+    public com.tradeanalysis.strategy.notify.BetaAppService.WithdrawResult withdrawBeta(@RequestBody BetaWithdrawal body) {
+        if (body == null || body.userIds() == null || body.userIds().isEmpty())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pick at least one user");
+        return beta.withdraw(body.userIds());
+    }
+
     @GetMapping("/api/users/beta")
     @Operation(summary = "ADMIN: active user count and every nominated user's beta status (nominated, link requested, links sent)")
     public BetaOverview betaOverview() { return new BetaOverview(beta.totalUsers(), beta.statuses()); }
