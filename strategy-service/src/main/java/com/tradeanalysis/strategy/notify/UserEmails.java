@@ -214,7 +214,10 @@ final class UserEmails {
      * Step 1 of the beta: an admin nominates the user. Congratulates them, says how few were picked, and asks them to
      * request the link from My account if they'd like to try it. The admin's optional note is shown in a box.
      */
-    static Message betaInvite(AppUser u, String appUrl, long totalUsers, String note) {
+    /** The user count the beta invitation quotes ("10% of our 1,564 users"), fixed rather than the live count. */
+    static final int BETA_ANNOUNCED_USERS = 1564;
+
+    static Message betaInvite(AppUser u, String appUrl, String note) {
         return EmailTemplate.subject("Congratulations! You're invited to try the SysGrow beta app")
                 .headline("You're one of our first beta app users")
                 .tone(Tone.SUCCESS)
@@ -222,7 +225,7 @@ final class UserEmails {
                 .para("Congratulations, " + u.getUsername() + "! As part of SysGrow's continuous growth, we are pleased to"
                         + " inform you that you have been nominated to try the new SysGrow mobile app for Android before"
                         + " anyone else.")
-                .para("For this first phase we picked only 10% of our " + String.format(java.util.Locale.ENGLISH, "%,d", totalUsers)
+                .para("For this first phase we picked only 10% of our " + String.format(java.util.Locale.ENGLISH, "%,d", BETA_ANNOUNCED_USERS)
                         + " users, at random, and you are one of them.")
                 .box("Please note", "For now the beta app works only on Android phones (in Chrome). It is not yet"
                         + " available for iPhone or iPad; we'll let you know when it is.", Tone.WARNING)

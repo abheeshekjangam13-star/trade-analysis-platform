@@ -32,6 +32,7 @@ public class BetaAppService {
 
     public record Status(Long userId, Instant nominatedAt, Instant linkRequestedAt, int linksSent) {}
     public record NominateResult(List<String> nominated, List<String> skipped, long totalUsers) {}
+    public record WithdrawResult(List<String> withdrawn, List<String> skipped) {}
     public record Mine(boolean nominated, Instant nominatedAt, Instant linkRequestedAt, int linksSent) {}
 
     private final JdbcTemplate jdbc;
@@ -65,10 +66,25 @@ public class BetaAppService {
             if (!hasEmail(u)) { skipped.add(u.getUsername() + ": no email address"); continue; }
             int updated = jdbc.update("UPDATE beta_app_user SET nominated_at = ?, nominated_by = ? WHERE user_id = ?", now, adminId, id);
             if (updated == 0) jdbc.update("INSERT INTO beta_app_user (user_id, nominated_at, nominated_by, links_sent) VALUES (?, ?, ?, 0)", id, now, adminId);
-            emails.betaInvite(u, total, n);
+            emails.betaInvite(u, n);
             nominated.add(u.getUsername());
         }
         return new NominateResult(nominated, skipped, total);
+    }
+
+    /**
+     * ADMIN: takes back the invitation. The user no longer sees the beta box on My account and can't request the link;
+     * they can be nominated again later. No email is sent. (A link already emailed can't be recalled.)
+     */
+    @Transactional
+    public WithdrawResult withdraw(Collection<Long> userIds) {
+        List<String> withdrawn = new ArrayList<>(), skipped = new ArrayList<>();
+        for (Long id : new LinkedHashSet<>(userIds)) {
+            String name = users.findById(id).map(AppUser::getUsername).orElse("#" + id);
+            if (jdbc.update("DELETE FROM beta_app_user WHERE user_id = ?", id) > 0) withdrawn.add(name);
+            else skipped.add(name + ": not invited");
+        }
+        return new WithdrawResult(withdrawn, skipped);
     }
 
     /** ADMIN: every nominated user's status (user id → status). */
