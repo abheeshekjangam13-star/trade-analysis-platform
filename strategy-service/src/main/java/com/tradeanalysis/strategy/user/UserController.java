@@ -22,28 +22,39 @@ public class UserController {
 
     private final com.tradeanalysis.strategy.auth.AuthService auth;
     private final DeleteAllowance deletes;
-    private final com.tradeanalysis.strategy.notify.EmailService emails;
+    private final com.tradeanalysis.strategy.notify.BetaAppService beta;
 
     public UserController(UserService svc, com.tradeanalysis.strategy.auth.AuthService auth, DeleteAllowance deletes,
-                          com.tradeanalysis.strategy.notify.EmailService emails) {
-        this.svc = svc; this.auth = auth; this.deletes = deletes; this.emails = emails;
+                          com.tradeanalysis.strategy.notify.BetaAppService beta) {
+        this.svc = svc; this.auth = auth; this.deletes = deletes; this.beta = beta;
     }
 
-    public record AppInvite(List<Long> userIds, String note) {}
+    // ---- beta mobile app ------------------------------------------------------------------------------------------
 
-    @PostMapping("/api/users/app-invite")
-    @Operation(summary = "ADMIN: email the Android app link to the chosen users (ACTIVE users with an email; others are skipped)")
-    public com.tradeanalysis.strategy.notify.EmailService.AppInviteResult appInvite(@RequestBody AppInvite body) {
+    public record BetaNomination(List<Long> userIds, String note) {}
+    public record BetaOverview(long totalUsers, java.util.Map<Long, com.tradeanalysis.strategy.notify.BetaAppService.Status> users) {}
+
+    @PostMapping("/api/users/beta/nominate")
+    @Operation(summary = "ADMIN: nominate users for the beta mobile app; each gets a congratulations email asking them to request the link")
+    public com.tradeanalysis.strategy.notify.BetaAppService.NominateResult nominateBeta(@RequestBody BetaNomination body) {
         if (body == null || body.userIds() == null || body.userIds().isEmpty())
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pick at least one user");
         if (body.note() != null && body.note().length() > 1000)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Keep the note under 1000 characters");
-        return emails.appInvite(body.userIds(), body.note());
+        return beta.nominate(body.userIds(), body.note(), CurrentUser.id().orElse(null));
     }
 
-    @GetMapping("/api/users/app-invites")
-    @Operation(summary = "ADMIN: when each user was last sent the app link (user id → time)")
-    public java.util.Map<Long, java.time.Instant> appInvites() { return emails.lastAppInvites(); }
+    @GetMapping("/api/users/beta")
+    @Operation(summary = "ADMIN: active user count and every nominated user's beta status (nominated, link requested, links sent)")
+    public BetaOverview betaOverview() { return new BetaOverview(beta.totalUsers(), beta.statuses()); }
+
+    @GetMapping("/api/users/me/beta")
+    @Operation(summary = "The logged-in user's beta app status (whether nominated, when the link was requested)")
+    public com.tradeanalysis.strategy.notify.BetaAppService.Mine myBeta() { return beta.mine(me().getId()); }
+
+    @PostMapping("/api/users/me/beta/request-link")
+    @Operation(summary = "Nominated users: email me the beta app link now (at most once every 5 minutes)")
+    public com.tradeanalysis.strategy.notify.BetaAppService.Mine requestBetaLink() { return beta.requestLink(me().getId()); }
 
     /**
      * What the caller's plan allows and how much of it is used, for the UI's limits and upgrade hints. Limits of -1

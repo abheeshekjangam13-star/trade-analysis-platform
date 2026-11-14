@@ -211,24 +211,49 @@ final class UserEmails {
     }
 
     /**
-     * The Android app invitation an admin sends to chosen users: what SysGrow is, who it's for, how to install it from
-     * the link (no Play Store yet) and how to turn on phone alerts. The admin's optional note is shown in a box.
+     * Step 1 of the beta: an admin nominates the user. Congratulates them, says how few were picked, and asks them to
+     * request the link from My account if they'd like to try it. The admin's optional note is shown in a box.
      */
-    static Message appInvite(AppUser u, String appUrl, String note) {
-        return EmailTemplate.subject("SysGrow is now on your Android phone")
-                .headline("Get the SysGrow app on Android")
+    static Message betaInvite(AppUser u, String appUrl, long totalUsers, String note) {
+        return EmailTemplate.subject("Congratulations! You're invited to try the SysGrow beta app")
+                .headline("You're one of our first beta app users")
                 .tone(Tone.SUCCESS)
                 .greeting(name(u))
-                .para("SysGrow now works as an app on your Android phone. Build NIFTY option strategies, backtest them on"
-                        + " past market data, and follow them in paper or live trading on your own Zerodha Kite account,"
-                        + " all from your pocket.")
+                .para("Congratulations, " + u.getUsername() + "! As part of SysGrow's continuous growth, we are pleased to"
+                        + " inform you that you have been nominated to try the new SysGrow mobile app for Android before"
+                        + " anyone else.")
+                .para("For this first phase we picked only 10% of our " + String.format(java.util.Locale.ENGLISH, "%,d", totalUsers)
+                        + " users, at random, and you are one of them.")
+                .box("Please note", "For now the beta app works only on Android phones (in Chrome). It is not yet"
+                        + " available for iPhone or iPad; we'll let you know when it is.", Tone.WARNING)
                 .box("A note from the SysGrow team", note, Tone.INFO)
-                .para("Who it's for:")
+                .para("With the app you can follow your strategies, see your trades and P&L, and get alerts on your phone"
+                        + " when an order is placed, when a target or stop loss is hit, when the market opens, and when it's"
+                        + " time to log in to Kite.")
+                .para("Happy to try the beta? Ask for your app link in three clicks:")
                 .bullets(List.of(
-                        "Traders who want rule-based NIFTY option strategies instead of gut-feel trades",
-                        "Working professionals who can't watch the market all day and want the plan to run on its own",
-                        "Learners who want to test ideas on past data before risking any money",
-                        "Zerodha Kite users who want paper or live trading that follows the backtested rules exactly"))
+                        "Log in to SysGrow on the web",
+                        "Open My account (your name at the top right)",
+                        "Click \"Send me the app link\" in the SysGrow beta app box"))
+                .para("We'll email you the link and the install steps straight away. As it's a beta, you may see small"
+                        + " changes as we improve it, and we'd love to hear what you think.")
+                .action("Go to My account", appUrl + "/account#beta-app")
+                .footnote("Not interested right now? No action is needed; the offer stays open on My account.")
+                .build();
+    }
+
+    /**
+     * Step 2 of the beta: the user asked for the link on My account. The link, who it's for, how to install it from
+     * Chrome (no Play Store yet) and how to turn on phone alerts.
+     */
+    static Message appLink(AppUser u, String appUrl) {
+        return EmailTemplate.subject("Your SysGrow beta app link")
+                .headline("Here's your SysGrow beta app")
+                .tone(Tone.SUCCESS)
+                .greeting(name(u))
+                .para("As you requested, here is your link to the SysGrow beta app for Android. Build NIFTY option"
+                        + " strategies, backtest them on past market data, and follow them in paper or live trading on your"
+                        + " own Zerodha Kite account, all from your phone.")
                 .para("Install it in under a minute (no Play Store needed):")
                 .bullets(List.of(
                         "Open the link below in Chrome on your Android phone",
@@ -238,7 +263,8 @@ final class UserEmails {
                 .para("With alerts on, your phone tells you when an order is placed, when a position exits (target or"
                         + " stop loss hit), when the market opens, and when it's time to log in to Kite for the day.")
                 .action("Open SysGrow on your phone", appUrl + "/login")
-                .footnote("Backtest results are estimates; past results don't guarantee future returns. Not investment advice.")
+                .footnote("This is a beta app: please tell us if anything looks wrong. Backtest results are estimates;"
+                        + " past results don't guarantee future returns. Not investment advice.")
                 .build();
     }
 
