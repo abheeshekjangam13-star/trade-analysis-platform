@@ -22,6 +22,8 @@ public final class Access {
         boolean read = READ.contains(method.toUpperCase());
         // Everyone may turn phone alerts on or off for their own devices (the rest of /api/notifications is admin-only).
         if (path.startsWith("/api/notifications/push/")) return null;
+        // Every plan may see their own beta app invitation and ask for the app link.
+        if (path.equals("/api/users/me/beta") || path.equals("/api/users/me/beta/request-link")) return null;
         if ((path.startsWith("/api/users") && !path.equals("/api/users/me") && !path.equals("/api/users/me/usage"))
                 || path.startsWith("/api/access-log")
                 || path.startsWith("/api/notifications")

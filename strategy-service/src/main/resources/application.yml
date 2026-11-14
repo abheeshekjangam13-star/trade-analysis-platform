@@ -80,6 +80,13 @@ trading:
   exit-watch:
     interval-ms: 1000                             # open positions are checked against the live index price every second
     candle-every-ms: 3000                         # and against the forming 1-minute candle's high/low (catches sub-second touches)
+  # NSE weekday trading holidays (equity & F&O), from NSE's yearly circular (+ later additions). The 09:15 market-open
+  # alert and the 08:45 Kite reminder skip these days. ADD NEXT YEAR'S LINE EACH DECEMBER (a warning is logged when
+  # the current year has no dates). MARKET_HOLIDAYS replaces the whole list.
+  market-holidays: ${MARKET_HOLIDAYS:${trading.nse-holidays-2026}}
+  nse-holidays-2026: >-
+    2026-01-15,2026-01-26,2026-03-03,2026-03-26,2026-03-31,2026-04-03,2026-04-14,2026-05-01,2026-05-28,
+    2026-06-26,2026-09-14,2026-10-02,2026-10-20,2026-11-10,2026-11-24,2026-12-25
 
 
 # Login (see README "Login"). Leave AUTH_JWT_SECRET unset to use the random key kept in the auth_key table.

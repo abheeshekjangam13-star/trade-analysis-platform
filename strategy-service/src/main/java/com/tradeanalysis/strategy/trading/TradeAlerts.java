@@ -1,9 +1,5 @@
 package com.tradeanalysis.strategy.trading;
 
-import com.tradeanalysis.common.dto.Candle;
-import com.tradeanalysis.common.dto.Interval;
-import com.tradeanalysis.common.dto.PriceSeries;
-import com.tradeanalysis.strategy.engine.MarketDataClient;
 import com.tradeanalysis.strategy.notify.PushService;
 import com.tradeanalysis.strategy.notify.PushService.Alert;
 import org.slf4j.Logger;
@@ -14,7 +10,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
@@ -37,13 +32,13 @@ public class TradeAlerts {
     private final PushService push;
     private final JdbcTemplate jdbc;
     private final KiteAccounts kite;
-    private final MarketDataClient marketData;
+    private final TradingDays days;
     private final StrategyLiveConfigRepository configs;
     private final Clock clock;
 
-    public TradeAlerts(PushService push, JdbcTemplate jdbc, KiteAccounts kite, MarketDataClient marketData,
+    public TradeAlerts(PushService push, JdbcTemplate jdbc, KiteAccounts kite, TradingDays days,
                        StrategyLiveConfigRepository configs, Clock clock) {
-        this.push = push; this.jdbc = jdbc; this.kite = kite; this.marketData = marketData; this.configs = configs; this.clock = clock;
+        this.push = push; this.jdbc = jdbc; this.kite = kite; this.days = days; this.configs = configs; this.clock = clock;
     }
 
     // ---- orders and exits -----------------------------------------------------------------------------------------
@@ -97,46 +92,46 @@ public class TradeAlerts {
     // ---- market open and Kite login -------------------------------------------------------------------------------
 
     /**
-     * Shortly after 09:15 IST on weekdays: if NIFTY 50 has traded today (so not a holiday), tells every subscribed
-     * user the open and how many of their strategies are running.
+     * 09:15 IST on NSE trading days (weekdays not on the holiday list): tells every subscribed user the market is open
+     * and how many of their strategies are running.
      */
-    @Scheduled(cron = "${push.alerts.market-open-cron:0 16 9 * * MON-FRI}", zone = "Asia/Kolkata")
+    @Scheduled(cron = "${push.alerts.market-open-cron:0 15 9 * * MON-FRI}", zone = "Asia/Kolkata")
     public void marketOpen() {
+        LocalDate today = LocalDate.now(clock.withZone(IST));
+        if (!tradingDay(today, "market open")) return;
         List<Long> users = push.subscribedUsers();
         if (users.isEmpty()) return;
-        LocalDate today = LocalDate.now(clock.withZone(IST));
-        List<Candle> candles;
-        try {
-            PriceSeries s = marketData.getRange(MarketHolidays.INDEX, Interval.MINUTE_1,
-                    today.atTime(LocalTime.of(9, 15)).atZone(IST).toInstant(), clock.instant());
-            candles = s == null || s.candles() == null ? List.of() : s.candles();
-        } catch (RuntimeException e) {
-            log.warn("ALERT market open skipped (no NIFTY candles): {}", e.getMessage());
-            return;
-        }
-        if (candles.isEmpty()) { log.info("ALERT market open skipped: NIFTY has not traded today (holiday?)"); return; }
-        String open = String.format(Locale.ENGLISH, "%,.2f", candles.get(0).open().doubleValue());
-
         Map<Long, List<StrategyLiveConfig>> running = configs.findByModeNot(TradingMode.OFF).stream()
                 .collect(Collectors.groupingBy(StrategyLiveConfig::getUserId));
-        for (Long u : users) {
-            List<StrategyLiveConfig> mine = running.getOrDefault(u, List.of());
-            long live = mine.stream().filter(c -> c.getMode() == TradingMode.LIVE).count();
-            String body = "NIFTY 50 opened at " + open + ". "
-                    + (mine.isEmpty() ? "None of your strategies is switched on today."
-                       : mine.size() + " of your strategies " + (mine.size() == 1 ? "is" : "are") + " running ("
-                         + live + " live, " + (mine.size() - live) + " paper); entries from 9:20.");
-            push.notify(u, new Alert("Market is open", body, "/", "market-open-" + today, 2 * 3600));
-        }
+        for (Long u : users) push.notify(u, marketOpenAlert(today, running.getOrDefault(u, List.of())));
+    }
+
+    static Alert marketOpenAlert(LocalDate today, List<StrategyLiveConfig> mine) {
+        long live = mine.stream().filter(c -> c.getMode() == TradingMode.LIVE).count();
+        String body = mine.isEmpty()
+                ? "NSE is open for trading. None of your strategies is switched on today."
+                : "NSE is open for trading. " + mine.size() + " of your strategies " + (mine.size() == 1 ? "is" : "are")
+                  + " running (" + live + " live, " + (mine.size() - live) + " paper); entries from 9:20.";
+        return new Alert("Market is open", body, "/", "market-open-" + today, 2 * 3600);
+    }
+
+    /** Whether to send today's morning alerts: NSE trading day; warns once a day when the holiday list is out of date. */
+    private boolean tradingDay(LocalDate today, String what) {
+        if (!days.coversYear(today.getYear()))
+            log.warn("TRADING_DAYS no NSE holidays listed for {}: add this year's dates to trading.market-holidays", today.getYear());
+        if (days.isTradingDay(today)) return true;
+        log.info("ALERT {} skipped: {} is an NSE holiday", what, today);
+        return false;
     }
 
     /**
-     * 08:45 IST on weekdays: users whose own Kite account is set up but not logged in today are reminded to log in
+     * 08:45 IST on NSE trading days: users whose own Kite account is set up but not logged in today are reminded to log in
      * (Kite logins end every morning), so their strategies can trade from 9:20.
      */
     @Scheduled(cron = "${push.alerts.kite-login-cron:0 45 8 * * MON-FRI}", zone = "Asia/Kolkata")
     public void kiteLoginReminder() {
         LocalDate today = LocalDate.now(clock.withZone(IST));
+        if (!tradingDay(today, "Kite reminder")) return;
         for (Long u : push.subscribedUsers()) {
             try {
                 KiteAccounts.Status s = kite.status(u);
