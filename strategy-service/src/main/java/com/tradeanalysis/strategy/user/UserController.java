@@ -22,10 +22,28 @@ public class UserController {
 
     private final com.tradeanalysis.strategy.auth.AuthService auth;
     private final DeleteAllowance deletes;
+    private final com.tradeanalysis.strategy.notify.EmailService emails;
 
-    public UserController(UserService svc, com.tradeanalysis.strategy.auth.AuthService auth, DeleteAllowance deletes) {
-        this.svc = svc; this.auth = auth; this.deletes = deletes;
+    public UserController(UserService svc, com.tradeanalysis.strategy.auth.AuthService auth, DeleteAllowance deletes,
+                          com.tradeanalysis.strategy.notify.EmailService emails) {
+        this.svc = svc; this.auth = auth; this.deletes = deletes; this.emails = emails;
     }
+
+    public record AppInvite(List<Long> userIds, String note) {}
+
+    @PostMapping("/api/users/app-invite")
+    @Operation(summary = "ADMIN: email the Android app link to the chosen users (ACTIVE users with an email; others are skipped)")
+    public com.tradeanalysis.strategy.notify.EmailService.AppInviteResult appInvite(@RequestBody AppInvite body) {
+        if (body == null || body.userIds() == null || body.userIds().isEmpty())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pick at least one user");
+        if (body.note() != null && body.note().length() > 1000)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Keep the note under 1000 characters");
+        return emails.appInvite(body.userIds(), body.note());
+    }
+
+    @GetMapping("/api/users/app-invites")
+    @Operation(summary = "ADMIN: when each user was last sent the app link (user id → time)")
+    public java.util.Map<Long, java.time.Instant> appInvites() { return emails.lastAppInvites(); }
 
     /**
      * What the caller's plan allows and how much of it is used, for the UI's limits and upgrade hints. Limits of -1

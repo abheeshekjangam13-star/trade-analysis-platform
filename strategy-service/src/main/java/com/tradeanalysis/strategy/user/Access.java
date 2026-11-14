@@ -20,6 +20,8 @@ public final class Access {
     public static String deny(AppUser user, Plan plan, String method, String path) {
         if (user.isAdmin()) return null;
         boolean read = READ.contains(method.toUpperCase());
+        // Everyone may turn phone alerts on or off for their own devices (the rest of /api/notifications is admin-only).
+        if (path.startsWith("/api/notifications/push/")) return null;
         if ((path.startsWith("/api/users") && !path.equals("/api/users/me") && !path.equals("/api/users/me/usage"))
                 || path.startsWith("/api/access-log")
                 || path.startsWith("/api/notifications")

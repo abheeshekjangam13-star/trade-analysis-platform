@@ -24,6 +24,9 @@
 		root * /srv
 		@assets path /assets/*
 		header @assets Cache-Control "public, max-age=31536000, immutable"
+		# The Android app's service worker and manifest: always re-checked, so a deploy reaches installed apps at once.
+		@pwa path /sw.js /manifest.webmanifest
+		header @pwa Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
