@@ -30,6 +30,7 @@ class LiveOrderFlowTest {
     private void live(boolean on) {
         TradingControl c = controls.get();
         c.setLiveEnabled(on, null);
+        c.setLiveRestriction(false, null, null);   // live access is tested in KiteAccountIntegrationTest
         controls.save(c);
     }
 

@@ -198,6 +198,43 @@ public class TradingService {
         return controls.save(c);
     }
 
+    /** Who may trade live while live trading is restricted, and what everyone else sees (ADMIN). */
+    public record LiveAccess(boolean restricted, String message, List<Long> allowedUserIds) {}
+
+    public LiveAccess liveAccess() {
+        requireAdmin("see live access");
+        TradingControl c = controls.get();
+        return new LiveAccess(c.isLiveRestricted(), c.getLiveRestrictedMessage(),
+                users.findAll().stream().filter(com.tradeanalysis.strategy.user.AppUser::isLiveAccess)
+                        .map(com.tradeanalysis.strategy.user.AppUser::getId).sorted().toList());
+    }
+
+    /** Turns the restriction on or off and/or sets the message users without live access see (ADMIN; blank = default). */
+    public LiveAccess setLiveRestriction(Boolean restricted, String message) {
+        requireAdmin("restrict live trading");
+        if (message != null && message.strip().length() > 300) throw new TradingException("Keep the message under 300 characters");
+        TradingControl c = controls.get();
+        c.setLiveRestriction(restricted, message, CurrentUser.id().orElse(null));
+        controls.save(c);
+        log.warn("LIVE_RESTRICTION restricted={} by user {}", c.isLiveRestricted(), CurrentUser.id().orElse(null));
+        return liveAccess();
+    }
+
+    /**
+     * Gives or takes a user's live access (ADMIN). Taking it stops new live orders and entries for them while live
+     * trading is restricted; their open live positions are still managed and closed.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public LiveAccess setUserLiveAccess(Long userId, boolean allowed) {
+        requireAdmin("change live access");
+        com.tradeanalysis.strategy.user.AppUser u = users.findById(userId)
+                .orElseThrow(() -> new TradingException(HttpStatus.NOT_FOUND, "No user " + userId));
+        u.setLiveAccess(allowed);
+        users.save(u);
+        log.warn("LIVE_ACCESS user {} {} by user {}", userId, allowed ? "ALLOWED" : "REMOVED", CurrentUser.id().orElse(null));
+        return liveAccess();
+    }
+
     public record StopResult(int strategiesStopped, int positionsClosed, List<String> details) {}
 
     /**
@@ -251,12 +288,18 @@ public class TradingService {
     /** The caller may trade live: an ADMIN, or a PREMIUM user who connected their own Kite account. */
     public void requireLive() {
         Long id = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.FORBIDDEN, "Log in to trade live"));
-        String refusal = accounts.liveRefusal(id);
+        String refusal = liveRefusal(id);
         if (refusal != null) throw new TradingException(HttpStatus.FORBIDDEN, refusal);
     }
 
+    /** Why the user may not trade live (admin restriction first, then plan and own Kite account), or null. */
+    public String liveRefusal(Long userId) {
+        String access = orderService.accessRefusal(userId);
+        return access != null ? access : accounts.liveRefusal(userId);
+    }
+
     /** Whether the caller may trade live (see {@link #requireLive}). */
-    public boolean liveAllowed() { return CurrentUser.id().map(id -> accounts.liveRefusal(id) == null).orElse(false); }
+    public boolean liveAllowed() { return CurrentUser.id().map(id -> liveRefusal(id) == null).orElse(false); }
 
     public void requireAdmin(String action) {
         Long id = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.FORBIDDEN, "Only an ADMIN can " + action + " (send X-User)"));

@@ -45,7 +45,7 @@ class KiteAccountIntegrationTest {
         jdbc.update("DELETE FROM live_position");
         jdbc.update("DELETE FROM trade_order");
         jdbc.update("DELETE FROM kite_account");
-        jdbc.update("UPDATE trading_control SET kill_switch = FALSE, live_enabled = TRUE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
+        jdbc.update("UPDATE trading_control SET kill_switch = FALSE, live_enabled = TRUE, live_restricted = FALSE, live_restricted_message = NULL, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
         doReturn(own).when(accounts).client(any());
         when(own.profile()).thenReturn(new KiteApi.Profile("ZX9999", "Priya", "ZERODHA"));
     }
@@ -183,6 +183,48 @@ class KiteAccountIntegrationTest {
 
         call(get("/api/trading/positions/history?from=2025-01-01&to=2026-11-30"), "hist_a", 400);   // more than 400 days
         call(get("/api/trading/positions/history?from=2026-11-30&to=2026-10-01"), "hist_a", 400);   // from after to
+    }
+
+    @Test
+    void restrictedLiveTradingRefusesUsersWithoutLiveAccessWithTheAdminsMessage() throws Exception {
+        plan("accprem", "PREMIUM");
+        call(get("/api/trading/kite-account"), "accadmin", 200);                           // registers the admin
+        jdbc.update("INSERT INTO app_user_role (user_id, role_id) SELECT u.id, r.id FROM app_user u, app_role r "
+                + "WHERE u.username = 'accadmin' AND r.name = 'ADMIN'");
+        long prem = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'accprem'", Long.class);
+        long admin = jdbc.queryForObject("SELECT id FROM app_user WHERE username = 'accadmin'", Long.class);
+
+        call(put("/api/trading/live-access").content("{\"restricted\":true}"), "accprem", 403);   // not an admin
+        call(put("/api/trading/live-access/users/" + prem).content("{\"allowed\":true}"), "accprem", 403);
+        call(put("/api/trading/live-access").content("{}"), "accadmin", 400);
+
+        JsonNode access = call(put("/api/trading/live-access").content("{\"restricted\":true,\"message\":\"Live is paused, back soon\"}"), "accadmin", 200);
+        assertThat(access.get("restricted").asBoolean()).isTrue();
+        assertThat(access.get("message").asText()).isEqualTo("Live is paused, back soon");
+
+        // Without live access (admins too): refused with the admin's message, on the status, LIVE switch and manual order.
+        JsonNode st = call(get("/api/trading/status"), "accprem", 200);
+        assertThat(st.get("liveAllowed").asBoolean()).isFalse();
+        assertThat(st.get("liveBlockedMessage").asText()).isEqualTo("Live is paused, back soon");
+        assertThat(st.get("liveAccessMessage").asText()).isEqualTo("Live is paused, back soon");
+        assertThat(call(get("/api/trading/status"), "accadmin", 200).get("liveBlockedMessage").asText()).isEqualTo("Live is paused, back soon");
+        call(put("/api/trading/strategies/" + ownBreakout("accadmin", "acc admin CE")).content("{\"mode\":\"LIVE\"}"), "accadmin", 403);
+
+        // Picked users get past it (the PREMIUM user then needs their own Kite account, as before).
+        call(put("/api/trading/live-access/users/" + admin).content("{\"allowed\":true}"), "accadmin", 200);
+        access = call(put("/api/trading/live-access/users/" + prem).content("{\"allowed\":true}"), "accadmin", 200);
+        assertThat(access.get("allowedUserIds").toString()).contains(String.valueOf(prem), String.valueOf(admin));
+        assertThat(call(get("/api/trading/status"), "accadmin", 200).get("liveAllowed").asBoolean()).isTrue();
+        JsonNode picked = call(get("/api/trading/status"), "accprem", 200);
+        assertThat(picked.get("liveBlockedMessage").asText()).startsWith("Connect your own Kite account");
+        assertThat(picked.get("liveAccessMessage").isNull()).isTrue();
+
+        // A blank message goes back to the default; restriction off lets everyone through it again.
+        assertThat(call(put("/api/trading/live-access").content("{\"message\":\" \"}"), "accadmin", 200).get("message").asText())
+                .isEqualTo(TradingControl.DEFAULT_RESTRICTED_MESSAGE);
+        call(put("/api/trading/live-access/users/" + prem).content("{\"allowed\":false}"), "accadmin", 200);
+        call(put("/api/trading/live-access").content("{\"restricted\":false}"), "accadmin", 200);
+        assertThat(call(get("/api/trading/status"), "accprem", 200).get("liveBlockedMessage").asText()).startsWith("Connect your own Kite account");
     }
 
     @Test

@@ -71,6 +71,10 @@ public class AppUser {
     /** The user's own maximum loss for a day across all their strategies (per mode), or null when not set. */
     private Double maxDayLoss;
 
+    // May trade live while an admin restricts live trading to picked users (trading_control.live_restricted)
+    @Column(nullable = false)
+    private boolean liveAccess;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "app_user_role",
             joinColumns = @JoinColumn(name = "user_id"),
@@ -106,6 +110,8 @@ public class AppUser {
     public void acceptTerms(String version, Instant at) { this.termsVersion = version; this.termsAcceptedAt = at; }
     public void setMaxDayLoss(Double amount) { this.maxDayLoss = amount; }
     public Double getMaxDayLoss()           { return maxDayLoss; }
+    public boolean isLiveAccess()           { return liveAccess; }
+    public void setLiveAccess(boolean on)   { this.liveAccess = on; }
 
     /** A GOLD/PREMIUM sign-up that hasn't paid yet (it reaches the admin only after paying). */
     public boolean awaitingSignupPayment() {

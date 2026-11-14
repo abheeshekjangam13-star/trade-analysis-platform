@@ -53,6 +53,17 @@ public class OrderService {
     /** Whether live trading is on for the platform: an admin switches it on the Trading page (off by default). */
     public boolean liveEnabled() { return controls.get().isLiveEnabled(); }
 
+    /**
+     * Why this user may not trade live while an admin restricts live trading to picked users, or null. Applies to
+     * admins too (an admin without live access is refused); exits are never blocked by it.
+     */
+    public String accessRefusal(Long userId) {
+        TradingControl c = controls.get();
+        if (!c.isLiveRestricted()) return null;
+        boolean allowed = userId != null && users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::isLiveAccess).orElse(false);
+        return allowed ? null : c.getLiveRestrictedMessage();
+    }
+
     public static final String LIVE_OFF = "Live trading is turned off by the admin (Trading page): no new live orders";
 
     public LocalDate today() { return LocalDate.now(clock.withZone(IST)); }
@@ -257,6 +268,8 @@ public class OrderService {
         TradingControl c = controls.get();
         if (c.isKillSwitch()) return "Kill switch is on: no new orders";
         if (mode == TradingMode.LIVE) {
+            String access = accessRefusal(userId);
+            if (access != null) return access;
             String live = accounts.liveRefusal(userId);
             if (live != null) return live;
         }

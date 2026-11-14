@@ -229,6 +229,7 @@ public class LiveStrategyRunner {
                 }
                 if (controls.get().isKillSwitch()) { did.add("entry blocked: kill switch on"); continue; }
                 if (cfg.getMode() == TradingMode.LIVE && !controls.get().isLiveEnabled()) { did.add("entry blocked: live trading is off"); continue; }
+                if (cfg.getMode() == TradingMode.LIVE && orderService.accessRefusal(cfg.getUserId()) != null) { did.add("entry blocked: no live access"); continue; }
                 String dayLoss = orderService.dayLossRefusal(cfg.getMode(), cfg.getUserId());
                 if (dayLoss != null) { did.add("entry blocked: " + dayLoss); continue; }
                 did.add(enter(cfg, s, params, t, today));

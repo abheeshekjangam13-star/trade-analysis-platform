@@ -174,6 +174,7 @@ the backtests; start live with the smallest quantity.
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/trading/status` | Kite connection, live switch, market hours, limits, today's orders and realized P&L |
+| `GET/PUT /api/trading/live-access`, `PUT /api/trading/live-access/users/{id}` | ADMIN: restrict live trading to picked users (`{"restricted":true,"message":"…"}`; blank message = default) and tick who may trade live (`{"allowed":true}`). Everyone else, admins included, gets the message and no new live orders or LIVE switches; exits still go through. On by default: only existing admins start picked |
 | `GET/PUT /api/trading/strategies[/{id}]` | Strategy modes (`{"mode":"PAPER","product":"MIS"}`) |
 | `POST /api/trading/runner/run` | Run the live runner once now |
 | `GET/POST /api/trading/orders`, `POST /api/trading/orders/{id}/cancel` | Platform orders; manual order `{tradingsymbol, transactionType, quantity, product, orderType, price, triggerPrice, mode, confirm}` |

@@ -62,6 +62,8 @@ public class TradingController {
         out.put("marketData", Map.of("connected", market));
         out.put("liveTradingEnabled", orders.liveEnabled());
         out.put("liveAllowed", trading.liveAllowed());
+        out.put("liveBlockedMessage", me == null ? null : trading.liveRefusal(me));   // why the caller can't trade live, or null
+        out.put("liveAccessMessage", orders.accessRefusal(me));   // the admin's message while live is restricted and the caller isn't picked, or null
         out.put("runnerEnabled", runner.getIfAvailable() != null);
         out.put("marketOpen", LiveStrategyRunner.marketOpen(clock.instant()));
         out.put("controls", trading.controls());
@@ -128,6 +130,27 @@ public class TradingController {
     public TradingControl setLive(@RequestBody LiveRequest r) {
         if (r == null || r.enabled() == null) throw new TradingException("Missing enabled (true or false)");
         return trading.setLiveTrading(r.enabled());
+    }
+
+    public record LiveRestrictionRequest(Boolean restricted, String message) {}
+    public record UserLiveAccessRequest(Boolean allowed) {}
+
+    @GetMapping("/live-access")
+    @Operation(summary = "Whether live trading is restricted to picked users, the message the others see, and who is picked (ADMIN)")
+    public TradingService.LiveAccess liveAccess() { return trading.liveAccess(); }
+
+    @PutMapping("/live-access")
+    @Operation(summary = "Restrict live trading to picked users and/or set the message everyone else sees (ADMIN; blank message = default)")
+    public TradingService.LiveAccess setLiveRestriction(@RequestBody LiveRestrictionRequest r) {
+        if (r == null || (r.restricted() == null && r.message() == null)) throw new TradingException("Send restricted and/or message");
+        return trading.setLiveRestriction(r.restricted(), r.message());
+    }
+
+    @PutMapping("/live-access/users/{userId}")
+    @Operation(summary = "Give or take a user's live access (ADMIN)")
+    public TradingService.LiveAccess setUserLiveAccess(@PathVariable Long userId, @RequestBody UserLiveAccessRequest r) {
+        if (r == null || r.allowed() == null) throw new TradingException("Missing allowed (true or false)");
+        return trading.setUserLiveAccess(userId, r.allowed());
     }
 
     @DeleteMapping("/kill-switch")

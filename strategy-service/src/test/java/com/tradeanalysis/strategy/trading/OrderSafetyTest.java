@@ -48,7 +48,7 @@ class OrderSafetyTest {
         jdbc.update("DELETE FROM live_position");
         jdbc.update("DELETE FROM trade_order");
         // Live trading off (the default): other tests in this context may have turned it on.
-        jdbc.update("UPDATE trading_control SET kill_switch = FALSE, live_enabled = FALSE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
+        jdbc.update("UPDATE trading_control SET kill_switch = FALSE, live_enabled = FALSE, live_restricted = FALSE, max_orders_per_day = 10, max_quantity_per_order = 130, daily_loss_limit = 5000");
         when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
     }
 
