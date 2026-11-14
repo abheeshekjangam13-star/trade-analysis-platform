@@ -341,6 +341,15 @@ public class StrategyService {
 
     @Transactional
     public BacktestResult backtest(Long strategyId, String symbol, int lookbackDays, double capital) {
+        return backtest(strategyId, symbol, lookbackDays, capital, true);
+    }
+
+    /**
+     * @param dayLoss whether to apply the caller's max day loss to this strategy alone. A portfolio report passes false
+     *                and applies it to all its strategies together (the limit covers the whole account, as live).
+     */
+    @Transactional
+    public BacktestResult backtest(Long strategyId, String symbol, int lookbackDays, double capital, boolean dayLoss) {
         Strategy strategy = get(strategyId);
         checkBacktestDays(lookbackDays);   // the plan's limit first, then the index
         if ("NIFTY_OPENING_BREAKOUT".equals(strategy.getType())) {
@@ -350,13 +359,14 @@ public class StrategyService {
                 throw new IllegalArgumentException("This strategy trades " + (u == com.tradeanalysis.common.market.Underlying.BANKNIFTY ? "Bank Nifty" : "NIFTY")
                         + ": backtest it on " + u.indexSymbol + ", not " + symbol);
         }
-        BacktestEngine.BacktestOutput out = engine.run(strategy, symbol, lookbackDays, capital);
+        BacktestEngine.BacktestOutput out = engine.run(strategy, symbol, lookbackDays, capital, dayLoss ? currentMaxDayLoss() : null);
         BacktestResult result = new BacktestResult(
                 strategy, symbol, Instant.now().minusSeconds((long) lookbackDays * 86400), Instant.now(),
                 capital, out.finalCapital(), out.totalReturn(), out.maxDrawdown(),
                 out.totalTrades(), out.winningTrades(), out.sharpeRatio(), out.signals());
         result.setRunContext(lookbackDays, CurrentUser.id().orElse(null));
         result.setSkippedTrades(out.skippedTrades());
+        result.setDayLoss(out.maxDayLoss(), out.dayLossStops());
         long saveStarted = System.nanoTime();
         BacktestResult saved = btRepo.save(result);
 
@@ -364,12 +374,26 @@ public class StrategyService {
         // and per month.
         out.tradeLogs().forEach(log -> log.setBacktestResultId(saved.getId()));
         rows.insertTrades(out.tradeLogs());
-        rows.insertDaily(ReportBuilder.daily(saved.getId(), out.days(), out.tradeLogs()));
-        rows.insertMonthly(ReportBuilder.monthly(saved.getId(), out.days(), out.tradeLogs()));
+        List<NiftyTradeLog> taken = out.tradeLogs().stream().filter(t -> t.getSkipReason() == null).toList();
+        rows.insertDaily(ReportBuilder.daily(saved.getId(), out.days(), taken));
+        rows.insertMonthly(ReportBuilder.monthly(saved.getId(), out.days(), taken));
         log.info("BACKTEST_SAVED id={} strategy={} trades={} days={} save={}ms", saved.getId(), strategyId,
                 out.tradeLogs().size(), out.days().size(), (System.nanoTime() - saveStarted) / 1_000_000);
 
         return saved;
+    }
+
+    /** Each index's 1-minute candles over these days (for the max day loss across a portfolio, see DayLossStop). */
+    public Map<String, com.tradeanalysis.common.dto.PriceSeries> minuteCandles(java.util.Collection<String> symbols, java.time.LocalDate from, java.time.LocalDate until) {
+        return engine.minuteCandles(symbols, from, until);
+    }
+
+    /** The caller's own max day loss (My account), or null when none is set: backtests apply it as live trading does. */
+    public Double currentMaxDayLoss() {
+        Long id = CurrentUser.id().orElse(null);
+        if (id == null) return null;
+        List<Double> v = jdbc.queryForList("SELECT max_day_loss FROM app_user WHERE id = ?", Double.class, id);
+        return v.isEmpty() || v.get(0) == null || v.get(0) <= 0 ? null : v.get(0);
     }
 
     @Transactional(readOnly = true)

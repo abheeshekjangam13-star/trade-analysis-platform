@@ -2,6 +2,7 @@ package com.tradeanalysis.strategy.engine;
 
 import com.tradeanalysis.common.dto.*;
 import com.tradeanalysis.common.indicator.Params;
+import com.tradeanalysis.strategy.estimate.DayLossStop;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.model.Strategy;
 import org.slf4j.Logger;
@@ -56,8 +57,16 @@ public class BacktestEngine {
     }
 
     public BacktestOutput run(Strategy strategy, String symbol, int lookbackDays, double capital) {
+        return run(strategy, symbol, lookbackDays, capital, null);
+    }
+
+    /**
+     * @param maxDayLoss the user's max day loss, applied as live trading applies it (see DayLossStop); null = none.
+     *                   Only option strategies (NIFTY_OPENING_BREAKOUT) use it.
+     */
+    public BacktestOutput run(Strategy strategy, String symbol, int lookbackDays, double capital, Double maxDayLoss) {
         if ("NIFTY_OPENING_BREAKOUT".equals(strategy.getType())) {
-            return runNiftyBreakout(strategy, symbol, lookbackDays, capital);
+            return runNiftyBreakout(strategy, symbol, lookbackDays, capital, maxDayLoss);
         }
         PriceSeries series = mdClient.getSeries(symbol, Interval.DAY_1, lookbackDays);
         List<Signal> signals = generateSignals(strategy, series);
@@ -101,7 +110,7 @@ public class BacktestEngine {
         static long ms(long startNanos) { return (System.nanoTime() - startNanos) / 1_000_000; }
     }
 
-    private BacktestOutput runNiftyBreakout(Strategy strategy, String symbol, int lookbackDays, double capital) {
+    private BacktestOutput runNiftyBreakout(Strategy strategy, String symbol, int lookbackDays, double capital, Double maxDayLoss) {
         long started = System.nanoTime();
         Timing timing = new Timing();
         // Calendar-day window, starting at IST midnight so the first day's 09:15 candle is included.
@@ -120,13 +129,13 @@ public class BacktestEngine {
 
         List<NiftyOpeningBreakoutEngine.BreakoutResult> simulated = new ArrayList<>();
         Map<LocalDate, BacktestDayCache.Day> reused = new TreeMap<>();
-        List<LocalDate[]> blocks = sessions.isEmpty() ? null : missingBlocks(sessions, stored.keySet(), today);
+        List<LocalDate[]> blocks = sessions.isEmpty() ? null : missingBlocks(sessions, stored.keySet(), tradeFrom, today);
         if (blocks == null || blocks.size() > MAX_BLOCKS) {
             simulated.add(simulate(strategy, symbol, params, tradeFrom, today, to, timing));   // the whole window
         } else {
             for (LocalDate d : sessions) if (stored.containsKey(d)) reused.put(d, stored.get(d));
             for (LocalDate[] b : blocks) {
-                if (hasPastSession(sessions, b[0], today)) { simulated.add(simulate(strategy, symbol, params, b[0], b[1], to, timing)); continue; }
+                if (b[1].isBefore(today) || hasPastSession(sessions, b[0], today)) { simulated.add(simulate(strategy, symbol, params, b[0], b[1], to, timing)); continue; }
                 // Only today is left (every past day is stored). On a weekend, a holiday or before 09:15 it has no
                 // candles, and market-data answers an empty range with an error: that just means nothing to simulate.
                 try { simulated.add(simulate(strategy, symbol, params, b[0], b[1], to, timing)); }
@@ -140,7 +149,9 @@ public class BacktestEngine {
 
         // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
         com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);
-        List<NiftyTradeLog> logs = fit.kept();
+        // Then the user's max day loss: open trades closed and later entries not taken once the day's loss reaches it.
+        DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, dayLossMinutes(fit.kept(), maxDayLoss));
+        List<NiftyTradeLog> logs = stop.kept();
         int total = logs.size();
         int wins  = (int) logs.stream().filter(t -> t.getEstimatedPnl() > 0).count();
         double totalPnl = logs.stream().mapToDouble(NiftyTradeLog::getEstimatedPnl).sum();
@@ -149,8 +160,46 @@ public class BacktestEngine {
         log.info("BACKTEST_TIMING strategy={} {} days={} reusedDays={} simulatedDays={} blocks={} fetch5m={}ms fetch1m={}ms fetchDays={}ms simulate={}ms total={}ms",
                 strategy.getId(), symbol, lookbackDays, reused.size(), fresh.size(), simulated.size(),
                 timing.fetch5m, timing.fetch1m, timing.fetchDays, timing.simulate, Timing.ms(started));
+        // Stored with the run: the trades taken, and the ones the max day loss kept out (marked, counted in no total).
+        List<NiftyTradeLog> withBlocked = new ArrayList<>(logs);
+        withBlocked.addAll(stop.blocked());
+        withBlocked.sort(Comparator.comparing(NiftyTradeLog::getEntryTimestamp));
         return new BacktestOutput(capital + totalPnl, totalReturn, maxDrawdownPct(capital, logs),
-                total, wins, 0.0, result.signals(), logs, result.days(), fit.skipped());
+                total, wins, 0.0, result.signals(), withBlocked, withStops(result.days(), stop, maxDayLoss), fit.skipped(),
+                maxDayLoss != null && maxDayLoss > 0 ? maxDayLoss : null, stop.stops().size());
+    }
+
+    /** The 1-minute candles of each index the trades are on, over their days: what DayLossStop values open trades at. */
+    private Map<String, PriceSeries> dayLossMinutes(List<NiftyTradeLog> trades, Double maxDayLoss) {
+        if (maxDayLoss == null || maxDayLoss <= 0 || trades.isEmpty()) return Map.of();
+        LocalDate first = trades.stream().map(NiftyTradeLog::getTradeDate).min(Comparator.naturalOrder()).orElseThrow();
+        LocalDate last = trades.stream().map(NiftyTradeLog::getTradeDate).max(Comparator.naturalOrder()).orElseThrow();
+        return minuteCandles(trades.stream().map(NiftyTradeLog::getSymbol).distinct().toList(), first, last);
+    }
+
+    /** Each index's 1-minute candles from {@code from} to {@code until} (inclusive, up to now). */
+    public Map<String, PriceSeries> minuteCandles(Collection<String> symbols, LocalDate from, LocalDate until) {
+        Map<String, PriceSeries> out = new HashMap<>();
+        Instant now = Instant.now();
+        Instant end = until.plusDays(1).atStartOfDay(IST).toInstant().minusSeconds(1);
+        for (String sym : new LinkedHashSet<>(symbols))
+            out.put(sym, CandleMemo.getRange(mdClient, sym, Interval.MINUTE_1, from.atStartOfDay(IST).toInstant(),
+                    end.isAfter(now) ? now : end));
+        return out;
+    }
+
+    /** The day reports, with why on the days the max day loss was reached. */
+    static List<NiftyOpeningBreakoutEngine.DayReport> withStops(List<NiftyOpeningBreakoutEngine.DayReport> days,
+                                                                DayLossStop.Result stop, Double limit) {
+        if (stop.stops().isEmpty()) return days;
+        Map<LocalDate, DayLossStop.Stop> byDate = stop.byDate();
+        return days.stream().map(d -> {
+            DayLossStop.Stop s = byDate.get(d.date());
+            if (s == null) return d;
+            String why = s.describe(limit);
+            return new NiftyOpeningBreakoutEngine.DayReport(d.date(), d.gapPercent(), d.status(),
+                    d.reason() == null || d.reason().isBlank() ? why : d.reason() + ". " + why, d.trades() - s.blocked());
+        }).toList();
     }
 
     /** Simulates the trading days from {@code from} to {@code until} (inclusive; today runs up to now). */
@@ -215,11 +264,21 @@ public class BacktestEngine {
     }
 
     /**
-     * The runs of consecutive trading days (from, until) that still need simulating: past sessions not stored, then
-     * today (always simulated, it isn't over), joined to the run before it when that run ends on the last session.
+     * Daily candles may start later than the minute candles the engines trade on (Bank Nifty's start in March 2026,
+     * its minute candles months earlier). A first session more than this many days after the window starts means the
+     * daily candles don't reach back that far, not a long weekend or holiday.
      */
-    static List<LocalDate[]> missingBlocks(List<LocalDate> sessions, Set<LocalDate> stored, LocalDate today) {
+    static final int MAX_SESSION_GAP_DAYS = 4;
+
+    /**
+     * The runs of consecutive trading days (from, until) that still need simulating: the start of the window when
+     * the daily candles don't reach back to it (those days are simulated, never dropped), past sessions not stored,
+     * then today (always simulated, it isn't over), joined to the run before it when that run ends on the last session.
+     */
+    static List<LocalDate[]> missingBlocks(List<LocalDate> sessions, Set<LocalDate> stored, LocalDate from, LocalDate today) {
         List<LocalDate[]> blocks = new ArrayList<>();
+        if (!sessions.isEmpty() && sessions.get(0).isAfter(from.plusDays(MAX_SESSION_GAP_DAYS)))
+            blocks.add(new LocalDate[]{from, sessions.get(0).minusDays(1)});
         LocalDate start = null, prev = null;
         for (LocalDate d : sessions) {
             if (stored.contains(d)) {
@@ -353,7 +412,15 @@ public class BacktestEngine {
                                   List<Signal> signals, List<NiftyTradeLog> tradeLogs,
                                   List<NiftyOpeningBreakoutEngine.DayReport> days,
                                   /** Trades left out because the capital that was free at their entry could not buy a lot. */
-                                  int skippedTrades) {
+                                  int skippedTrades,
+                                  /** The max day loss applied (null = none) and on how many days it was reached. */
+                                  Double maxDayLoss, int dayLossStops) {
+        public BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown, int totalTrades,
+                              int winningTrades, double sharpeRatio, List<Signal> signals, List<NiftyTradeLog> tradeLogs,
+                              List<NiftyOpeningBreakoutEngine.DayReport> days, int skippedTrades) {
+            this(finalCapital, totalReturn, maxDrawdown, totalTrades, winningTrades, sharpeRatio, signals, tradeLogs, days, skippedTrades, null, 0);
+        }
+
         public BacktestOutput(double finalCapital, double totalReturn, double maxDrawdown, int totalTrades,
                               int winningTrades, double sharpeRatio, List<Signal> signals, List<NiftyTradeLog> tradeLogs,
                               List<NiftyOpeningBreakoutEngine.DayReport> days) {

@@ -28,6 +28,8 @@ public class BacktestResult {
 
     private Integer lookbackDays;
     private int skippedTrades;              // trades left out: the capital free at their entry could not buy a lot
+    private Double maxDayLoss;              // the user's max day loss the run applied (null = none, see DayLossStop)
+    private int dayLossStops;               // days on which it was reached
     private Long runByUserId;               // user who ran the backtest (null before users existed)
     private Instant createdAt = Instant.now();
 
@@ -65,6 +67,9 @@ public class BacktestResult {
     public Integer getLookbackDays() { return lookbackDays; }
     public int getSkippedTrades() { return skippedTrades; }
     public void setSkippedTrades(int skippedTrades) { this.skippedTrades = skippedTrades; }
+    public Double getMaxDayLoss() { return maxDayLoss; }
+    public int getDayLossStops() { return dayLossStops; }
+    public void setDayLoss(Double maxDayLoss, int stops) { this.maxDayLoss = maxDayLoss; this.dayLossStops = stops; }
     public Long getRunByUserId() { return runByUserId; }
     public Instant getCreatedAt() { return createdAt; }
     public void setRunContext(int lookbackDays, Long runByUserId) {

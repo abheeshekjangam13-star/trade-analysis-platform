@@ -22,7 +22,26 @@ class BacktestDayCacheTest {
     // ---- which days still need simulating ----
 
     static List<String> blocks(List<LocalDate> sessions, Set<LocalDate> stored, LocalDate today) {
-        return BacktestEngine.missingBlocks(sessions, stored, today).stream().map(b -> b[0] + ".." + b[1]).toList();
+        return blocks(sessions, stored, MON, today);
+    }
+
+    static List<String> blocks(List<LocalDate> sessions, Set<LocalDate> stored, LocalDate from, LocalDate today) {
+        return BacktestEngine.missingBlocks(sessions, stored, from, today).stream().map(b -> b[0] + ".." + b[1]).toList();
+    }
+
+    @Test
+    void daysBeforeTheFirstDailyCandleAreSimulatedNotDropped() {
+        // Daily candles start on MON, the window three weeks earlier: those weeks must still be simulated.
+        LocalDate from = MON.minusDays(21);
+        assertThat(blocks(List.of(MON, TUE, WED), Set.of(MON, TUE, WED), from, THU))
+                .containsExactly(from + ".." + MON.minusDays(1), THU + ".." + THU);
+    }
+
+    @Test
+    void aWeekendOrHolidayAtTheStartOfTheWindowIsNotABlock() {
+        // Window starts on the Thursday before; Thu/Fri holidays plus the weekend: four days, nothing missing.
+        assertThat(blocks(List.of(MON, TUE, WED), Set.of(MON, TUE, WED), MON.minusDays(4), THU))
+                .containsExactly(THU + ".." + THU);
     }
 
     @Test

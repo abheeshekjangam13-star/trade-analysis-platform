@@ -64,7 +64,7 @@ class PersistenceIntegrationTest {
                 new DayReport(MON, 0.73, "TRADED", null, 1),
                 new DayReport(TUE, 0.60, "TRADED", null, 1));
         double net = trades.stream().mapToDouble(NiftyTradeLog::getEstimatedPnl).sum();
-        when(engine.run(any(), anyString(), anyInt(), anyDouble())).thenAnswer(inv -> new BacktestEngine.BacktestOutput(
+        when(engine.run(any(), anyString(), anyInt(), anyDouble(), any())).thenAnswer(inv -> new BacktestEngine.BacktestOutput(
                 100000 + net, net / 1000, 1.0, 3, 2, 0, List.of(), trades.stream().map(t ->
                         trade(t.getTradeDate(), t.getOptionType(), t.getEntrySpotPrice(), t.getExitSpotPrice(), t.getExitReason())).toList(),
                 days));

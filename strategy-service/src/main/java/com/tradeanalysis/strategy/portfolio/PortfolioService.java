@@ -2,6 +2,7 @@ package com.tradeanalysis.strategy.portfolio;
 
 import com.tradeanalysis.common.exception.NotFoundException;
 import com.tradeanalysis.strategy.engine.CandleMemo;
+import com.tradeanalysis.strategy.estimate.DayLossStop;
 import com.tradeanalysis.strategy.model.BacktestResult;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.service.StrategyService;
@@ -152,6 +153,10 @@ public class PortfolioService {
         String label = ownIndex ? "Each strategy's index" : symbol.trim();
         Map<Long, Map<Integer, BacktestResult>> backtests = backtestAll(portfolio.getStrategyIds(), windows,
                 ownIndex ? null : symbol, capital);
+        // The user's max day loss covers all the portfolio's strategies together, as in live trading (DayLossStop).
+        Double maxDayLoss = strategies.currentMaxDayLoss();
+        int longest = windows.stream().mapToInt(Integer::intValue).max().orElse(0);
+        Map<String, com.tradeanalysis.common.dto.PriceSeries> minutes = new HashMap<>();
         List<PortfolioReport> saved = new ArrayList<>();
         for (int window : windows) {
             // All the strategies' trades share one capital pool. A trade that the free capital can't buy at its entry
@@ -164,8 +169,14 @@ public class PortfolioService {
                 strategyOfBacktest.put(bt.getId(), strategyId);
             }
             com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(all, capital);
-            List<NiftyTradeLog> kept = fit.kept();
-            storeFit(kept, fit.left());
+            if (maxDayLoss != null) {
+                List<String> missing = fit.kept().stream().map(NiftyTradeLog::getSymbol).distinct()
+                        .filter(sym -> !minutes.containsKey(sym)).toList();
+                if (!missing.isEmpty()) minutes.putAll(strategies.minuteCandles(missing, today.minusDays(longest), today));
+            }
+            DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, minutes);
+            List<NiftyTradeLog> kept = stop.kept();
+            storeFit(kept, fit.left(), stop.blocked());
             List<PortfolioReportItem> items = new ArrayList<>();
             for (Map.Entry<Long, Long> e : strategyOfBacktest.entrySet()) {
                 List<NiftyTradeLog> mine = kept.stream().filter(t -> e.getKey().equals(t.getBacktestResultId())).toList();
@@ -174,6 +185,7 @@ public class PortfolioService {
             PortfolioReport made = new PortfolioReport(portfolioId, window, label, today.minusDays(window), today,
                     capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items);
             made.setCapitalToFitAll(PortfolioMath.capitalToFitAll(all));   // kept and left out, at the lots asked for
+            made.setDayLoss(maxDayLoss, stop.stops().size());
             PortfolioReport report = reports.save(made);
             replaceOlderReports(report);
             saved.add(report);
@@ -201,7 +213,7 @@ public class PortfolioService {
         for (Long strategyId : new LinkedHashSet<>(strategyIds)) {
             running.put(strategyId, pool.submit(CurrentUser.carry(() -> candles.with(() -> {
                 Map<Integer, BacktestResult> byWindow = new HashMap<>();
-                for (int window : longestFirst) byWindow.put(window, strategies.backtest(strategyId, symbol, window, capital));
+                for (int window : longestFirst) byWindow.put(window, strategies.backtest(strategyId, symbol, window, capital, false));
                 return byWindow;
             }))));
         }
@@ -223,19 +235,28 @@ public class PortfolioService {
     }
 
     /**
-     * Stores the portfolio's capital fit on its trades, so the Trades page shows what the report counted: the lots (and
-     * P&L) each kept trade was taken with, and the trades left out for lack of capital, marked CAPITAL. The backtests a
-     * report runs are its own (fresh per run), so this changes no other report.
+     * Stores the portfolio's capital fit and max day loss on its trades, so the Trades page shows what the report
+     * counted: the lots (and P&L) each kept trade was taken with and how it exited (MAX_DAY_LOSS when the stop closed
+     * it), the trades left out for lack of capital, marked CAPITAL, and those the max day loss kept out, marked
+     * MAX_DAY_LOSS. The backtests a report runs are its own (fresh per run), so this changes no other report.
      */
-    private void storeFit(List<NiftyTradeLog> kept, List<NiftyTradeLog> left) {
+    private void storeFit(List<NiftyTradeLog> kept, List<NiftyTradeLog> left, List<NiftyTradeLog> blocked) {
         List<Object[]> rows = new ArrayList<>();
-        for (NiftyTradeLog t : kept) rows.add(new Object[]{t.getLots(), t.getEstimatedPnl(), null, t.getId()});
+        for (NiftyTradeLog t : kept) rows.add(row(t, null));
         for (NiftyTradeLog t : left) {
             t.markSkipped("CAPITAL");
-            rows.add(new Object[]{t.getLots(), t.getEstimatedPnl(), "CAPITAL", t.getId()});
+            rows.add(row(t, "CAPITAL"));
         }
+        for (NiftyTradeLog t : blocked) rows.add(row(t, DayLossStop.REASON));
         if (!rows.isEmpty())
-            jdbc.batchUpdate("UPDATE nifty_trade_log SET lots = ?, estimated_pnl = ?, skip_reason = ? WHERE id = ?", rows);
+            jdbc.batchUpdate("UPDATE nifty_trade_log SET lots = ?, estimated_pnl = ?, skip_reason = ?, exit_timestamp = ?, "
+                    + "exit_spot_price = ?, exit_reason = ? WHERE id = ?", rows);
+    }
+
+    private static Object[] row(NiftyTradeLog t, String skip) {
+        return new Object[]{t.getLots(), t.getEstimatedPnl(), skip,
+                t.getExitTimestamp() == null ? null : java.sql.Timestamp.from(t.getExitTimestamp()),
+                t.getExitSpotPrice(), t.getExitReason(), t.getId()};
     }
 
     /**

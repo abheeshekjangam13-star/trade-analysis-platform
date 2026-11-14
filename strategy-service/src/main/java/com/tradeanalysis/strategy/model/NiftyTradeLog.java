@@ -95,6 +95,12 @@ public class NiftyTradeLog {
         }
     }
 
+    /** What the trade would make if it closed at this index price now: the same estimate as its P&L (charges included). */
+    public double pnlAt(double spot) {
+        double spotDelta = optionType.equals("CE") ? spot - entrySpotPrice : entrySpotPrice - spot;
+        return spotDelta * lotSize * lots * 0.5 - (charges == null ? 0 : charges);
+    }
+
     /** Indicative P&L for a number of lots: spot move × lot size × lots × 0.5 (ATM delta), minus charges. */
     private double pnlFor(int n) {
         double spotDelta = optionType.equals("CE")

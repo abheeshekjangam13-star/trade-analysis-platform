@@ -31,6 +31,8 @@ public class PortfolioReport {
     private LocalDate peakCapitalOn;
     /** Capital that would have taken every trade at full lots (the most premium open at once); see PortfolioMath. */
     private Double capitalToFitAll;
+    private Double maxDayLoss;     // the user's max day loss the report applied (null = none, see DayLossStop)
+    private int dayLossStops;      // days on which it was reached
     private Boolean ivAssumed;
     private Long runByUserId;
     @Column(nullable = false) private Instant createdAt = Instant.now();
@@ -80,6 +82,9 @@ public class PortfolioReport {
     public Boolean getIvAssumed()           { return ivAssumed; }
     public Double getCapitalToFitAll()      { return capitalToFitAll; }
     void setCapitalToFitAll(Double amount)  { this.capitalToFitAll = amount; }
+    public Double getMaxDayLoss()           { return maxDayLoss; }
+    public int getDayLossStops()            { return dayLossStops; }
+    void setDayLoss(Double limit, int stops) { this.maxDayLoss = limit; this.dayLossStops = stops; }
     public Long getRunByUserId()            { return runByUserId; }
     public Instant getCreatedAt()           { return createdAt; }
     public List<PortfolioReportItem> getItems() { return items; }
