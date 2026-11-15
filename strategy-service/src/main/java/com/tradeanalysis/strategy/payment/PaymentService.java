@@ -39,15 +39,16 @@ public class PaymentService {
     private final ObjectMapper json;
     private final Clock clock;
     private final com.tradeanalysis.strategy.trading.LiveOrderBilling billing;
+    private final com.tradeanalysis.strategy.user.PlanSales planSales;
 
     /** Credits a user may buy at once, in rupees. */
     public static final int MIN_CREDITS = 100, MAX_CREDITS = 50_000;
 
     public PaymentService(RazorpayProperties props, RazorpayApi razorpay, PaymentOrderRepository orders, UserService users,
                           EmailService emails, ObjectMapper json, Clock clock,
-                          com.tradeanalysis.strategy.trading.LiveOrderBilling billing) {
+                          com.tradeanalysis.strategy.trading.LiveOrderBilling billing, com.tradeanalysis.strategy.user.PlanSales planSales) {
         this.props = props; this.razorpay = razorpay; this.orders = orders; this.users = users;
-        this.emails = emails; this.json = json; this.clock = clock; this.billing = billing;
+        this.emails = emails; this.json = json; this.clock = clock; this.billing = billing; this.planSales = planSales;
     }
 
     /**
@@ -101,6 +102,9 @@ public class PaymentService {
         if (current != Plan.FREE && current.ordinal() > plan.ordinal())
             throw new ResponseStatusException(HttpStatus.CONFLICT, "You already have " + current
                     + (me.getPlanExpiresAt() == null ? "" : " until " + me.getPlanExpiresAt()) + "; it includes " + plan);
+        // Plans not on sale yet: only users already on that plan may renew it.
+        if (!planSales.onSale(plan) && me.getPlan() != plan)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, com.tradeanalysis.strategy.user.PlanSales.COMING_SHORTLY);
         if (current == plan && me.getPlanExpiresAt() == null)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Your " + plan + " plan has no expiry; nothing to pay");
 
@@ -117,6 +121,8 @@ public class PaymentService {
         AppUser u = users.get(userId);
         if (!u.awaitingSignupPayment())
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This sign-up is not waiting for a payment");
+        if (!planSales.onSale(u.getRequestedPlan()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, com.tradeanalysis.strategy.user.PlanSales.COMING_SHORTLY);
         return newOrder(u, u.getRequestedPlan());
     }
 

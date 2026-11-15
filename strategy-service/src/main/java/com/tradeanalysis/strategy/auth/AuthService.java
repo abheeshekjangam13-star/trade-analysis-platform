@@ -44,14 +44,16 @@ public class AuthService {
     private final com.tradeanalysis.strategy.payment.PaymentService payments;
     private final com.tradeanalysis.strategy.compliance.TwoFactor twoFactor;
     private final com.tradeanalysis.strategy.compliance.PanRegistry pans;
+    private final com.tradeanalysis.strategy.user.PlanSales planSales;
 
     public AuthService(AppUserRepository users, AppRoleRepository roles, PasswordEncoder encoder, TokenService tokens,
                        LoginAttempts attempts, com.tradeanalysis.strategy.user.UserService userService,
                        com.tradeanalysis.strategy.notify.EmailService emails,
                        com.tradeanalysis.strategy.payment.PaymentService payments,
                        com.tradeanalysis.strategy.compliance.TwoFactor twoFactor,
-                       com.tradeanalysis.strategy.compliance.PanRegistry pans) {
-        this.twoFactor = twoFactor; this.pans = pans;
+                       com.tradeanalysis.strategy.compliance.PanRegistry pans,
+                       com.tradeanalysis.strategy.user.PlanSales planSales) {
+        this.twoFactor = twoFactor; this.pans = pans; this.planSales = planSales;
         this.userService = userService;
         this.payments = payments;
         this.emails = emails;
@@ -140,6 +142,8 @@ public class AuthService {
         if (!acceptTerms)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Please accept the Terms and Conditions to sign up");
         checkPassword(password);
+        if (!planSales.onSale(plan))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, com.tradeanalysis.strategy.user.PlanSales.COMING_SHORTLY);
         // PAN and the full name exactly as on the PAN card: one PAN per account, linked to the new client ID.
         String panNorm, nameOnPan;
         try {

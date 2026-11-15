@@ -22,8 +22,9 @@ public class AuthController {
     public record SignupVerifyRequest(String orderId, String paymentId, String signature) {}
 
     private final AuthService auth;
+    private final com.tradeanalysis.strategy.user.PlanSales planSales;
 
-    public AuthController(AuthService auth) { this.auth = auth; }
+    public AuthController(AuthService auth, com.tradeanalysis.strategy.user.PlanSales planSales) { this.auth = auth; this.planSales = planSales; }
 
     @GetMapping("/api/auth/status")
     @Operation(summary = "Whether the first admin still has to be set up")
@@ -37,7 +38,7 @@ public class AuthController {
 
     @GetMapping("/api/auth/plans")
     @Operation(summary = "Subscription plans with prices and what each allows")
-    public java.util.List<com.tradeanalysis.strategy.user.Plan.Info> plans() { return com.tradeanalysis.strategy.user.Plan.catalog(); }
+    public java.util.List<com.tradeanalysis.strategy.user.Plan.Info> plans() { return planSales.catalog(); }
 
     @PostMapping("/api/auth/signup")
     @ResponseStatus(HttpStatus.CREATED)

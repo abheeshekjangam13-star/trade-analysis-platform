@@ -16,3 +16,7 @@ trading:
 auth:
   trust-user-header: true     # tests identify callers by X-User without logging in
   auto-register-users: true
+
+# Every plan on sale in tests (PlanSalesIntegrationTest checks the FREE,GOLD default).
+plans:
+  on-sale: FREE,GOLD,PREMIUM,PREMIUM_PLUS,PREMIUM_PRO

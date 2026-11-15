@@ -103,6 +103,10 @@ notifications:
     from: ${MAIL_FROM:}                          # e.g. "Trade Analysis <alerts@yourdomain.com>"; defaults to MAIL_USERNAME
     dispatch-ms: 15000
 
+# Plans users can pick at sign-up or buy online; the rest show "Premium is coming shortly" (admins can still give any plan).
+plans:
+  on-sale: ${PLANS_ON_SALE:FREE,GOLD}
+
 # Razorpay one-time plan payments (see README "Payments"). Unset keys = online payments off.
 razorpay:
   key-id: ${RAZORPAY_KEY_ID:}             # rzp_test_... or rzp_live_...

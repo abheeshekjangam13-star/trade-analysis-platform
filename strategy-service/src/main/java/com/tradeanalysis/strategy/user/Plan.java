@@ -99,10 +99,12 @@ public enum Plan {
 
     public record Info(Plan plan, String label, int pricePerMonth, int listPricePerMonth, int discountPercent, int maxStrategies,
                        int maxBacktestDays, boolean paperTrading, boolean liveTrading, boolean editStrategies,
-                       int maxDeletes, int maxLiveStrategies, int maxLiveLots, int includedLiveOrders, List<String> features) {}
-    public Info info() {
+                       int maxDeletes, int maxLiveStrategies, int maxLiveLots, int includedLiveOrders, List<String> features,
+                       /** Whether users can pick or buy it themselves now (false = coming shortly). */ boolean available) {}
+    public Info info() { return info(true); }
+    public Info info(boolean available) {
         return new Info(this, label(), pricePerMonth, listPricePerMonth, discountPercent, maxStrategies, maxBacktestDays,
-                paperTrading, liveTrading, editStrategies, maxDeletes, maxLiveStrategies, maxLiveLots, includedLiveOrders(), features);
+                paperTrading, liveTrading, editStrategies, maxDeletes, maxLiveStrategies, maxLiveLots, includedLiveOrders(), features, available);
     }
     public static List<Info> catalog() {
         return java.util.Arrays.stream(values()).map(Plan::info).toList();
