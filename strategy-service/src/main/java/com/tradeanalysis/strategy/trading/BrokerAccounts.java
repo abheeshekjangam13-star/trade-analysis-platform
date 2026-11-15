@@ -69,7 +69,7 @@ public class BrokerAccounts {
         if (u.isAdmin()) return null;
         if (!u.effectivePlan(clock.instant()).atLeast(Plan.PREMIUM))
             return "Live trading needs the PREMIUM plan (your plan is " + u.effectivePlan(clock.instant()) + ")";
-        if (!hasOwnAccount(userId)) return "Connect your own Kite or Angel One account first (Account page)";
+        if (!hasOwnAccount(userId)) return "Connect your trading account first (Account page)";
         return null;
     }
 }
