@@ -46,8 +46,13 @@ public class StrategyStatusService {
                          List<Trigger> triggers, Position position, Double todayPnl, LocalTime entryFrom, LocalTime entryUntil) {}
     /** A 5-minute candle of the index, for the Trading page chart. */
     public record Bar(Instant t, double o, double h, double l, double c) {}
-    /** The Trading page's live view: the Nifty 50 chart for today and every PAPER/LIVE strategy's status. */
-    public record Today(String index, Double spot, Double previousClose, List<Bar> bars, List<Status> strategies) {}
+    /** One index's chart for today: its 5-minute candles, last price and yesterday's close. */
+    public record IndexChart(String index, Double spot, Double previousClose, List<Bar> bars) {}
+    /**
+     * The Trading page's live view: the Nifty 50 chart for today (index, spot, previousClose, bars), every PAPER/LIVE
+     * strategy's status, and {@code charts}: Nifty 50 first, then each other index the user's strategies trade.
+     */
+    public record Today(String index, Double spot, Double previousClose, List<Bar> bars, List<Status> strategies, List<IndexChart> charts) {}
 
     record Engine(Instant at, Double spot, List<Trigger> triggers, String dayStatus, String dayReason, String problem) {}
 
@@ -65,15 +70,24 @@ public class StrategyStatusService {
         this.marketData = marketData; this.engine = engine; this.clock = clock;
     }
 
-    /** Today's Nifty 50 5-minute candles (cached for a minute) and the user's PAPER/LIVE strategies. */
+    /** Today's 5-minute candles (cached for a minute) of Nifty 50 and each other index the user trades, and their PAPER/LIVE strategies. */
     public Today today(Long userId) {
         Instant now = clock.instant();
+        List<Status> mine = forUser(userId);
+        String nifty = Underlying.NIFTY.indexSymbol;
+        List<String> indexes = new ArrayList<>(List.of(nifty));
+        mine.stream().map(Status::underlying).filter(u -> u != null && !indexes.contains(u)).distinct().forEach(indexes::add);
+        List<IndexChart> charts = indexes.stream().map(i -> chart(i, now)).toList();
+        IndexChart main = charts.get(0);
+        return new Today(nifty, main.spot(), main.previousClose(), main.bars(), mine, charts);
+    }
+
+    private IndexChart chart(String index, Instant now) {
         LocalDate today = now.atZone(IST).toLocalDate();
-        String index = Underlying.NIFTY.indexSymbol;
         List<Bar> bars = List.of();
         Double prevClose = null;
         try {
-            var hit = barsCache;
+            var hit = barsCache.get(index);
             if (hit == null || !fresh(hit.at(), now)) {
                 PriceSeries five = marketData.getRange(index, Interval.MINUTE_5, today.minusDays(5).atStartOfDay(IST).toInstant(), now);
                 List<Candle> done = five.candles().stream().filter(c -> c.timestamp().plus(Duration.ofMinutes(5)).compareTo(now) <= 0)
@@ -83,14 +97,14 @@ public class StrategyStatusService {
                 List<Bar> todays = done.stream().filter(c -> c.timestamp().atZone(IST).toLocalDate().equals(today))
                         .map(c -> new Bar(c.timestamp(), c.open().doubleValue(), c.high().doubleValue(), c.low().doubleValue(), c.close().doubleValue())).toList();
                 hit = new Chart(now, pc, todays);
-                barsCache = hit;
+                barsCache.put(index, hit);
             }
             bars = hit.bars(); prevClose = hit.previousClose();
         } catch (RuntimeException e) {
-            log.warn("STATUS_CHART_FAILED: {}", e.getMessage());
+            log.warn("STATUS_CHART_FAILED {}: {}", index, e.getMessage());
         }
         Double spot = bars.isEmpty() ? prevClose : Double.valueOf(bars.get(bars.size() - 1).c());   // no unboxing of a null close
-        return new Today(index, spot, prevClose, bars, forUser(userId));
+        return new IndexChart(index, spot, prevClose, bars);
     }
 
     /**
@@ -105,7 +119,7 @@ public class StrategyStatusService {
     }
 
     private record Chart(Instant at, Double previousClose, List<Bar> bars) {}
-    private volatile Chart barsCache;
+    private final Map<String, Chart> barsCache = new ConcurrentHashMap<>();
 
     /** The user's strategies set to PAPER or LIVE, live ones first. */
     public List<Status> forUser(Long userId) {
