@@ -12,12 +12,12 @@ import java.util.Map;
 @Tag(name = "Auth", description = "Login, first-admin setup and passwords")
 public class AuthController {
 
-    public record LoginRequest(String username, String password) {}
+    public record LoginRequest(String username, String password, String code) {}
     public record SetupRequest(String username, String password, String fullName, String email) {}
     public record ChangePassword(String currentPassword, String newPassword) {}
     public record SetPassword(String password) {}
     public record SignupRequest(String username, String password, String email, String phone, String fullName,
-                                com.tradeanalysis.strategy.user.Plan plan, Boolean acceptTerms) {}
+                                com.tradeanalysis.strategy.user.Plan plan, Boolean acceptTerms, String pan) {}
     public record SignupPaymentRequest(String username, String password, com.tradeanalysis.strategy.user.Plan plan) {}
     public record SignupVerifyRequest(String orderId, String paymentId, String signature) {}
 
@@ -41,11 +41,11 @@ public class AuthController {
 
     @PostMapping("/api/auth/signup")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Sign up (email, phone and acceptTerms=true required). GOLD/PREMIUM: pay in Checkout with the returned order; "
+    @Operation(summary = "Sign up (email, phone, PAN, full name as on the PAN card and acceptTerms=true required). GOLD/PREMIUM: pay in Checkout with the returned order; "
             + "the sign-up reaches the admin after paying. FREE: waits for admin approval")
     public AuthService.SignupResponse signup(@RequestBody SignupRequest r) {
         return auth.signup(r.username(), r.password(), r.email(), r.phone(), r.fullName(), r.plan(),
-                Boolean.TRUE.equals(r.acceptTerms()));
+                Boolean.TRUE.equals(r.acceptTerms()), r.pan());
     }
 
     @PostMapping("/api/auth/signup/payment")
@@ -61,8 +61,8 @@ public class AuthController {
     }
 
     @PostMapping("/api/auth/login")
-    @Operation(summary = "Log in; returns a token to send as 'Authorization: Bearer <token>'")
-    public AuthService.LoginResult login(@RequestBody LoginRequest r) { return auth.login(r.username(), r.password()); }
+    @Operation(summary = "Log in with username or client ID; with two-factor on, also send code. Returns a token to send as 'Authorization: Bearer <token>'")
+    public AuthService.LoginResult login(@RequestBody LoginRequest r) { return auth.login(r.username(), r.password(), r.code()); }
 
     @PostMapping("/api/auth/change-password")
     @ResponseStatus(HttpStatus.NO_CONTENT)

@@ -27,7 +27,7 @@ public class CurrentUserFilter extends OncePerRequestFilter {
     public static final String HEADER = "X-User";
     // The Razorpay webhook has no login; PaymentController verifies its HMAC signature instead.
     static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/signup/payment", "/api/auth/signup/verify",
-            "/api/auth/setup", "/api/auth/login",
+            "/api/auth/setup", "/api/auth/login", "/api/auth/grievance",
             "/api/payments/webhook");
 
     private final UserService users;

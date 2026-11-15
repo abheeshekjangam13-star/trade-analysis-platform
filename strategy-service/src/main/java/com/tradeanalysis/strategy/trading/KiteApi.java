@@ -14,8 +14,14 @@ public interface KiteApi {
     record BrokerOrder(String orderId, String status, String tradingsymbol, String exchange, String transactionType,
                        int quantity, int filledQuantity, double averagePrice, Double price, String orderType,
                        String product, String statusMessage, String tag, String timestamp) {}
+    /** algoId: the exchange-issued Algo ID the order is tagged with (null = none). */
     record PlaceOrder(String exchange, String tradingsymbol, String transactionType, int quantity, String product,
-                      String orderType, Double price, Double triggerPrice, String tag) {}
+                      String orderType, Double price, Double triggerPrice, String tag, String algoId) {
+        public PlaceOrder(String exchange, String tradingsymbol, String transactionType, int quantity, String product,
+                          String orderType, Double price, Double triggerPrice, String tag) {
+            this(exchange, tradingsymbol, transactionType, quantity, product, orderType, price, triggerPrice, tag, null);
+        }
+    }
     /** One index option contract from the NFO instruments list. */
     record OptionInstrument(String tradingsymbol, LocalDate expiry, int strike, String optionType, int lotSize,
                             double tickSize) {}

@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.notify;
 
+import com.tradeanalysis.strategy.TestPan;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeanalysis.strategy.auth.TokenService;
@@ -57,7 +58,7 @@ class EmailNotificationIntegrationTest {
 
     private static String signup(String user, String email, String phone) {
         return "{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + email + "\",\"phone\":\"" + phone
-                + "\",\"fullName\":\"" + user.toUpperCase() + "\",\"acceptTerms\":true,\"plan\":\"GOLD\"}";
+                + "\",\"fullName\":\"" + user.toUpperCase() + "\",\"pan\":\"" + TestPan.of(user) + "\",\"acceptTerms\":true,\"plan\":\"GOLD\"}";
     }
 
     private long id(String username) { return users.findByUsernameIgnoreCase(username).orElseThrow().getId(); }

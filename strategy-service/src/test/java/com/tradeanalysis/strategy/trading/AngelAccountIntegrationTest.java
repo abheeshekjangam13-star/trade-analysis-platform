@@ -63,8 +63,11 @@ class AngelAccountIntegrationTest {
     private void plan(String user, String plan) throws Exception {
         call(get("/api/trading/angel-account"), user, 200);   // registers the user
         jdbc.update("UPDATE app_user SET plan = ?, plan_expires_at = NULL WHERE username = ?", plan, user);
-        if (!plan.equals("FREE") && !plan.equals("GOLD"))
+        if (!plan.equals("FREE") && !plan.equals("GOLD")) {
             jdbc.update("UPDATE app_user SET live_orders_left = 100, live_orders_granted = 100, live_orders_warned = FALSE WHERE username = ?", user);
+            // Live trading needs the risk disclosure accepted (users, not admins).
+            call(post("/api/trading/risk-disclosure/accept").content("{\"version\":\"" + com.tradeanalysis.strategy.compliance.RiskDisclosure.VERSION + "\"}"), user, 200);
+        }
     }
 
     private static final String LIVE_ORDER = """

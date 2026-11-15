@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.payment;
 
+import com.tradeanalysis.strategy.TestPan;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeanalysis.strategy.auth.TokenService;
@@ -78,13 +79,13 @@ class PaymentIntegrationTest {
 
     private void signupAndApprove(String user, String phone) throws Exception {
         call(post("/api/auth/signup").content("{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + user
-                + "@example.com\",\"phone\":\"" + phone + "\",\"acceptTerms\":true,\"plan\":\"FREE\"}"), null, 201);
+                + "@example.com\",\"phone\":\"" + phone + "\"," + TestPan.fields(user) + "\"acceptTerms\":true,\"plan\":\"FREE\"}"), null, 201);
         call(post("/api/users/" + id(user) + "/approve").content("{\"plan\":\"FREE\"}"), "admin", 200);
     }
 
     private JsonNode signup(String user, String phone, String plan) throws Exception {
         return call(post("/api/auth/signup").content("{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":\"" + user
-                + "@example.com\",\"phone\":\"" + phone + "\",\"acceptTerms\":true,\"plan\":\"" + plan + "\"}"), null, 201);
+                + "@example.com\",\"phone\":\"" + phone + "\"," + TestPan.fields(user) + "\"acceptTerms\":true,\"plan\":\"" + plan + "\"}"), null, 201);
     }
 
     private boolean pendingForAdmin(String user) throws Exception {

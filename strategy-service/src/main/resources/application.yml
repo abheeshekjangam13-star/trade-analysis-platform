@@ -125,3 +125,6 @@ angel:
   public-ip: ${ANGEL_PUBLIC_IP:127.0.0.1}
   local-ip: ${ANGEL_LOCAL_IP:127.0.0.1}
   mac-address: ${ANGEL_MAC_ADDRESS:00:00:00:00:00:00}
+  # The placeOrder field Angel One takes the exchange Algo ID in. Blank = the Algo ID is recorded on the order but
+  # not sent to Angel One, until Angel confirms the field name (Kite takes it as algo_id).
+  algo-id-param: ${ANGEL_ALGO_ID_PARAM:}

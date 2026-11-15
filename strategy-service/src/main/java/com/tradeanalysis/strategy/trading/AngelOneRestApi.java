@@ -31,10 +31,17 @@ public class AngelOneRestApi implements KiteApi {
     private final AngelScripMaster symbols;
     private final NiftyOptions options;
     private final ObjectMapper json;
+    private final String algoIdField;
 
     /** @param http has the SmartAPI base URL and the X-UserType/X-SourceID/IP/MAC headers */
     public AngelOneRestApi(RestClient http, Credentials creds, AngelScripMaster symbols, NiftyOptions options, ObjectMapper json) {
+        this(http, creds, symbols, options, json, null);
+    }
+
+    /** @param algoIdField the placeOrder field Angel One takes the exchange Algo ID in (blank = not sent until Angel confirms it) */
+    public AngelOneRestApi(RestClient http, Credentials creds, AngelScripMaster symbols, NiftyOptions options, ObjectMapper json, String algoIdField) {
         this.http = http; this.creds = creds; this.symbols = symbols; this.options = options; this.json = json;
+        this.algoIdField = algoIdField == null || algoIdField.isBlank() ? null : algoIdField.trim();
     }
 
     public static boolean isAngelOrderId(String id) { return id != null && id.startsWith(ID_PREFIX); }
@@ -97,6 +104,7 @@ public class AngelOneRestApi implements KiteApi {
         if (o.triggerPrice() != null) body.put("triggerprice", String.valueOf(o.triggerPrice()));
         body.put("quantity", String.valueOf(o.quantity()));
         if (o.tag() != null) body.put("ordertag", o.tag().length() > 20 ? o.tag().substring(0, 20) : o.tag());
+        if (algoIdField != null && o.algoId() != null && !o.algoId().isBlank()) body.put(algoIdField, o.algoId());
         Map<String, Object> d = map(post(P + "/order/v1/placeOrder", body));
         String orderId = str(d.get("orderid"));
         if (orderId == null || orderId.isBlank()) throw new TradingException("Angel One did not return an order id");

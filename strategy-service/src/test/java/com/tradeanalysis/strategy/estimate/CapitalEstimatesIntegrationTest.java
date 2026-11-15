@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.estimate;
 
+import com.tradeanalysis.strategy.TestPan;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeanalysis.common.dto.Candle;
@@ -81,7 +82,7 @@ class CapitalEstimatesIntegrationTest {
         call(post("/api/auth/setup").content("{\"username\":\"admin\",\"password\":\"Secret123\"}"), null, 200);
         for (String u : new String[]{"cap_a", "cap_b"}) {
             call(post("/api/auth/signup").content("{\"username\":\"" + u + "\",\"password\":\"Pass1234\",\"email\":\"" + u
-                    + "@example.com\",\"phone\":\"98765" + (u.equals("cap_a") ? "33333" : "44444") + "\",\"acceptTerms\":true,\"plan\":\"FREE\"}"), null, 201);
+                    + "@example.com\",\"phone\":\"98765" + (u.equals("cap_a") ? "33333" : "44444") + "\"," + TestPan.fields(u) + "\"acceptTerms\":true,\"plan\":\"FREE\"}"), null, 201);
             call(post("/api/users/" + id(u) + "/approve").content("{\"plan\":\"GOLD\"}"), "admin", 200);
         }
         strategy = call(post("/api/strategies").content("""

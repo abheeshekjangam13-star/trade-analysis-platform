@@ -24,12 +24,15 @@ public final class Access {
         if (path.startsWith("/api/notifications/push/")) return null;
         // Every plan may see their own beta app invitation and ask for the app link.
         if (path.equals("/api/users/me/beta") || path.equals("/api/users/me/beta/request-link")) return null;
+        // Every plan may see their client ID and add their PAN.
+        if (path.equals("/api/users/me/kyc")) return null;
         if ((path.startsWith("/api/users") && !path.equals("/api/users/me") && !path.equals("/api/users/me/usage"))
                 || path.startsWith("/api/access-log")
                 || path.startsWith("/api/notifications")
                 || path.startsWith("/api/trading/kill-switch")
                 || path.startsWith("/api/trading/runner/")
                 || path.startsWith("/api/trading/billing/users")
+                || path.startsWith("/api/trading/compliance")
                 || (path.equals("/api/trading/controls") && !read))
             return "Only an ADMIN can do this";
         if (read || path.startsWith("/api/auth/") || path.startsWith("/api/payments/")) return null;   // FREE users may pay

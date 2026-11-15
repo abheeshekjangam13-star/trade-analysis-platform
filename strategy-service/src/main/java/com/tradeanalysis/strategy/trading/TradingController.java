@@ -34,10 +34,13 @@ public class TradingController {
     private final ObjectProvider<LiveStrategyRunner> runner;
     private final Clock clock;
     private final QuoteCache quoteCache;
+    private final com.tradeanalysis.strategy.compliance.ComplianceAudit audit;
 
     public TradingController(TradingService trading, OrderService orders, TradeOrderRepository orderRepo,
                              LivePositionRepository positionRepo, BrokerAccounts accounts, KiteApi platform, NiftyOptions options,
-                             ObjectProvider<LiveStrategyRunner> runner, Clock clock, QuoteCache quoteCache) {
+                             ObjectProvider<LiveStrategyRunner> runner, Clock clock, QuoteCache quoteCache,
+                             com.tradeanalysis.strategy.compliance.ComplianceAudit audit) {
+        this.audit = audit;
         this.quoteCache = quoteCache;
         this.trading = trading; this.orders = orders; this.orderRepo = orderRepo; this.positionRepo = positionRepo;
         this.accounts = accounts; this.platform = platform; this.options = options; this.runner = runner; this.clock = clock;
@@ -119,19 +122,29 @@ public class TradingController {
     @PutMapping("/controls")
     @Operation(summary = "Change limits (ADMIN)")
     public TradingControl updateControls(@RequestBody ControlsRequest r) {
-        return trading.updateControls(r.maxOrdersPerDay(), r.maxQuantityPerOrder(), r.dailyLossLimit());
+        TradingControl c = trading.updateControls(r.maxOrdersPerDay(), r.maxQuantityPerOrder(), r.dailyLossLimit());
+        audit.record("CONTROLS", "maxOrdersPerDay=" + c.getMaxOrdersPerDay() + " maxQuantityPerOrder=" + c.getMaxQuantityPerOrder()
+                + " dailyLossLimit=" + c.getDailyLossLimit());
+        return c;
     }
 
     @PostMapping("/kill-switch")
     @Operation(summary = "Stop everything: no new orders, all strategies OFF, cancel open live orders, close strategy positions")
-    public TradingService.KillResult kill() { return trading.engageKillSwitch(); }
+    public TradingService.KillResult kill() {
+        TradingService.KillResult k = trading.engageKillSwitch();
+        audit.record("KILL_SWITCH_ON", "cancelled " + k.cancelledOrders() + " orders, closed " + k.closedPositions()
+                + " positions, stopped " + k.strategiesStopped() + " strategies");
+        return k;
+    }
 
     @PutMapping("/live")
     @Operation(summary = "Turn live trading on or off for everyone (ADMIN). Off: no new live orders or entries; open "
             + "live positions are still managed and closed")
     public TradingControl setLive(@RequestBody LiveRequest r) {
         if (r == null || r.enabled() == null) throw new TradingException("Missing enabled (true or false)");
-        return trading.setLiveTrading(r.enabled());
+        TradingControl c = trading.setLiveTrading(r.enabled());
+        audit.record(r.enabled() ? "LIVE_TRADING_ON" : "LIVE_TRADING_OFF", null);
+        return c;
     }
 
     public record LiveRestrictionRequest(Boolean restricted, String message) {}
@@ -145,19 +158,27 @@ public class TradingController {
     @Operation(summary = "Restrict live trading to picked users and/or set the message everyone else sees (ADMIN; blank message = default)")
     public TradingService.LiveAccess setLiveRestriction(@RequestBody LiveRestrictionRequest r) {
         if (r == null || (r.restricted() == null && r.message() == null)) throw new TradingException("Send restricted and/or message");
-        return trading.setLiveRestriction(r.restricted(), r.message());
+        TradingService.LiveAccess a = trading.setLiveRestriction(r.restricted(), r.message());
+        audit.record("LIVE_RESTRICTION", "restricted=" + r.restricted() + (r.message() == null ? "" : " message changed"));
+        return a;
     }
 
     @PutMapping("/live-access/users/{userId}")
     @Operation(summary = "Give or take a user's live access (ADMIN)")
     public TradingService.LiveAccess setUserLiveAccess(@PathVariable Long userId, @RequestBody UserLiveAccessRequest r) {
         if (r == null || r.allowed() == null) throw new TradingException("Missing allowed (true or false)");
-        return trading.setUserLiveAccess(userId, r.allowed());
+        TradingService.LiveAccess a = trading.setUserLiveAccess(userId, r.allowed());
+        audit.record(r.allowed() ? "LIVE_ACCESS_GIVEN" : "LIVE_ACCESS_TAKEN", "user " + userId);
+        return a;
     }
 
     @DeleteMapping("/kill-switch")
     @Operation(summary = "Allow new orders again (ADMIN); strategies stay OFF until switched on")
-    public TradingControl release() { return trading.releaseKillSwitch(); }
+    public TradingControl release() {
+        TradingControl c = trading.releaseKillSwitch();
+        audit.record("KILL_SWITCH_OFF", null);
+        return c;
+    }
 
     @GetMapping("/strategies")
     public List<TradingService.StrategyMode> strategies() { return trading.strategyModes(); }
@@ -166,7 +187,9 @@ public class TradingController {
     @Operation(summary = "Set a strategy to OFF, PAPER or LIVE (LIVE: PREMIUM with your own Kite account or ADMIN, and the server switch)")
     public TradingService.StrategyMode setMode(@PathVariable Long id, @RequestBody ModeRequest r) {
         if (r.mode() == null) throw new TradingException("Missing mode");
-        return trading.setMode(id, r.mode(), r.product());
+        TradingService.StrategyMode m = trading.setMode(id, r.mode(), r.product());
+        audit.record("STRATEGY_MODE", "strategy " + id + " " + m.mode() + " " + m.product());
+        return m;
     }
 
     @PostMapping("/runner/run")

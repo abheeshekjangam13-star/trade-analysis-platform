@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.auth;
 
+import com.tradeanalysis.strategy.TestPan;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeanalysis.strategy.user.AppUserRepository;
@@ -50,7 +51,7 @@ class SignupIntegrationTest {
 
     private static String signup(String user, String email, String phone, String plan) {
         return "{\"username\":\"" + user + "\",\"password\":\"Pass1234\",\"email\":" + (email == null ? "null" : "\"" + email + "\"")
-                + ",\"phone\":" + (phone == null ? "null" : "\"" + phone + "\"") + ",\"acceptTerms\":true,\"plan\":\"" + plan + "\"}";
+                + ",\"phone\":" + (phone == null ? "null" : "\"" + phone + "\"") + "," + TestPan.fields(user) + "\"acceptTerms\":true,\"plan\":\"" + plan + "\"}";
     }
 
     private long id(String username) { return users.findByUsernameIgnoreCase(username).orElseThrow().getId(); }

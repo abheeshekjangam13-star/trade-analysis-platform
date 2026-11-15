@@ -41,13 +41,17 @@ public class OrderService {
     private final StrategyLiveConfigRepository configs;
     private final LiveOrderBilling billing;
     private final TradeAlerts alerts;
+    private final com.tradeanalysis.strategy.compliance.AlgoIds algoIds;
+    private final com.tradeanalysis.strategy.compliance.ComplianceSettings compliance;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
                         KiteApi kite, BrokerAccounts accounts, Clock clock,
                         com.tradeanalysis.strategy.user.AppUserRepository users, StrategyLiveConfigRepository configs,
-                        LiveOrderBilling billing, TradeAlerts alerts) {
+                        LiveOrderBilling billing, TradeAlerts alerts, com.tradeanalysis.strategy.compliance.AlgoIds algoIds,
+                        com.tradeanalysis.strategy.compliance.ComplianceSettings compliance) {
         this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
         this.clock = clock; this.users = users; this.configs = configs; this.billing = billing; this.alerts = alerts;
+        this.algoIds = algoIds; this.compliance = compliance;
     }
 
     /** Whether live trading is on for the platform: an admin switches it on the Trading page (off by default). */
@@ -63,6 +67,8 @@ public class OrderService {
         boolean allowed = userId != null && users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::isLiveAccess).orElse(false);
         return allowed ? null : c.getLiveRestrictedMessage();
     }
+
+    public static final String NO_ALGO_ID = "No exchange Algo ID is set for this strategy type: an admin sets it on the Trading page (Compliance)";
 
     public static final String LIVE_OFF = "Live trading is turned off by the admin (Trading page): no new live orders";
 
@@ -81,13 +87,20 @@ public class OrderService {
 
     private TradeOrder placeOrder(OrderRequest r, TradingMode mode, String source, Long strategyId, Long userId, boolean reducing) {
         validate(r, mode);
-        TradeOrder order = orders.save(new TradeOrder(today(), mode, source, strategyId, r, userId));
+        TradeOrder order = new TradeOrder(today(), mode, source, strategyId, r, userId);
+        // Audit: the strategy's settings at this moment, and for live orders the exchange Algo ID they go out with.
+        com.tradeanalysis.strategy.compliance.AlgoIds.Resolved algo = algoIds.resolve(strategyId);
+        order.audit(mode == TradingMode.LIVE ? algo.algoId() : null, algo.strategySnapshot());
+        order = orders.save(order);
         String refusal = reducing ? null : refusal(r, mode, userId);
         if (refusal == null && !reducing && mode == TradingMode.LIVE) refusal = planRefusal(r, userId, strategyId);
         // Live trading needs credit first: included orders or credits for the next order (exits are never charged).
         if (refusal == null && !reducing && mode == TradingMode.LIVE) refusal = billing.refusal(userId);
         // Off stops new live risk only: orders that close a position (exits, kill switch) still go out.
         if (refusal == null && !reducing && mode == TradingMode.LIVE && !liveEnabled()) refusal = LIVE_OFF;
+        // An admin can require an exchange Algo ID on every new live entry (exits always go out).
+        if (refusal == null && !reducing && mode == TradingMode.LIVE && algo.algoId() == null && compliance.get().algoIdRequired())
+            refusal = NO_ALGO_ID;
         if (refusal != null) {
             order.reject(refusal);
             log.warn("ORDER_REFUSED id={} {} {} {} x{}: {}", order.getId(), mode, r.transactionType(), r.tradingsymbol(), r.quantity(), refusal);
@@ -100,7 +113,7 @@ public class OrderService {
         } else {
             try {
                 String id = accounts.forUser(userId).placeOrder(new KiteApi.PlaceOrder(r.exchange(), r.tradingsymbol(), r.transactionType(), r.quantity(),
-                        r.product(), r.orderType(), r.price(), r.triggerPrice(), "TAP" + (strategyId == null ? "M" : strategyId)));
+                        r.product(), r.orderType(), r.price(), r.triggerPrice(), "TAP" + (strategyId == null ? "M" : strategyId), algo.algoId()));
                 order.placed(id, "Sent to " + accounts.label(userId));
                 if (!reducing) {
                     try { billing.charge(userId, order.getId()); }

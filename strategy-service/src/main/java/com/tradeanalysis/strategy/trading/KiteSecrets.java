@@ -61,6 +61,17 @@ public class KiteSecrets {
         }
     }
 
+    /** Keyed fingerprint (HMAC-SHA256, hex) of a value, to find duplicates (e.g. one PAN per account) without storing it in clear. */
+    public String fingerprint(String value) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(key.getEncoded(), "HmacSHA256"));
+            return java.util.HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("Could not fingerprint", e);
+        }
+    }
+
     public String decrypt(String stored) {
         if (stored == null) return null;
         try {

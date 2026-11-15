@@ -31,6 +31,8 @@ public class TradeOrder {
     private Double averagePrice;
     @Column(length = 512) private String message;
     private Long userId;
+    @Column(length = 32) private String algoId;              // exchange Algo ID the live order was sent with
+    @Column(length = 4000) private String strategySnapshot;  // the strategy's type, name and settings when the order was made
     @Column(nullable = false) private Instant createdAt = Instant.now();
     @Column(nullable = false) private Instant updatedAt = Instant.now();
 
@@ -43,6 +45,7 @@ public class TradeOrder {
         this.price = r.price(); this.triggerPrice = r.triggerPrice(); this.userId = userId;
     }
 
+    void audit(String algoId, String strategySnapshot) { this.algoId = algoId; this.strategySnapshot = strategySnapshot; }
     void reject(String why)                  { status = Status.REJECTED; message = cut(why); touch(); }
     void placed(String brokerId, String msg) { brokerOrderId = brokerId; message = cut(msg); touch(); }
     void filled(int qty, Double avg, String msg) { status = Status.COMPLETE; filledQuantity = qty; averagePrice = avg; message = cut(msg); touch(); }
@@ -70,6 +73,8 @@ public class TradeOrder {
     public int getFilledQuantity()    { return filledQuantity; }
     public Double getAveragePrice()   { return averagePrice; }
     public String getMessage()        { return message; }
+    public String getAlgoId()         { return algoId; }
+    public String getStrategySnapshot() { return strategySnapshot; }
     public Long getUserId()           { return userId; }
     public Instant getCreatedAt()     { return createdAt; }
     public Instant getUpdatedAt()     { return updatedAt; }

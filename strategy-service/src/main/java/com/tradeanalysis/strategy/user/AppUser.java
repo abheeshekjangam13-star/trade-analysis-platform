@@ -139,6 +139,8 @@ public class AppUser {
     public String getTermsVersion()         { return termsVersion; }
 
     public Long getId()             { return id; }
+    /** Permanent client ID shown to the user and usable to log in (see {@link ClientIds}). */
+    public String getClientCode()   { return id == null || id <= 0 || id >= 1_000_000 ? null : ClientIds.code(id); }
     public String getUsername()     { return username; }
     public String getEmail()        { return email; }
     public String getFullName()     { return fullName; }

@@ -27,7 +27,11 @@ public class AuthService {
     /** Sign-up result; {@code checkout} is set when a GOLD/PREMIUM sign-up should pay in Razorpay Checkout now. */
     public record SignupResponse(Long id, String username, AppUser.Status status,
                                  com.tradeanalysis.strategy.user.Plan requestedPlan, String message,
-                                 com.tradeanalysis.strategy.payment.PaymentService.Checkout checkout) {}
+                                 com.tradeanalysis.strategy.payment.PaymentService.Checkout checkout) {
+        /** The new account's client ID (SG + 6 digits), linked to its PAN. */
+        @com.fasterxml.jackson.annotation.JsonProperty("clientCode")
+        public String clientCode() { return id == null || id <= 0 || id >= 1_000_000 ? null : com.tradeanalysis.strategy.user.ClientIds.code(id); }
+    }
 
     private final AppUserRepository users;
     private final AppRoleRepository roles;
@@ -38,11 +42,16 @@ public class AuthService {
     private final com.tradeanalysis.strategy.notify.EmailService emails;
     private final com.tradeanalysis.strategy.user.UserService userService;   // checked for unknown users so timing doesn't reveal which usernames exist
     private final com.tradeanalysis.strategy.payment.PaymentService payments;
+    private final com.tradeanalysis.strategy.compliance.TwoFactor twoFactor;
+    private final com.tradeanalysis.strategy.compliance.PanRegistry pans;
 
     public AuthService(AppUserRepository users, AppRoleRepository roles, PasswordEncoder encoder, TokenService tokens,
                        LoginAttempts attempts, com.tradeanalysis.strategy.user.UserService userService,
                        com.tradeanalysis.strategy.notify.EmailService emails,
-                       com.tradeanalysis.strategy.payment.PaymentService payments) {
+                       com.tradeanalysis.strategy.payment.PaymentService payments,
+                       com.tradeanalysis.strategy.compliance.TwoFactor twoFactor,
+                       com.tradeanalysis.strategy.compliance.PanRegistry pans) {
+        this.twoFactor = twoFactor; this.pans = pans;
         this.userService = userService;
         this.payments = payments;
         this.emails = emails;
@@ -78,13 +87,26 @@ public class AuthService {
     }
 
     @Transactional
-    public LoginResult login(String username, String password) {
+    public LoginResult login(String username, String password) { return login(username, password, null); }
+
+    /** Two-factor: users who turned it on also send the current code from their authenticator app. */
+    public static final String CODE_REQUIRED = "Two-factor code required: enter the 6-digit code from your authenticator app";
+
+    public LoginResult login(String username, String password, String code) {
         AppUser user = checkCredentials(username, password);
         if (user.awaitingSignupPayment() && userService.payAtSignup(user.getRequestedPlan()))
             throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, "Complete the payment for "
                     + user.getRequestedPlan() + " to send your sign-up to the admin");
         if (user.getStatus() != AppUser.Status.ACTIVE)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, com.tradeanalysis.strategy.user.UserService.statusMessage(user.getStatus()));
+        if (twoFactor.enabled(user.getId())) {
+            if (code == null || code.isBlank()) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, CODE_REQUIRED);
+            if (!twoFactor.verify(user.getId(), code)) {
+                attempts.failed(user.getUsername());
+                log.warn("AUTH_2FA_FAILED user={}", user.getUsername());
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Wrong two-factor code: enter the current code from your app");
+            }
+        }
         attempts.succeeded(user.getUsername());
         return issue(user);
     }
@@ -95,7 +117,9 @@ public class AuthService {
         long locked = attempts.lockedFor(name);
         if (locked > 0) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
                 "Too many failed logins: try again in " + Math.max(1, (locked + 59) / 60) + " minute(s)");
-        AppUser user = users.findByUsernameIgnoreCase(name).orElse(null);
+        // Username, or the client ID (SG + 6 digits) like a broker login.
+        AppUser user = users.findByUsernameIgnoreCase(name)
+                .or(() -> com.tradeanalysis.strategy.user.ClientIds.userId(name).flatMap(users::findById)).orElse(null);
         // Same message and a hash check either way, so it never reveals which usernames exist.
         boolean ok = user != null && user.isPasswordSet() && password != null && encoder.matches(password, user.getPasswordHash());
         if (!ok) {
@@ -112,11 +136,25 @@ public class AuthService {
      * GOLD/PREMIUM sign-up gets a Razorpay order to pay right away; the admin sees it only after the payment.
      */
     public SignupResponse signup(String username, String password, String email,
-            String phone, String fullName, com.tradeanalysis.strategy.user.Plan plan, boolean acceptTerms) {
+            String phone, String fullName, com.tradeanalysis.strategy.user.Plan plan, boolean acceptTerms, String pan) {
         if (!acceptTerms)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Please accept the Terms and Conditions to sign up");
         checkPassword(password);
-        var r = userService.signup(username, email, phone, fullName, plan, encoder.encode(password), acceptTerms);
+        // PAN and the full name exactly as on the PAN card: one PAN per account, linked to the new client ID.
+        String panNorm, nameOnPan;
+        try {
+            panNorm = com.tradeanalysis.strategy.compliance.PanRegistry.normalize(pan);
+            nameOnPan = com.tradeanalysis.strategy.compliance.PanRegistry.normalizeName(fullName);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        if (pans.taken(panNorm, null)) throw new ResponseStatusException(HttpStatus.CONFLICT, "This PAN is already linked to another account: log in instead");
+        var r = userService.signup(username, email, phone, nameOnPan, plan, encoder.encode(password), acceptTerms);
+        try {
+            pans.save(r.id(), panNorm, nameOnPan, true);
+        } catch (RuntimeException e) {
+            log.error("AUTH_SIGNUP PAN not saved user={}: {}", r.username(), e.getMessage());
+        }
         log.info("AUTH_SIGNUP user={} plan={}", r.username(), r.requestedPlan());
         com.tradeanalysis.strategy.payment.PaymentService.Checkout checkout = null;
         String message = r.message();

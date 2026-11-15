@@ -1,5 +1,6 @@
 package com.tradeanalysis.strategy.auth;
 
+import com.tradeanalysis.strategy.TestPan;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeanalysis.strategy.user.AppUserRepository;
@@ -80,7 +81,7 @@ class DataIsolationIntegrationTest {
         call(post("/api/auth/setup").content("{\"username\":\"admin\",\"password\":\"Secret123\"}"), null, 200);
         for (String u : new String[]{"ravi", "sita"}) {
             call(post("/api/auth/signup").content("{\"username\":\"" + u + "\",\"password\":\"Pass1234\",\"email\":\"" + u
-                    + "@example.com\",\"phone\":\"98765" + (u.equals("ravi") ? "11111" : "22222") + "\",\"acceptTerms\":true,\"plan\":\"GOLD\"}"), null, 201);
+                    + "@example.com\",\"phone\":\"98765" + (u.equals("ravi") ? "11111" : "22222") + "\"," + TestPan.fields(u) + "\"acceptTerms\":true,\"plan\":\"GOLD\"}"), null, 201);
             call(post("/api/users/" + id(u) + "/approve").content("{}"), "admin", 200);
         }
     }

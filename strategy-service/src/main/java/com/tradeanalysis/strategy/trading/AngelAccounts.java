@@ -53,6 +53,7 @@ public class AngelAccounts {
     private final RestClient http;
     private final Clock clock;
     private final String loginUrl;
+    private final String algoIdField;
 
     public AngelAccounts(JdbcTemplate jdbc, KiteSecrets secrets, AngelScripMaster symbols, NiftyOptions options,
                          AppUserRepository users, ObjectMapper json, RestClient.Builder builder, Clock clock,
@@ -60,9 +61,10 @@ public class AngelAccounts {
                          @Value("${angel.login-url:https://smartapi.angelone.in/publisher-login}") String loginUrl,
                          @Value("${angel.public-ip:127.0.0.1}") String publicIp,
                          @Value("${angel.local-ip:127.0.0.1}") String localIp,
-                         @Value("${angel.mac-address:00:00:00:00:00:00}") String mac) {
+                         @Value("${angel.mac-address:00:00:00:00:00:00}") String mac,
+                         @Value("${angel.algo-id-param:}") String algoIdField) {
         this.jdbc = jdbc; this.secrets = secrets; this.symbols = symbols; this.options = options; this.users = users;
-        this.json = json; this.clock = clock; this.loginUrl = loginUrl;
+        this.json = json; this.clock = clock; this.loginUrl = loginUrl; this.algoIdField = algoIdField;
         this.http = builder.clone().baseUrl(baseUrl)
                 .defaultHeader("X-UserType", "USER").defaultHeader("X-SourceID", "WEB")
                 .defaultHeader("X-ClientLocalIP", localIp).defaultHeader("X-ClientPublicIP", publicIp)
@@ -82,7 +84,7 @@ public class AngelAccounts {
     public boolean hasAccount(Long userId) { return userId != null && row(userId).isPresent(); }
 
     /** Made for each call so a test can replace it. */
-    KiteApi client(AngelOneRestApi.Credentials creds) { return new AngelOneRestApi(http, creds, symbols, options, json); }
+    KiteApi client(AngelOneRestApi.Credentials creds) { return new AngelOneRestApi(http, creds, symbols, options, json, algoIdField); }
 
     // ---- the user's own account -----------------------------------------------------------------------------------
 

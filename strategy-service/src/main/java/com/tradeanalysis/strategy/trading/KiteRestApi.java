@@ -90,6 +90,7 @@ public class KiteRestApi implements KiteApi {
         if (o.triggerPrice() != null) form.add("trigger_price", String.valueOf(o.triggerPrice()));
         if ("MARKET".equals(o.orderType()) || "SL-M".equals(o.orderType())) form.add("market_protection", "-1");
         if (o.tag() != null) form.add("tag", o.tag());
+        if (o.algoId() != null && !o.algoId().isBlank()) form.add("algo_id", o.algoId());   // exchange Algo ID (only when set)
         Map<String, Object> d = map(call(c -> c.post().uri("/orders/regular")
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED).body(form)));
         return str(d.get("order_id"));

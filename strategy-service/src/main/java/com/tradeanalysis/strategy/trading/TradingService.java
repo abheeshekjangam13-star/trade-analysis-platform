@@ -27,14 +27,16 @@ public class TradingService {
     private final BrokerAccounts accounts;
     private final com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo;
     private final LiveOrderBilling billing;
+    private final com.tradeanalysis.strategy.compliance.Compliance compliance;
 
     public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
                           LivePositionRepository positions, OrderService orderService, StrategyService strategies,
                           AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, BrokerAccounts accounts,
-                          com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo, LiveOrderBilling billing) {
+                          com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo, LiveOrderBilling billing,
+                          com.tradeanalysis.strategy.compliance.Compliance compliance) {
         this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
         this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
-        this.accounts = accounts; this.strategyRepo = strategyRepo; this.billing = billing;
+        this.accounts = accounts; this.strategyRepo = strategyRepo; this.billing = billing; this.compliance = compliance;
     }
 
     public record StrategyMode(Long strategyId, String name, String type, String direction, TradingMode mode, String product) {}
@@ -292,10 +294,12 @@ public class TradingService {
         if (refusal != null) throw new TradingException(HttpStatus.FORBIDDEN, refusal);
     }
 
-    /** Why the user may not trade live (admin restriction first, then plan and own Kite/Angel One account), or null. */
+    /** Why the user may not trade live (admin restriction first, then plan and own Kite/Angel One account, then compliance), or null. */
     public String liveRefusal(Long userId) {
         String access = orderService.accessRefusal(userId);
-        return access != null ? access : accounts.liveRefusal(userId);
+        if (access != null) return access;
+        String broker = accounts.liveRefusal(userId);
+        return broker != null ? broker : compliance.liveRefusal(userId);   // risk disclosure, and 2FA / verified PAN when required
     }
 
     /** Whether the caller may trade live (see {@link #requireLive}). */
