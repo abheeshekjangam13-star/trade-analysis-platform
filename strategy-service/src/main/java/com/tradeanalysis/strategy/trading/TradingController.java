@@ -28,7 +28,7 @@ public class TradingController {
     private final OrderService orders;
     private final TradeOrderRepository orderRepo;
     private final LivePositionRepository positionRepo;
-    private final KiteAccounts accounts;
+    private final BrokerAccounts accounts;
     private final KiteApi platform;
     private final NiftyOptions options;
     private final ObjectProvider<LiveStrategyRunner> runner;
@@ -36,7 +36,7 @@ public class TradingController {
     private final QuoteCache quoteCache;
 
     public TradingController(TradingService trading, OrderService orders, TradeOrderRepository orderRepo,
-                             LivePositionRepository positionRepo, KiteAccounts accounts, KiteApi platform, NiftyOptions options,
+                             LivePositionRepository positionRepo, BrokerAccounts accounts, KiteApi platform, NiftyOptions options,
                              ObjectProvider<LiveStrategyRunner> runner, Clock clock, QuoteCache quoteCache) {
         this.quoteCache = quoteCache;
         this.trading = trading; this.orders = orders; this.orderRepo = orderRepo; this.positionRepo = positionRepo;
@@ -50,6 +50,8 @@ public class TradingController {
         Map<String, Object> k = new LinkedHashMap<>();
         Long me = CurrentUser.id().orElse(null);
         k.put("ownAccount", accounts.hasOwnAccount(me));   // false: admins use the platform account
+        k.put("broker", accounts.brokerOf(me).name());      // KITE or ANGEL_ONE (the "kite" key is kept for older UIs)
+        k.put("brokerLabel", accounts.label(me));
         try {
             KiteApi.Profile p = accounts.forUser(me).profile();
             k.put("connected", true); k.put("userId", p.userId()); k.put("userName", p.userName());
@@ -234,7 +236,7 @@ public class TradingController {
                         start, end, CurrentUser.id().orElseThrow()), LivePosition::getStrategyId);
     }
 
-    /** Your own Kite account (admins without one: the platform account). */
+    /** Your own Kite or Angel One account (admins without one: the platform Kite account). */
     private KiteApi myKite() { return accounts.forUser(CurrentUser.id().orElse(null)); }
 
     @GetMapping("/broker/margins")   public KiteApi.Margins brokerMargins() { return myKite().margins(); }

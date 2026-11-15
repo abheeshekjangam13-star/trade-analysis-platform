@@ -216,7 +216,7 @@ class KiteAccountIntegrationTest {
         assertThat(access.get("allowedUserIds").toString()).contains(String.valueOf(prem), String.valueOf(admin));
         assertThat(call(get("/api/trading/status"), "accadmin", 200).get("liveAllowed").asBoolean()).isTrue();
         JsonNode picked = call(get("/api/trading/status"), "accprem", 200);
-        assertThat(picked.get("liveBlockedMessage").asText()).startsWith("Connect your own Kite account");
+        assertThat(picked.get("liveBlockedMessage").asText()).startsWith("Connect your own Kite or Angel One account");
         assertThat(picked.get("liveAccessMessage").isNull()).isTrue();
 
         // A blank message goes back to the default; restriction off lets everyone through it again.
@@ -224,7 +224,7 @@ class KiteAccountIntegrationTest {
                 .isEqualTo(TradingControl.DEFAULT_RESTRICTED_MESSAGE);
         call(put("/api/trading/live-access/users/" + prem).content("{\"allowed\":false}"), "accadmin", 200);
         call(put("/api/trading/live-access").content("{\"restricted\":false}"), "accadmin", 200);
-        assertThat(call(get("/api/trading/status"), "accprem", 200).get("liveBlockedMessage").asText()).startsWith("Connect your own Kite account");
+        assertThat(call(get("/api/trading/status"), "accprem", 200).get("liveBlockedMessage").asText()).startsWith("Connect your own Kite or Angel One account");
     }
 
     @Test

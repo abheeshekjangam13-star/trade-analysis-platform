@@ -114,3 +114,14 @@ razorpay:
 # base64 of 32 bytes (openssl rand -base64 32). Unset = a random key kept in table kite_account_key.
 kite:
   encryption-key: ${KITE_ENCRYPTION_KEY:}
+
+# Users' own Angel One SmartAPI apps (GOLD/PREMIUM), as an alternative to Kite. Tokens use the kite encryption key.
+# SmartAPI wants the caller's IPs and MAC in headers: set ANGEL_PUBLIC_IP to the server's static IP (the one
+# registered in the user's SmartAPI app; SEBI requires a registered static IP for API orders).
+angel:
+  base-url: ${ANGEL_BASE_URL:https://apiconnect.angelone.in}
+  login-url: ${ANGEL_LOGIN_URL:https://smartapi.angelone.in/publisher-login}
+  scrip-master-url: ${ANGEL_SCRIP_MASTER_URL:https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json}
+  public-ip: ${ANGEL_PUBLIC_IP:127.0.0.1}
+  local-ip: ${ANGEL_LOCAL_IP:127.0.0.1}
+  mac-address: ${ANGEL_MAC_ADDRESS:00:00:00:00:00:00}

@@ -32,13 +32,14 @@ public class TradeAlerts {
     private final PushService push;
     private final JdbcTemplate jdbc;
     private final KiteAccounts kite;
+    private final AngelAccounts angel;
     private final TradingDays days;
     private final StrategyLiveConfigRepository configs;
     private final Clock clock;
 
-    public TradeAlerts(PushService push, JdbcTemplate jdbc, KiteAccounts kite, TradingDays days,
+    public TradeAlerts(PushService push, JdbcTemplate jdbc, KiteAccounts kite, AngelAccounts angel, TradingDays days,
                        StrategyLiveConfigRepository configs, Clock clock) {
-        this.push = push; this.jdbc = jdbc; this.kite = kite; this.days = days; this.configs = configs; this.clock = clock;
+        this.push = push; this.jdbc = jdbc; this.kite = kite; this.angel = angel; this.days = days; this.configs = configs; this.clock = clock;
     }
 
     // ---- orders and exits -----------------------------------------------------------------------------------------
@@ -125,7 +126,7 @@ public class TradeAlerts {
     }
 
     /**
-     * 08:45 IST on NSE trading days: users whose own Kite account is set up but not logged in today are reminded to log in
+     * 08:45 IST on NSE trading days: users whose own Kite or Angel One account is set up but not logged in today are reminded to log in
      * (Kite logins end every morning), so their strategies can trade from 9:20.
      */
     @Scheduled(cron = "${push.alerts.kite-login-cron:0 45 8 * * MON-FRI}", zone = "Asia/Kolkata")
@@ -135,12 +136,21 @@ public class TradeAlerts {
         for (Long u : push.subscribedUsers()) {
             try {
                 KiteAccounts.Status s = kite.status(u);
-                if (!s.configured() || s.connected()) continue;
-                push.notify(u, new Alert("Log in to Kite for today",
-                        "Kite logins end every morning. Log in before 9:20 so your strategies can trade and you can see your positions.",
-                        "/account#kite", "kite-login-" + today, 3 * 3600));
+                if (s.configured() && !s.connected())
+                    push.notify(u, new Alert("Log in to Kite for today",
+                            "Kite logins end every morning. Log in before 9:20 so your strategies can trade and you can see your positions.",
+                            "/account#kite", "kite-login-" + today, 3 * 3600));
             } catch (RuntimeException e) {
                 log.warn("ALERT Kite reminder for user {} skipped: {}", u, e.getMessage());
+            }
+            try {
+                AngelAccounts.Status s = angel.status(u);
+                if (s.configured() && !s.connected())
+                    push.notify(u, new Alert("Log in to Angel One for today",
+                            "Angel One logins end every night. Log in before 9:20 so your strategies can trade and you can see your positions.",
+                            "/account#angel", "angel-login-" + today, 3 * 3600));
+            } catch (RuntimeException e) {
+                log.warn("ALERT Angel One reminder for user {} skipped: {}", u, e.getMessage());
             }
         }
     }

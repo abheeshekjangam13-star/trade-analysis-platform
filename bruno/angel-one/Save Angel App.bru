@@ -1,0 +1,15 @@
+meta {
+  name: Save Angel App
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{strategyUrl}}/api/trading/angel-account/app
+  body: json
+  auth: none
+}
+
+body:json {
+  { "apiKey": "your-smartapi-key" }
+}

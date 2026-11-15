@@ -13,7 +13,7 @@ import java.util.*;
 /**
  * The only way the platform sends orders. Validates, applies the safety rules and records every order (rejected ones
  * included) in trade_order. PAPER orders fill at once at the option's last traded price; LIVE orders go to the order
- * owner's own Kite account ({@link KiteAccounts#forUser}: admins without one use the platform account) and require
+ * owner's own Kite or Angel One account ({@link BrokerAccounts#forUser}: admins without one use the platform account) and require
  * live trading to be on (an admin switches it on the Trading page; see {@link #liveEnabled}).
  *
  * Safety rules for orders that open or add risk (exits are always allowed, so positions can always be closed):
@@ -35,7 +35,7 @@ public class OrderService {
     private final TradingControlRepository controls;
     private final LivePositionRepository positions;
     private final KiteApi kite;          // platform session: quotes for paper fills
-    private final KiteAccounts accounts; // the order owner's own account: live orders
+    private final BrokerAccounts accounts; // the order owner's own account (Kite or Angel One): live orders
     private final Clock clock;
     private final com.tradeanalysis.strategy.user.AppUserRepository users;
     private final StrategyLiveConfigRepository configs;
@@ -43,7 +43,7 @@ public class OrderService {
     private final TradeAlerts alerts;
 
     public OrderService(TradeOrderRepository orders, TradingControlRepository controls, LivePositionRepository positions,
-                        KiteApi kite, KiteAccounts accounts, Clock clock,
+                        KiteApi kite, BrokerAccounts accounts, Clock clock,
                         com.tradeanalysis.strategy.user.AppUserRepository users, StrategyLiveConfigRepository configs,
                         LiveOrderBilling billing, TradeAlerts alerts) {
         this.orders = orders; this.controls = controls; this.positions = positions; this.kite = kite; this.accounts = accounts;
@@ -101,7 +101,7 @@ public class OrderService {
             try {
                 String id = accounts.forUser(userId).placeOrder(new KiteApi.PlaceOrder(r.exchange(), r.tradingsymbol(), r.transactionType(), r.quantity(),
                         r.product(), r.orderType(), r.price(), r.triggerPrice(), "TAP" + (strategyId == null ? "M" : strategyId)));
-                order.placed(id, "Sent to Kite");
+                order.placed(id, "Sent to " + accounts.label(userId));
                 if (!reducing) {
                     try { billing.charge(userId, order.getId()); }
                     catch (RuntimeException e) { log.error("BILLING charge failed order={} user={}: {}", order.getId(), userId, e.getMessage(), e); }
@@ -117,17 +117,17 @@ public class OrderService {
     public TradeOrder cancel(Long id) {
         TradeOrder o = orders.findById(id).orElseThrow(() -> new TradingException(HttpStatus.NOT_FOUND, "Order not found: " + id));
         if (o.getStatus() != TradeOrder.Status.OPEN) throw new TradingException("Order " + id + " is already " + o.getStatus());
-        if (o.getMode() == TradingMode.LIVE && o.getBrokerOrderId() != null) accounts.forUser(o.getUserId()).cancelOrder(o.getBrokerOrderId());
+        if (o.getMode() == TradingMode.LIVE && o.getBrokerOrderId() != null) accounts.forOrder(o.getUserId(), o.getBrokerOrderId()).cancelOrder(o.getBrokerOrderId());
         o.update(TradeOrder.Status.CANCELLED, o.getFilledQuantity(), null, "Cancelled");
         return orders.save(o);
     }
 
-    /** Refreshes open live orders from Kite (fills, rejections). */
+    /** Refreshes open live orders from the broker (Kite or Angel One: fills, rejections). */
     public void syncLiveOrders() {
         for (TradeOrder o : orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN)) {
             if (o.getBrokerOrderId() == null) continue;
             try {
-                KiteApi.BrokerOrder b = accounts.forUser(o.getUserId()).order(o.getBrokerOrderId());
+                KiteApi.BrokerOrder b = accounts.forOrder(o.getUserId(), o.getBrokerOrderId()).order(o.getBrokerOrderId());
                 o.update(mapStatus(b.status()), b.filledQuantity(), b.averagePrice(), b.statusMessage());
                 orders.save(o);
                 if (o.getStatus() == TradeOrder.Status.REJECTED) billing.refund(o.getId());   // Kite refused it after all: not charged

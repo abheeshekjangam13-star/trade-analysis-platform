@@ -1,0 +1,15 @@
+meta {
+  name: Store Angel Session
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{strategyUrl}}/api/trading/angel-account/session
+  body: json
+  auth: none
+}
+
+body:json {
+  { "authToken": "auth_token from /angel/callback", "refreshToken": "", "feedToken": "" }
+}

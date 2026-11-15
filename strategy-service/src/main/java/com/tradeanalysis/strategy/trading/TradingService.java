@@ -24,13 +24,13 @@ public class TradingService {
     private final StrategyService strategies;
     private final AppUserRepository users;
     private final ObjectProvider<LiveStrategyRunner> runner;
-    private final KiteAccounts accounts;
+    private final BrokerAccounts accounts;
     private final com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo;
     private final LiveOrderBilling billing;
 
     public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
                           LivePositionRepository positions, OrderService orderService, StrategyService strategies,
-                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, KiteAccounts accounts,
+                          AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, BrokerAccounts accounts,
                           com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo, LiveOrderBilling billing) {
         this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
         this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
@@ -53,7 +53,7 @@ public class TradingService {
         return out;
     }
 
-    /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs PREMIUM + their own Kite account (or ADMIN) and live trading enabled. */
+    /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs PREMIUM + their own Kite or Angel One account (or ADMIN) and live trading enabled. */
     public StrategyMode setMode(Long strategyId, TradingMode mode, String product) {
         Strategy s = strategies.get(strategyId);
         if (mode != TradingMode.OFF && CurrentUser.limitedPlan().map(p -> !p.paperTrading()).orElse(false))
@@ -285,14 +285,14 @@ public class TradingService {
     /** Whether the caller is an ADMIN (non-admins only see paper trading). */
     public boolean isAdmin() { return CurrentUser.admin(); }
 
-    /** The caller may trade live: an ADMIN, or a PREMIUM user who connected their own Kite account. */
+    /** The caller may trade live: an ADMIN, or a PREMIUM user who connected their own Kite or Angel One account. */
     public void requireLive() {
         Long id = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.FORBIDDEN, "Log in to trade live"));
         String refusal = liveRefusal(id);
         if (refusal != null) throw new TradingException(HttpStatus.FORBIDDEN, refusal);
     }
 
-    /** Why the user may not trade live (admin restriction first, then plan and own Kite account), or null. */
+    /** Why the user may not trade live (admin restriction first, then plan and own Kite/Angel One account), or null. */
     public String liveRefusal(Long userId) {
         String access = orderService.accessRefusal(userId);
         return access != null ? access : accounts.liveRefusal(userId);

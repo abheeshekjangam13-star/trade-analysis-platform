@@ -18,8 +18,9 @@ public class KiteAccountController {
     public record SessionRequest(String requestToken) {}
 
     private final KiteAccounts accounts;
+    private final BrokerAccounts brokers;
 
-    public KiteAccountController(KiteAccounts accounts) { this.accounts = accounts; }
+    public KiteAccountController(KiteAccounts accounts, BrokerAccounts brokers) { this.accounts = accounts; this.brokers = brokers; }
 
     private static Long me() { return CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first")); }
 
@@ -29,7 +30,10 @@ public class KiteAccountController {
 
     @PutMapping("/app")
     @Operation(summary = "Save the API key and secret of your Kite Connect app (blank secret = keep the saved one)")
-    public KiteAccounts.Status saveApp(@RequestBody AppRequest r) { return accounts.saveApp(me(), r.apiKey(), r.apiSecret()); }
+    public KiteAccounts.Status saveApp(@RequestBody AppRequest r) {
+        brokers.requireNoOtherBroker(me(), BrokerAccounts.Broker.KITE);   // one broker per user
+        return accounts.saveApp(me(), r.apiKey(), r.apiSecret());
+    }
 
     @GetMapping("/login-url")
     @Operation(summary = "Kite login page for your app (Kite redirects back to /kite/callback with account=me)")
