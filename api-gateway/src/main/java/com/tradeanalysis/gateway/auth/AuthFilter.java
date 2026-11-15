@@ -28,7 +28,7 @@ import java.util.Set;
 /**
  * Login check for every /api request: requires "Authorization: Bearer <token>" signed by strategy-service, then
  * passes the verified username on as X-User (any X-User a client sends is removed, so it cannot be faked).
- * Open without a token: /api/auth/status, /plans, /signup, /setup, /login, and the Razorpay webhook. Market data
+ * Open without a token: /api/auth/status, /plans, /signup, /setup, /login, /grievance, and the Razorpay webhook. Market data
  * (/api/market-data/**) and indicators (/api/indicators/**) need ADMIN.
  */
 @Component
@@ -40,7 +40,7 @@ public class AuthFilter implements GlobalFilter, Ordered {
     static final String ISSUER = "trade-analysis";
     // The Razorpay webhook has no token; strategy-service verifies its HMAC signature.
     static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/signup/payment", "/api/auth/signup/verify",
-            "/api/auth/setup", "/api/auth/login",
+            "/api/auth/setup", "/api/auth/login", "/api/auth/grievance",
             "/api/payments/webhook");
     /**
      * market-data-service (candles, symbols, Kite session, instruments) and indicator-service: ADMIN only. Neither has
