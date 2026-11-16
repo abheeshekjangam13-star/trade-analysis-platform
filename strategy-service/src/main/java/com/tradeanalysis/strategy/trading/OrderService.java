@@ -137,17 +137,29 @@ public class OrderService {
 
     /** Refreshes open live orders from the broker (Kite or Angel One: fills, rejections). */
     public void syncLiveOrders() {
-        for (TradeOrder o : orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN)) {
-            if (o.getBrokerOrderId() == null) continue;
-            try {
-                KiteApi.BrokerOrder b = accounts.forOrder(o.getUserId(), o.getBrokerOrderId()).order(o.getBrokerOrderId());
-                o.update(mapStatus(b.status()), b.filledQuantity(), b.averagePrice(), b.statusMessage());
-                orders.save(o);
-                if (o.getStatus() == TradeOrder.Status.REJECTED) billing.refund(o.getId());   // Kite refused it after all: not charged
-            } catch (RuntimeException e) {
-                log.warn("ORDER_SYNC_FAILED id={} kite={}: {}", o.getId(), o.getBrokerOrderId(), e.getMessage());
+        for (TradeOrder o : orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN)) sync(o);
+    }
+
+    /**
+     * Refreshes one open live order from the broker now (fills, rejections) and returns it; anything else, or a broker
+     * that can't be reached, comes back as it was. A broker that rejects an order after accepting it raises an alert.
+     */
+    public TradeOrder sync(TradeOrder o) {
+        if (o == null || o.getMode() != TradingMode.LIVE || o.getStatus() != TradeOrder.Status.OPEN || o.getBrokerOrderId() == null) return o;
+        try {
+            KiteApi.BrokerOrder b = accounts.forOrder(o.getUserId(), o.getBrokerOrderId()).order(o.getBrokerOrderId());
+            o.update(mapStatus(b.status()), b.filledQuantity(), b.averagePrice(), b.statusMessage());
+            o = orders.save(o);
+            if (o.getStatus() == TradeOrder.Status.REJECTED) {
+                billing.refund(o.getId());   // the broker refused it after all: not charged
+                log.warn("ORDER_REJECTED_BY_BROKER id={} broker={} {} {} x{}: {}", o.getId(), o.getBrokerOrderId(),
+                        o.getTransactionType(), o.getTradingsymbol(), o.getQuantity(), o.getMessage());
+                alerts.orderPlaced(o, "SELL".equals(o.getTransactionType()));   // strategies only buy options: a SELL is an exit
             }
+        } catch (RuntimeException e) {
+            log.warn("ORDER_SYNC_FAILED id={} broker={}: {}", o.getId(), o.getBrokerOrderId(), e.getMessage());
         }
+        return o;
     }
 
     static TradeOrder.Status mapStatus(String kiteStatus) {

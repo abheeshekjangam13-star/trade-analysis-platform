@@ -303,6 +303,98 @@ class LiveStrategyRunnerTest {
         assertThat(orders.findByTradeDateAndUserIdOrderByCreatedAtDesc(TUE, b)).extracting(TradeOrder::getTransactionType).containsExactly("BUY");
     }
 
+    // ---- live fills and rejections that arrive after the order was sent ------------------------------------------
+
+    @Autowired OrderService orderService;
+
+    /** A LIVE position (platform account, no user) whose BUY went to the broker as brokerId and is still OPEN here. */
+    private LivePosition liveEntry(String brokerId) {
+        OrderRequest r = new OrderRequest("NFO", "NIFTY26N0324150CE", "BUY", 130, "MIS", "LIMIT", 123.6, null);
+        TradeOrder o = new TradeOrder(TUE, TradingMode.LIVE, "STRATEGY", 56L, r, null);
+        o.placed(brokerId, "Sent to Kite");
+        o = orders.save(o);
+        LivePosition p = new LivePosition(56L, null, TUE, TradingMode.LIVE, "CE", "NIFTY26N0324150CE", 130,
+                at(TUE, 9, 20), 24190, 24115.0);
+        p.entered(o);
+        return positions.save(p);
+    }
+
+    private static KiteApi.BrokerOrder broker(String id, String status, String side, int filled, double avg, String msg) {
+        return new KiteApi.BrokerOrder(id, status, "NIFTY26N0324150CE", "NFO", side, 130, filled, avg, 123.6, "LIMIT", "MIS", msg, "TAP56", null);
+    }
+
+    @Test
+    void anEntryTheBrokerRejectedAfterAcceptingItIsNeverSold() {
+        CLOCK.set(at(TUE, 9, 40));
+        LivePosition p = liveEntry("K-1");
+        when(kite.order("K-1")).thenReturn(broker("K-1", "REJECTED", "BUY", 0, 0, "Insufficient margin"));
+
+        // The stop is touched before the minute sync saw the rejection: no SELL (it would open a short).
+        assertThat(runner.exitOnTouch(p.getId(), 24110, "SL_HIT")).contains("no sell: entry was rejected by the broker");
+        verify(kite, never()).placeOrder(any());
+        p = positions.findById(p.getId()).orElseThrow();
+        assertThat(p.getStatus()).isEqualTo(LivePosition.Status.CLOSED);
+        assertThat(p.getExitReason()).isEqualTo("ENTRY_NOT_FILLED");
+        assertThat(p.getPnl()).isZero();
+        assertThat(p.getMessage()).contains("Insufficient margin");
+    }
+
+    @Test
+    void theMinuteSyncMarksAPositionWithARejectedEntryFailedSoTheWatcherLeavesIt() {
+        CLOCK.set(at(TUE, 9, 40));
+        LivePosition p = liveEntry("K-1");
+        when(kite.order("K-1")).thenReturn(broker("K-1", "REJECTED", "BUY", 0, 0, "Insufficient margin"));
+        orderService.syncLiveOrders();
+        runner.refreshLivePrices();
+        p = positions.findById(p.getId()).orElseThrow();
+        assertThat(p.getStatus()).isEqualTo(LivePosition.Status.FAILED);
+        assertThat(p.getMessage()).isEqualTo("Entry was rejected by the broker: Insufficient margin");
+
+        prices(100.0, 24110);   // through the stop
+        assertThat(watcher.check()).isEmpty();
+        verify(kite, never()).placeOrder(any());
+    }
+
+    @Test
+    void anExitRightAfterTheEntryFillsSellsWhatWasBoughtAndGetsTheRealPnlOnceTheSellFills() {
+        CLOCK.set(at(TUE, 9, 40));
+        LivePosition p = liveEntry("K-2");
+        prices(100.0, 24110);
+        when(kite.order("K-2")).thenReturn(broker("K-2", "COMPLETE", "BUY", 130, 120.0, null));   // filled, not yet synced here
+        when(kite.placeOrder(any())).thenReturn("K-3");
+
+        assertThat(runner.exitOnTouch(p.getId(), 24110, "SL_HIT")).contains("SELL 130 NIFTY26N0324150CE (SL_HIT)");
+        p = positions.findById(p.getId()).orElseThrow();
+        assertThat(p.getEntryPrice()).isEqualTo(120.0);
+        assertThat(p.getExitPrice()).isNull();   // the SELL's fill comes later
+        assertThat(p.getPnl()).isNull();
+
+        when(kite.order("K-3")).thenReturn(broker("K-3", "COMPLETE", "SELL", 130, 100.0, null));
+        orderService.syncLiveOrders();
+        runner.refreshLivePrices();
+        p = positions.findById(p.getId()).orElseThrow();
+        assertThat(p.getExitPrice()).isEqualTo(100.0);
+        assertThat(p.getPnl()).isEqualTo((100.0 - 120.0) * 130 - 85);   // real fills minus strategy #56's charges
+    }
+
+    @Test
+    void anExitTheBrokerRejectsIsShownOnThePosition() {
+        CLOCK.set(at(TUE, 9, 40));
+        LivePosition p = liveEntry("K-2");
+        prices(100.0, 24110);
+        when(kite.order("K-2")).thenReturn(broker("K-2", "COMPLETE", "BUY", 130, 120.0, null));
+        when(kite.placeOrder(any())).thenReturn("K-3");
+        runner.exitOnTouch(p.getId(), 24110, "SL_HIT");
+
+        when(kite.order("K-3")).thenReturn(broker("K-3", "REJECTED", "SELL", 0, 0, "Margin exceeds"));
+        orderService.syncLiveOrders();
+        runner.refreshLivePrices();
+        p = positions.findById(p.getId()).orElseThrow();
+        assertThat(p.getMessage()).startsWith(LiveStrategyRunner.EXIT_REJECTED).contains("Margin exceeds");
+        runner.refreshLivePrices();   // noted once, not appended every minute
+        assertThat(positions.findById(p.getId()).orElseThrow().getMessage()).isEqualTo(p.getMessage());
+    }
+
     @Test
     void muhuratTradingOnSunday8Nov2026CountsAsMarketHours() {
         LocalDate muhurat = LocalDate.of(2026, 11, 8);

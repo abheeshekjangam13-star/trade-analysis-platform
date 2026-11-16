@@ -277,12 +277,26 @@ public class LiveStrategyRunner {
     /** Closes a position: cancels an unfilled live entry, otherwise sells what was bought. */
     String exit(LivePosition p, Double exitSpot, String reason, Double estimate, String source, Params params) {
         TradeOrder entry = p.getEntryOrderId() == null ? null : orders.findById(p.getEntryOrderId()).orElse(null);
-        if (entry != null && entry.getStatus() == TradeOrder.Status.OPEN && entry.getFilledQuantity() == 0) {
-            try { orderService.cancel(entry.getId()); } catch (RuntimeException e) { log.warn("Cancel entry {} failed: {}", entry.getId(), e.getMessage()); }
-            p.closed(null, exitSpot, "ENTRY_NOT_FILLED", 0.0, "Entry was not filled; cancelled");
+        // The minute sync can be up to a minute old: ask the broker now whether the entry filled or was rejected.
+        entry = orderService.sync(entry);
+        if (entry != null && entry.getStatus() == TradeOrder.Status.OPEN) {
+            // Unfilled, or only partly filled: cancel the rest so nothing fills after we sell.
+            try {
+                entry = orderService.cancel(entry.getId());
+            } catch (RuntimeException e) {
+                log.warn("Cancel entry {} failed: {}", entry.getId(), e.getMessage());
+                entry = orderService.sync(orders.findById(entry.getId()).orElse(entry));   // filled meanwhile? then it is sold below
+            }
+        }
+        if (entry != null && entry.getStatus() != TradeOrder.Status.COMPLETE && entry.getFilledQuantity() == 0) {
+            // Nothing was bought (unfilled and cancelled, or rejected by the broker): selling would open a short.
+            String why = entry.getStatus() == TradeOrder.Status.REJECTED
+                    ? "Entry was rejected by the broker" + (entry.getMessage() == null ? "" : ": " + entry.getMessage()) + "; nothing to sell"
+                    : "Entry was not filled; cancelled";
+            p.closed(null, exitSpot, "ENTRY_NOT_FILLED", 0.0, why);
             positions.save(p);
             alerts.positionClosed(p);
-            return "entry cancelled (not filled)";
+            return entry.getStatus() == TradeOrder.Status.REJECTED ? "no sell: entry was rejected by the broker" : "entry cancelled (not filled)";
         }
         int qty = entry != null && entry.getFilledQuantity() > 0 ? entry.getFilledQuantity() : p.getQuantity();
         double tick = options.find(underlying(params), p.getTradingsymbol()).map(KiteApi.OptionInstrument::tickSize).orElse(0.05);
@@ -323,17 +337,49 @@ public class LiveStrategyRunner {
         return new OrderRequest("NFO", symbol, side, qty, product, "LIMIT", price, null);
     }
 
-    /** Live fills arrive after the order is sent: fill in entry/exit prices and real P&L once known. */
-    private void refreshLivePrices() {
-        for (LivePosition p : positions.findByTradeDateOrderByOpenedAtDesc(LocalDate.now(clock.withZone(IST)))) {
-            if (p.getMode() != TradingMode.LIVE) continue;
-            TradeOrder entry = p.getEntryOrderId() == null ? null : orders.findById(p.getEntryOrderId()).orElse(null);
-            if (entry != null && p.getEntryPrice() == null) p.entryPrice(entry.getAveragePrice());
-            if (p.getStatus() == LivePosition.Status.CLOSED && p.getExitOrderId() != null && p.getExitPrice() == null) {
-                orders.findById(p.getExitOrderId()).filter(o -> o.getAveragePrice() != null)
-                        .ifPresent(o -> p.closed(o, p.getExitSpot(), p.getExitReason(), pnl(p, o, p.getPnl(), null), o.getMessage()));
+    /**
+     * Live fills and rejections arrive after the order is sent (see OrderService#syncLiveOrders). For today's live
+     * positions: fill in entry/exit prices, mark a position FAILED when the broker rejected its entry (so it is never
+     * sold), note an exit the broker rejected, and work out the real P&L once both prices are known, whichever came
+     * first. Under the position lock, so a stale copy never overwrites a position the exit watcher just closed.
+     */
+    void refreshLivePrices() {
+        synchronized (positionLock) {
+            for (LivePosition p : positions.findByTradeDateOrderByOpenedAtDesc(LocalDate.now(clock.withZone(IST)))) {
+                if (p.getMode() != TradingMode.LIVE) continue;
+                TradeOrder entry = p.getEntryOrderId() == null ? null : orders.findById(p.getEntryOrderId()).orElse(null);
+                if (entry != null && p.getEntryPrice() == null) p.entryPrice(entry.getAveragePrice());
+                if (p.getStatus() == LivePosition.Status.OPEN && entry != null && entry.getFilledQuantity() == 0
+                        && (entry.getStatus() == TradeOrder.Status.REJECTED || entry.getStatus() == TradeOrder.Status.CANCELLED)) {
+                    p.failed("Entry was " + entry.getStatus().name().toLowerCase(Locale.ROOT) + " by the broker"
+                            + (entry.getMessage() == null ? "" : ": " + entry.getMessage()));
+                    log.warn("POSITION_FAILED id={} strategy={} user={}: {}", p.getId(), p.getStrategyId(), p.getUserId(), p.getMessage());
+                }
+                TradeOrder exit = p.getStatus() == LivePosition.Status.CLOSED && p.getExitOrderId() != null
+                        ? orders.findById(p.getExitOrderId()).orElse(null) : null;
+                if (exit != null) {
+                    if (p.getExitPrice() == null) p.exitPrice(exit.getAveragePrice());
+                    if (exit.getStatus() == TradeOrder.Status.REJECTED && !String.valueOf(p.getMessage()).startsWith(EXIT_REJECTED)) {
+                        p.note(EXIT_REJECTED + (exit.getMessage() == null ? "" : ": " + exit.getMessage()) + ". Check the position at the broker.");
+                        log.error("EXIT_REJECTED position={} strategy={} user={} {}: {}", p.getId(), p.getStrategyId(), p.getUserId(),
+                                p.getTradingsymbol(), exit.getMessage());
+                    }
+                    if (p.getEntryPrice() != null && p.getExitPrice() != null) p.pnl(pnl(p, exit, p.getPnl(), paramsOf(p.getStrategyId())));
+                }
+                positions.save(p);
             }
-            positions.save(p);
+        }
+    }
+
+    static final String EXIT_REJECTED = "Exit order rejected by the broker";
+
+    /** A strategy's parameters (for its charges per trade), or null when it can't be loaded. */
+    private Params paramsOf(Long strategyId) {
+        try {
+            Strategy s = strategies.load(strategyId);
+            return new Params(new HashMap<>(s.getParameters() == null ? Map.of() : s.getParameters()));
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 }

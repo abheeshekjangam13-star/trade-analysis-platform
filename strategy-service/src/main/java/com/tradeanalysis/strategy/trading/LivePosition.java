@@ -58,6 +58,9 @@ public class LivePosition {
         this.exitSpot = exitSpot; this.exitReason = reason; this.pnl = pnl; this.message = msg;
         status = Status.CLOSED; closedAt = Instant.now();
     }
+    void exitPrice(Double price)             { if (price != null && price > 0) exitPrice = price; }
+    void pnl(Double pnl)                     { this.pnl = pnl; }
+    void note(String msg)                    { message = msg == null || msg.length() <= 512 ? msg : msg.substring(0, 512); }
 
     public Long getId()             { return id; }
     public Long getUserId()          { return userId; }
