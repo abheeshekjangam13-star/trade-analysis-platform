@@ -94,6 +94,9 @@ public class AuthService {
     /** Two-factor: users who turned it on also send the current code from their authenticator app. */
     public static final String CODE_REQUIRED = "Two-factor code required: enter the 6-digit code from your authenticator app";
 
+    // Transactional so the login is saved (last login time and the new session id that logs out older sessions);
+    // the controller calls this one directly, so the annotation on the two-argument login doesn't cover it.
+    @Transactional
     public LoginResult login(String username, String password, String code) {
         AppUser user = checkCredentials(username, password);
         if (user.awaitingSignupPayment() && userService.payAtSignup(user.getRequestedPlan()))
@@ -233,7 +236,7 @@ public class AuthService {
     private LoginResult issue(AppUser user) {
         user.loggedIn(Instant.now());
         TokenService.Issued t = tokens.issue(user);
-        log.info("AUTH_LOGIN user={}", user.getUsername());
+        log.info("AUTH_LOGIN user={} (earlier sessions logged out)", user.getUsername());
         return new LoginResult(t.token(), t.expiresAt(), user);
     }
 

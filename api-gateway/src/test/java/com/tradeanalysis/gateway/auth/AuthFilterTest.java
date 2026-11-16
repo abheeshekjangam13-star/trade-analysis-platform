@@ -25,7 +25,14 @@ import static org.mockito.Mockito.mock;
 class AuthFilterTest {
 
     static final String SECRET = "test-secret-test-secret-test-secret-1234";
-    private final AuthFilter filter = new AuthFilter(new GatewayAuthKey(mock(org.springframework.r2dbc.core.DatabaseClient.class), SECRET), true);
+    // The latest login's session id per user, as app_user.session_id holds it (no entry = no session stored yet).
+    private final java.util.Map<String, String> latestSession = new java.util.concurrent.ConcurrentHashMap<>();
+    private final SessionCheck sessions = new SessionCheck(mock(org.springframework.r2dbc.core.DatabaseClient.class)) {
+        @Override public Mono<java.util.Optional<String>> latest(String username) {
+            return Mono.just(java.util.Optional.ofNullable(latestSession.get(username)));
+        }
+    };
+    private final AuthFilter filter = new AuthFilter(new GatewayAuthKey(mock(org.springframework.r2dbc.core.DatabaseClient.class), SECRET), sessions, true);
     private final AtomicReference<ServerWebExchange> passed = new AtomicReference<>();
 
     static String token(String user, String secret, Instant exp, String issuer) throws Exception {
@@ -33,8 +40,13 @@ class AuthFilterTest {
     }
 
     static String token(String user, String secret, Instant exp, String issuer, List<String> roles) throws Exception {
-        SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), new JWTClaimsSet.Builder()
-                .issuer(issuer).subject(user).claim("roles", roles).expirationTime(Date.from(exp)).build());
+        return token(user, secret, exp, issuer, roles, null);
+    }
+
+    static String token(String user, String secret, Instant exp, String issuer, List<String> roles, String sid) throws Exception {
+        JWTClaimsSet.Builder b = new JWTClaimsSet.Builder().issuer(issuer).subject(user).claim("roles", roles).expirationTime(Date.from(exp));
+        if (sid != null) b.claim("sid", sid);
+        SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), b.build());
         jwt.sign(new MACSigner(secret.getBytes(StandardCharsets.UTF_8)));
         return jwt.serialize();
     }
@@ -100,5 +112,35 @@ class AuthFilterTest {
             assertThat(passed.get()).as(path).isNotNull();
         }
         assertThat(AuthFilter.adminOnly("/api/market-datax")).isFalse();
+    }
+
+    @Test
+    void onlyTheLatestLoginsTokenIsAccepted() throws Exception {
+        Instant exp = Instant.now().plusSeconds(600);
+        String older = token("usha", SECRET, exp, "trade-analysis", List.of("TRADER"), "session-1");
+        String newer = token("usha", SECRET, exp, "trade-analysis", List.of("TRADER"), "session-2");
+        latestSession.put("usha", "session-2");   // usha logged in again elsewhere
+
+        run(MockServerHttpRequest.get("/api/strategies").header("Authorization", "Bearer " + newer));
+        assertThat(passed.get()).isNotNull();
+
+        MockServerWebExchange ex = run(MockServerHttpRequest.get("/api/strategies").header("Authorization", "Bearer " + older));
+        assertThat(passed.get()).isNull();
+        assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        StepVerifier.create(ex.getResponse().getBodyAsString())
+                .assertNext(body -> assertThat(body).contains("\"code\":\"SESSION_REPLACED\"").contains("another window or device"))
+                .verifyComplete();
+
+        // a token from before sessions existed (no sid) is refused too once the user has logged in again
+        run(MockServerHttpRequest.get("/api/strategies").header("Authorization", "Bearer " + token("usha", SECRET, exp, "trade-analysis", List.of("TRADER"))));
+        assertThat(passed.get()).isNull();
+    }
+
+    @Test
+    void usersWithNoStoredSessionKeepTheirTokens() throws Exception {
+        // no login since sessions were added: tokens without a sid still work until they expire
+        run(MockServerHttpRequest.get("/api/strategies").header("Authorization",
+                "Bearer " + token("ravi", SECRET, Instant.now().plusSeconds(600), "trade-analysis", List.of("TRADER"))));
+        assertThat(passed.get()).isNotNull();
     }
 }

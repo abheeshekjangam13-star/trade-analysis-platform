@@ -19,7 +19,8 @@ import java.util.Set;
  * Identifies the caller of every /api request from the login token ("Authorization: Bearer ..."), checked here as
  * well as at the gateway, so calling this service directly (port 8083) doesn't get around login. The X-User header
  * is ignored unless {@code auth.trust-user-header=true} (development and tests only). Without a valid token a
- * request gets 401, except the login calls themselves.
+ * request gets 401, except the login calls themselves. Only the user's latest login is valid: a token from an older
+ * login (another window or device) gets 401 with code SESSION_REPLACED.
  */
 @Component
 public class CurrentUserFilter extends OncePerRequestFilter {
@@ -49,14 +50,20 @@ public class CurrentUserFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         try {
             if (!PUBLIC.contains(request.getRequestURI())) {
-                Optional<String> username = caller(request);
+                String token = bearer(request);
+                Optional<TokenService.Verified> verified = token != null ? tokens.read(token) : Optional.empty();
+                Optional<String> username = token != null ? verified.map(TokenService.Verified::username) : headerUser(request);
                 if (username.isEmpty() && !trustHeader) {
-                    response.sendError(401, bearer(request) == null ? "Log in first" : "Session expired or invalid: log in again");
+                    response.sendError(401, token == null ? "Log in first" : "Session expired or invalid: log in again");
                     return;
                 }
                 if (username.isPresent()) {
                     try {
                         AppUser user = users.resolve(username.get(), autoRegister && trustHeader);
+                        if (verified.isPresent() && !verified.get().currentFor(user.getSessionId())) {
+                            sessionReplaced(response);
+                            return;
+                        }
                         Plan plan = user.effectivePlan(java.time.Instant.now());
                         String denied = Access.deny(user, plan, request.getMethod(), request.getRequestURI());
                         if (denied != null) {
@@ -76,11 +83,18 @@ public class CurrentUserFilter extends OncePerRequestFilter {
         }
     }
 
-    private Optional<String> caller(HttpServletRequest request) {
-        String token = bearer(request);
-        if (token != null) return tokens.verify(token);
+    private Optional<String> headerUser(HttpServletRequest request) {
         String header = request.getHeader(HEADER);
         return trustHeader && header != null && !header.isBlank() ? Optional.of(header) : Optional.empty();
+    }
+
+    /** 401 with a code, so the UI can say the account logged in elsewhere rather than "session expired". */
+    private static void sessionReplaced(HttpServletResponse response) throws IOException {
+        response.setStatus(401);
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+        response.getWriter().write("{\"status\":401,\"error\":\"Unauthorized\",\"code\":\"" + TokenService.SESSION_REPLACED
+                + "\",\"message\":\"" + TokenService.SESSION_REPLACED_MESSAGE + "\"}");
     }
 
     private static String bearer(HttpServletRequest request) {

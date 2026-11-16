@@ -100,4 +100,20 @@ class AuthIntegrationTest {
         call(patch("/api/users/" + id).content("{\"status\":\"DISABLED\"}"), "admin", 400);
         call(patch("/api/users/" + id).content("{\"roles\":[\"TRADER\"]}"), "admin", 400);
     }
+
+    @Test @Order(5)
+    void aNewLoginLogsOutEveryEarlierSession() throws Exception {
+        call(post("/api/users").content("{\"username\":\"meena\",\"password\":\"Meena1234\",\"roles\":[\"TRADER\"]}"), "admin", 201);
+        String login = "{\"username\":\"meena\",\"password\":\"Meena1234\"}";
+        String first = call(post("/api/auth/login").content(login), null, 200).get("token").asText();
+        mvc.perform(get("/api/users/me").header("Authorization", "Bearer " + first)).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT last_login_at FROM app_user WHERE username = 'meena'", java.sql.Timestamp.class)).isNotNull();
+
+        String second = call(post("/api/auth/login").content(login), null, 200).get("token").asText();   // another window or device
+        mvc.perform(get("/api/users/me").header("Authorization", "Bearer " + second)).andExpect(status().isOk());
+        String refused = mvc.perform(get("/api/users/me").header("Authorization", "Bearer " + first))
+                .andExpect(status().isUnauthorized()).andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(refused).get("code").asText()).isEqualTo(TokenService.SESSION_REPLACED);
+        assertThat(tokens.verify(first)).contains("meena");   // still a well-signed token: refused only because it's not the latest
+    }
 }

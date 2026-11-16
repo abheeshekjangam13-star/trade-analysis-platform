@@ -22,7 +22,22 @@ public class TokenService {
 
     public static final String ISSUER = "trade-analysis";
 
+    /** The token claim holding the login's session id (see AppUser#loggedIn). */
+    public static final String SESSION_CLAIM = "sid";
+    /** The error code a request gets when a newer login has replaced its session. The UI shows why it logged out. */
+    public static final String SESSION_REPLACED = "SESSION_REPLACED";
+    public static final String SESSION_REPLACED_MESSAGE =
+            "You were logged out because this account logged in on another window or device.";
+
     public record Issued(String token, Instant expiresAt) {}
+
+    /** A valid token's username and session id (null for tokens issued before sessions were added). */
+    public record Verified(String username, String sessionId) {
+        /** True when this token belongs to the user's latest login (or either side predates sessions). */
+        public boolean currentFor(String latestSessionId) {
+            return latestSessionId == null || latestSessionId.equals(sessionId);
+        }
+    }
 
     private final AuthKeys keys;
     private final Duration ttl;
@@ -34,11 +49,13 @@ public class TokenService {
 
     public Issued issue(AppUser user) {
         Instant now = Instant.now(), exp = now.plus(ttl);
-        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+        JWTClaimsSet.Builder b = new JWTClaimsSet.Builder()
                 .issuer(ISSUER).subject(user.getUsername()).jwtID(UUID.randomUUID().toString())
                 .claim("uid", user.getId())
                 .claim("roles", user.getRoles().stream().map(AppRole::getName).toList())
-                .issueTime(Date.from(now)).expirationTime(Date.from(exp)).build();
+                .issueTime(Date.from(now)).expirationTime(Date.from(exp));
+        if (user.getSessionId() != null) b.claim(SESSION_CLAIM, user.getSessionId());
+        JWTClaimsSet claims = b.build();
         try {
             SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims);
             jwt.sign(new MACSigner(keys.key()));
@@ -50,12 +67,18 @@ public class TokenService {
 
     /** The username of a valid, unexpired token from this issuer. */
     public Optional<String> verify(String token) {
+        return read(token).map(Verified::username);
+    }
+
+    /** The username and session id of a valid, unexpired token from this issuer. */
+    public Optional<Verified> read(String token) {
         try {
             SignedJWT jwt = SignedJWT.parse(token);
             if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm()) || !jwt.verify(new MACVerifier(keys.key()))) return Optional.empty();
             JWTClaimsSet c = jwt.getJWTClaimsSet();
             if (!ISSUER.equals(c.getIssuer()) || c.getExpirationTime() == null || c.getExpirationTime().before(new Date())) return Optional.empty();
-            return Optional.ofNullable(c.getSubject());
+            if (c.getSubject() == null) return Optional.empty();
+            return Optional.of(new Verified(c.getSubject(), c.getStringClaim(SESSION_CLAIM)));
         } catch (Exception e) {
             return Optional.empty();
         }

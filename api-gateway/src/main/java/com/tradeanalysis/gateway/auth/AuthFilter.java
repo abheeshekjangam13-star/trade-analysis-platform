@@ -23,11 +23,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
  * Login check for every /api request: requires "Authorization: Bearer <token>" signed by strategy-service, then
  * passes the verified username on as X-User (any X-User a client sends is removed, so it cannot be faked).
+ * Only the user's latest login is accepted: a token whose session id ("sid") isn't the one strategy-service stored at
+ * the last login gets 401 with code SESSION_REPLACED, so logging in elsewhere logs older windows and devices out.
  * Open without a token: /api/auth/status, /plans, /signup, /setup, /login, /grievance, and the Razorpay webhook. Market data
  * (/api/market-data/**) and indicators (/api/indicators/**) need ADMIN.
  */
@@ -38,6 +41,8 @@ public class AuthFilter implements GlobalFilter, Ordered {
     static final String USER_HEADER = "X-User";
     static final String ROLES_HEADER = "X-User-Roles";
     static final String ISSUER = "trade-analysis";
+    static final String SESSION_REPLACED = "SESSION_REPLACED";
+    static final String SESSION_REPLACED_MESSAGE = "You were logged out because this account logged in on another window or device.";
     // The Razorpay webhook has no token; strategy-service verifies its HMAC signature.
     static final Set<String> PUBLIC = Set.of("/api/auth/status", "/api/auth/plans", "/api/auth/signup", "/api/auth/signup/payment", "/api/auth/signup/verify",
             "/api/auth/setup", "/api/auth/login", "/api/auth/grievance",
@@ -55,14 +60,24 @@ public class AuthFilter implements GlobalFilter, Ordered {
     private static final Logger log = LoggerFactory.getLogger(AuthFilter.class);
 
     private final GatewayAuthKey key;
+    private final SessionCheck sessions;
     private final boolean enabled;
 
-    public AuthFilter(GatewayAuthKey key, @Value("${auth.enabled:true}") boolean enabled) {
+    public AuthFilter(GatewayAuthKey key, SessionCheck sessions, @Value("${auth.enabled:true}") boolean enabled) {
         this.key = key;
+        this.sessions = sessions;
         this.enabled = enabled;
     }
 
-    record Verified(String username, List<String> roles) {}
+    /** sessionId is null for tokens issued before sessions were added. */
+    record Verified(String username, List<String> roles, String sessionId) {
+        Verified(String username, List<String> roles) { this(username, roles, null); }
+
+        /** True when this token is from the user's latest login (or the user has no session stored yet). */
+        boolean currentFor(Optional<String> latest) {
+            return latest.isEmpty() || latest.get().equals(sessionId);
+        }
+    }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
@@ -84,9 +99,15 @@ public class AuthFilter implements GlobalFilter, Ordered {
                     Verified v = verify(token, k);
                     if (v == null) return reject(exchange, "Session expired or invalid: log in again");
                     exchange.getAttributes().put(USER_ATTR, v.username());
-                    if (adminOnly(path) && !v.roles().contains("ADMIN"))
-                        return respond(exchange, HttpStatus.FORBIDDEN, "Only an ADMIN can do this");
-                    return chain.filter(withUser(exchange, v));
+                    return sessions.latest(v.username()).flatMap(latest -> {
+                        if (!v.currentFor(latest)) {
+                            log.info("AUTH_SESSION_REPLACED user={}", v.username());
+                            return respond(exchange, HttpStatus.UNAUTHORIZED, SESSION_REPLACED_MESSAGE, SESSION_REPLACED);
+                        }
+                        if (adminOnly(path) && !v.roles().contains("ADMIN"))
+                            return respond(exchange, HttpStatus.FORBIDDEN, "Only an ADMIN can do this");
+                        return chain.filter(withUser(exchange, v));
+                    });
                 })
                 .onErrorResume(IllegalStateException.class, e -> {
                     log.warn("AUTH_UNAVAILABLE {}", e.getMessage());
@@ -103,7 +124,7 @@ public class AuthFilter implements GlobalFilter, Ordered {
             Date exp = c.getExpirationTime();
             if (!ISSUER.equals(c.getIssuer()) || exp == null || exp.toInstant().isBefore(Instant.now()) || c.getSubject() == null) return null;
             List<String> roles = c.getStringListClaim("roles");
-            return new Verified(c.getSubject(), roles == null ? List.of() : roles);
+            return new Verified(c.getSubject(), roles == null ? List.of() : roles, c.getStringClaim("sid"));
         } catch (Exception e) {
             return null;
         }
@@ -126,10 +147,16 @@ public class AuthFilter implements GlobalFilter, Ordered {
     }
 
     private static Mono<Void> respond(ServerWebExchange exchange, HttpStatus status, String message) {
+        return respond(exchange, status, message, null);
+    }
+
+    /** code (optional) tells the UI why, e.g. SESSION_REPLACED. */
+    private static Mono<Void> respond(ServerWebExchange exchange, HttpStatus status, String message, String code) {
         var res = exchange.getResponse();
         res.setStatusCode(status);
         res.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        String body = "{\"status\":" + status.value() + ",\"error\":\"" + status.getReasonPhrase() + "\",\"message\":\""
+        String body = "{\"status\":" + status.value() + ",\"error\":\"" + status.getReasonPhrase() + "\","
+                + (code == null ? "" : "\"code\":\"" + code + "\",") + "\"message\":\""
                 + message.replace("\\", "\\\\").replace("\"", "\\\"") + "\",\"path\":\""
                 + exchange.getRequest().getPath().value().replace("\"", "") + "\"}";
         DataBuffer buf = res.bufferFactory().wrap(body.getBytes(StandardCharsets.UTF_8));

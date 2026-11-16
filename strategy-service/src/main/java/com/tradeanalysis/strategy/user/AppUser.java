@@ -39,6 +39,11 @@ public class AppUser {
     private Instant passwordChangedAt;
     private Instant lastLoginAt;
 
+    /** The latest login's session id (in its token); older tokens carry another one and are refused. */
+    @JsonIgnore
+    @Column(length = 36)
+    private String sessionId;
+
     @Column(unique = true, length = 20)
     private String phone;
 
@@ -93,7 +98,10 @@ public class AppUser {
     public void setFullName(String name)    { this.fullName = name; }
     public void setRoles(Set<AppRole> roles){ this.roles = new LinkedHashSet<>(roles); }
     public void setPasswordHash(String hash){ this.passwordHash = hash; this.passwordChangedAt = Instant.now(); }
-    public void loggedIn(Instant at)        { this.lastLoginAt = at; this.lastSeenAt = at; }
+    /** A new login: starts a new session, which ends every earlier one (other windows and devices). */
+    public void loggedIn(Instant at)        { this.lastLoginAt = at; this.lastSeenAt = at; this.sessionId = java.util.UUID.randomUUID().toString(); }
+    /** Null until the first login after sessions were added. */
+    public String getSessionId()            { return sessionId; }
     @JsonIgnore public String getPasswordHash() { return passwordHash; }
     public boolean isPasswordSet()          { return passwordHash != null && !passwordHash.isBlank(); }
     public Instant getPasswordChangedAt()   { return passwordChangedAt; }

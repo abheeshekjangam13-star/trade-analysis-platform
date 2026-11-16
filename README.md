@@ -244,6 +244,10 @@ Everyone logs in with a username and password; every `/api` call then needs `Aut
   strategy-service creates once in the `auth_key` table, which the gateway reads. Changing or deleting it logs
   everyone out. Disabling a user blocks their existing tokens at once; a password change does not end other sessions
   (they expire within 8 hours).
+- **One login at a time:** each login stores a new session id (`app_user.session_id`) and puts it in the token's
+  `sid` claim. api-gateway and strategy-service refuse a token whose `sid` isn't the latest (401, code
+  `SESSION_REPLACED`), so logging in on another window or device logs the older ones out at their next request, and
+  the UI tells them why. Tokens from before this change (no `sid`) keep working until that user logs in again.
 - **Where it is checked:** api-gateway rejects requests without a valid token (401) and replaces any client `X-User`
   header with the verified username (the access log records only verified users). strategy-service checks the token
   too, so calling port 8083 directly doesn't skip login. Open without a token: `GET /api/auth/status`,
