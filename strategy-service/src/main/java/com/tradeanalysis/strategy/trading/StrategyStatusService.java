@@ -153,10 +153,11 @@ public class StrategyStatusService {
                     tp > 0 ? x.getEntrySpot() + ("CE".equals(x.getOptionType()) ? tp : -tp) : null,
                     x.getEntryPrice(), x.getQuantity(), x.getOpenedAt()), pnl(mine), from, until);
         }
-        List<LivePosition> closed = mine.stream().filter(x -> x.getStatus() == LivePosition.Status.CLOSED).toList();
+        // A position the broker refused (entry rejected: FAILED) also ends the strategy's day.
+        List<LivePosition> closed = mine.stream()
+                .filter(x -> x.getStatus() == LivePosition.Status.CLOSED || x.getStatus() == LivePosition.Status.FAILED).toList();
         if (!closed.isEmpty()) {
-            LivePosition last = closed.get(0);
-            return new Status(s.getId(), s.getName(), mode, u, State.DONE, readable(last.getExitReason()) + " · done for today",
+            return new Status(s.getId(), s.getName(), mode, u, State.DONE, doneNote(closed.get(0)),
                     e.spot(), List.of(), null, pnl(mine), from, until);
         }
         if (e.problem() != null)
@@ -288,6 +289,21 @@ public class StrategyStatusService {
         double sum = 0; boolean any = false;
         for (LivePosition x : ps) if (x.getPnl() != null) { sum += x.getPnl(); any = true; }
         return any ? Math.round(sum * 100) / 100.0 : null;
+    }
+
+    /**
+     * What happened to the strategy's last trade today. A broker refusal comes first, since the trade did not happen the
+     * way its exit reason says: an entry the broker rejected bought nothing, and an exit it rejected may have left the
+     * position open at the broker (or another order sold it), so the real result is only in Kite.
+     */
+    static String doneNote(LivePosition last) {
+        String msg = last.getMessage() == null ? "" : last.getMessage();
+        if (last.getStatus() == LivePosition.Status.FAILED || "ENTRY_NOT_FILLED".equals(last.getExitReason()))
+            return (msg.toLowerCase(Locale.ROOT).contains("rejected") ? "Entry rejected by the broker" : "Entry not filled")
+                    + " · no trade today";
+        if (msg.startsWith(LiveStrategyRunner.EXIT_REJECTED))
+            return "Exit rejected by the broker · check this position in Kite";
+        return readable(last.getExitReason()) + " · done for today";
     }
 
     static String readable(String exitReason) {

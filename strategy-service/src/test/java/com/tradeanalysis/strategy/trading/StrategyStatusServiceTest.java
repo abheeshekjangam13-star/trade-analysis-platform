@@ -31,6 +31,32 @@ class StrategyStatusServiceTest {
             bar(YDAY, 9, 15, 25850, 26000, 25800, 25950), bar(YDAY, 15, 25, 25950, 25960, 25890, 25900),
             bar(TODAY, 9, 15, 25900, 25920, 25880, 25910), bar(TODAY, 9, 20, 25910, 25955, 25905, 25950));
 
+    static LivePosition position() {
+        return new LivePosition(131L, 7L, TODAY, TradingMode.LIVE, "CE", "NIFTY26N1725250CE", 130,
+                TODAY.atTime(9, 50).atZone(IST).toInstant(), 25254.6, 25200.0);
+    }
+
+    @Test
+    void theDoneNoteSaysWhenTheBrokerRefusedAnOrder() {
+        // 16 Nov 2026: one strategy's BUY was rejected for margin, another's stop exit was rejected after it.
+        LivePosition normal = position();
+        normal.closed(null, 25200.0, "SL_HIT", -3985.0, "Sent to Kite");
+        assertThat(StrategyStatusService.doneNote(normal)).isEqualTo("Stop hit · done for today");
+
+        LivePosition entryRejected = position();
+        entryRejected.failed("Entry was rejected by the broker: Insufficient funds");
+        assertThat(StrategyStatusService.doneNote(entryRejected)).isEqualTo("Entry rejected by the broker · no trade today");
+
+        LivePosition notFilled = position();
+        notFilled.closed(null, 25200.0, "ENTRY_NOT_FILLED", 0.0, "Entry was not filled; cancelled");
+        assertThat(StrategyStatusService.doneNote(notFilled)).isEqualTo("Entry not filled · no trade today");
+
+        LivePosition exitRejected = position();
+        exitRejected.closed(null, 25200.0, "SL_HIT", null, "Sent to Kite");
+        exitRejected.note(LiveStrategyRunner.EXIT_REJECTED + ": Insufficient funds. Check the position at the broker.");
+        assertThat(StrategyStatusService.doneNote(exitRejected)).isEqualTo("Exit rejected by the broker · check this position in Kite");
+    }
+
     @Test
     void cachedStatusExpiresAtEachFiveMinuteCloseOrAfterAMinute() {
         Instant at = TODAY.atTime(10, 1, 10).atZone(IST).toInstant();
