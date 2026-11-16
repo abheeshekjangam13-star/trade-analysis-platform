@@ -208,11 +208,7 @@ public class StrategyService {
      */
     private void requireNotTrading(Strategy s, String action) {
         Long id = s.getId();
-        Integer open = jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ? AND status = 'OPEN'", Integer.class, id);
-        if (open != null && open > 0)
-            throw new StrategyBlockedException(StrategyBlockedException.Reason.OPEN_POSITION,
-                    "'" + s.getName() + "' has an open trade, so you can't " + action + " it yet. Let the trade finish "
-                            + "(it exits at its stop loss, target, or the 15:20 square-off), then turn trading off and try again.");
+        requireNoOpenPosition(s, action);
         Long me = CurrentUser.id().orElse(null);
         Integer mine = me == null ? 0 : jdbc.queryForObject(
                 "SELECT COUNT(*) FROM strategy_user_mode WHERE strategy_id = ? AND user_id = ? AND mode <> 'OFF'", Integer.class, id, me);
@@ -226,9 +222,33 @@ public class StrategyService {
                     "'" + s.getName() + "' is being traded by an admin, so you can't " + action + " it yet. Ask the admin to turn it off.");
     }
 
+    /** Refuses while the strategy has an open trade (nothing else would manage it if its rules changed under it). */
+    private void requireNoOpenPosition(Strategy s, String action) {
+        Integer open = jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ? AND status = 'OPEN'", Integer.class, s.getId());
+        if (open != null && open > 0)
+            throw new StrategyBlockedException(StrategyBlockedException.Reason.OPEN_POSITION,
+                    "'" + s.getName() + "' has an open trade, so you can't " + action + " it yet. Let the trade finish "
+                            + "(it exits at its stop loss, target, or the 15:20 square-off), then turn trading off and try again.");
+    }
+
+    /**
+     * Whether the only parameter that changed is skipMonthEndExpiry. That one may change while the strategy trades
+     * PAPER/LIVE (it can only take entries away, never add or alter one), though not while a trade is open.
+     */
+    static boolean onlySkipMonthEndChanged(Map<String, String> before, Map<String, String> after) {
+        Map<String, String> a = new java.util.HashMap<>(before == null ? Map.of() : before);
+        Map<String, String> b = new java.util.HashMap<>(after == null ? Map.of() : after);
+        for (String k : java.util.List.of(com.tradeanalysis.strategy.engine.MonthEndExpiry.PARAM, "lotSize")) {   // lotSize: dropped on save, unused
+            a.remove(k);
+            b.remove(k);
+        }
+        return a.equals(b);
+    }
+
     /**
      * Renames a strategy, changes its description and/or replaces its parameters (null = keep). The type can't change.
-     * Parameters can't change while the strategy is being traded. Past backtests keep the results of the old parameters.
+     * Parameters can't change while the strategy is being traded, except skipMonthEndExpiry (see
+     * {@link #onlySkipMonthEndChanged}). Past backtests keep the results of the old parameters.
      */
     @Transactional
     public Strategy update(Long id, String name, String description, Map<String, String> params) {
@@ -255,7 +275,8 @@ public class StrategyService {
         if (params != null) {
             Map<String, String> clean = cleanParams(s.getType(), params);
             if (!clean.equals(s.getParameters())) {
-                requireNotTrading(s, "change the parameters of");
+                if (onlySkipMonthEndChanged(s.getParameters(), clean)) requireNoOpenPosition(s, "change the parameters of");
+                else requireNotTrading(s, "change the parameters of");
                 s.setParameters(clean);
             }
         }

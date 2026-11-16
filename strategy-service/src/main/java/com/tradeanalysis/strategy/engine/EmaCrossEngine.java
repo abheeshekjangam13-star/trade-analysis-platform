@@ -88,6 +88,10 @@ public class EmaCrossEngine {
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", "skipDays includes " + date.getDayOfWeek(), 0));
                 continue;
             }
+            if (MonthEndExpiry.skips(params, date)) {
+                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", MonthEndExpiry.REASON, 0));
+                continue;
+            }
 
             int entryIdx = -1;
             boolean call = false;

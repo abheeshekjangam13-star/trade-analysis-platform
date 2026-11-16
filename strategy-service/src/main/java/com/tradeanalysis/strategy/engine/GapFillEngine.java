@@ -87,6 +87,10 @@ public class GapFillEngine {
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", "skipDays includes " + date.getDayOfWeek(), 0));
                 continue;
             }
+            if (MonthEndExpiry.skips(params, date)) {
+                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", MonthEndExpiry.REASON, 0));
+                continue;
+            }
             boolean up = gap >= cfg.minGap() && gap < cfg.maxGap(), down = -gap >= cfg.minGap() && -gap < cfg.maxGap();
             boolean call = down;   // gap-down: CE back up into the gap; gap-up: PE back down
             if (!(up && cfg.allowPe()) && !(down && cfg.allowCe())) {

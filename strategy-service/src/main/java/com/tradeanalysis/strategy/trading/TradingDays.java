@@ -27,6 +27,8 @@ public class TradingDays {
     public TradingDays(@Value("${trading.market-holidays:}") String list) {
         TreeSet<LocalDate> set = parse(list);
         this.holidays = Collections.unmodifiableSet(set);
+        // Month-end expiry moves to the day before a holiday; the engines (built without Spring) read it from here.
+        com.tradeanalysis.strategy.engine.MonthEndExpiry.useHolidays(set);
         log.info("TRADING_DAYS {} NSE holidays configured ({} to {})", set.size(),
                 set.isEmpty() ? "-" : set.first(), set.isEmpty() ? "-" : set.last());
     }
@@ -42,6 +44,11 @@ public class TradingDays {
     }
 
     public boolean isHoliday(LocalDate d) { return holidays.contains(d); }
+
+    /** Listed NSE holidays from {@code from} to {@code to} (inclusive), in date order. */
+    public java.util.List<LocalDate> holidaysBetween(LocalDate from, LocalDate to) {
+        return holidays.stream().filter(d -> !d.isBefore(from) && !d.isAfter(to)).sorted().toList();
+    }
 
     /** A weekday that is not an NSE holiday. */
     public boolean isTradingDay(LocalDate d) {

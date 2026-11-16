@@ -57,6 +57,8 @@ import java.util.stream.Collectors;
  *   onlyOn (none): yyyy-MM-dd — trade on this date only,
  *   skipDays (none): comma-separated weekdays not to trade, e.g. "THU" or "MON,FRIDAY" (case-insensitive;
  *   3-letter or full names). A skipped day still supplies the previous close for the next day's gap,
+ *   skipMonthEndExpiry (false): true = no trades on the month-end expiry day (last Tuesday, moved earlier for a
+ *   holiday; see {@link MonthEndExpiry}), in every reference mode,
  *   referenceMinutes (5): length of the reference range from referenceTime, a multiple of 5 up to 60 (15 = the
  *   first 15-min candle, 09:15–09:30, built from the three 5-min candles); breakouts are looked for after it,
  *   directions WITH_GAP: CE only on a gap-up open, PE only on a gap-down open (pair with gapFilter ANY_GAP),
@@ -83,6 +85,7 @@ public class NiftyOpeningBreakoutEngine {
     /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
     public static void validateParams(Params params) {
         Settings.from(params);
+        MonthEndExpiry.enabled(params);   // skipMonthEndExpiry: true or false (every reference mode)
         // The other reference modes check their own parameters too (saving, the description reader, the live runner).
         if (PreviousRangeEngine.handles(params)) PreviousRangeEngine.validateParams(params);
         if (GapFillEngine.handles(params)) GapFillEngine.validateParams(params);
@@ -336,6 +339,10 @@ public class NiftyOpeningBreakoutEngine {
 
             if (cfg.skipDays().contains(date.getDayOfWeek())) {   // its close still feeds the next gap
                 days.add(new DayReport(date, gap, "SKIPPED", "skipDays includes " + date.getDayOfWeek(), 0));
+                continue;
+            }
+            if (MonthEndExpiry.skips(params, date)) {
+                days.add(new DayReport(date, gap, "SKIPPED", MonthEndExpiry.REASON, 0));
                 continue;
             }
             if (refCandle == null) {

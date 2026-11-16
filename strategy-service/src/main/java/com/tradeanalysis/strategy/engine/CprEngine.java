@@ -86,6 +86,10 @@ public class CprEngine {
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", "skipDays includes " + date.getDayOfWeek(), 0));
                 continue;
             }
+            if (MonthEndExpiry.skips(params, date)) {
+                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", MonthEndExpiry.REASON, 0));
+                continue;
+            }
             if (ref == null) { days.add(new NiftyOpeningBreakoutEngine.DayReport(date, null, "NO_DATA", "No 09:15 candle", 0)); continue; }
             if (cfg.maxCprWidthPct() > 0 && widthPct > cfg.maxCprWidthPct()) {
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE",
