@@ -289,6 +289,30 @@ class LiveStrategyRunnerTest {
     }
 
     @Test
+    void exchangeHoursShownToUsersStartAt915NotTheRunners920() {
+        TradingDays days = new TradingDays("2026-11-24");
+        assertThat(LiveStrategyRunner.exchangeOpen(at(TUE, 9, 14), days)).isFalse();
+        assertThat(LiveStrategyRunner.exchangeOpen(at(TUE, 9, 15), days)).isTrue();
+        assertThat(LiveStrategyRunner.exchangeOpen(at(TUE, 9, 18), days)).isTrue();   // runner window still closed here
+        assertThat(LiveStrategyRunner.exchangeOpen(at(TUE, 15, 29), days)).isTrue();
+        assertThat(LiveStrategyRunner.exchangeOpen(at(TUE, 15, 30), days)).isFalse();
+        assertThat(LiveStrategyRunner.exchangeOpen(at(LocalDate.of(2026, 11, 7), 11, 0), days)).isFalse();    // Saturday
+        assertThat(LiveStrategyRunner.exchangeOpen(at(LocalDate.of(2026, 11, 24), 11, 0), days)).isFalse();   // listed holiday
+        assertThat(LiveStrategyRunner.exchangeOpen(at(LocalDate.of(2026, 11, 24), 11, 0), null)).isTrue();    // no list: weekdays only
+    }
+
+    @Test
+    void nextExchangeOpenSkipsWeekendsAndHolidays() {
+        TradingDays days = new TradingDays("2026-11-24");
+        assertThat(LiveStrategyRunner.nextExchangeOpen(at(TUE, 9, 0), days).toLocalDateTime()).isEqualTo(TUE.atTime(9, 15));
+        assertThat(LiveStrategyRunner.nextExchangeOpen(at(TUE, 16, 0), days).toLocalDate()).isEqualTo(TUE.plusDays(1));
+        assertThat(LiveStrategyRunner.nextExchangeOpen(at(LocalDate.of(2026, 11, 20), 16, 0), days).toLocalDate())
+                .isEqualTo(LocalDate.of(2026, 11, 23));   // Friday evening -> Monday
+        assertThat(LiveStrategyRunner.nextExchangeOpen(at(LocalDate.of(2026, 11, 23), 16, 0), days).toLocalDate())
+                .isEqualTo(LocalDate.of(2026, 11, 25));   // Monday evening, Tuesday is a holiday -> Wednesday
+    }
+
+    @Test
     void everyUserTradesTheirOwnCopyOfAStrategy() {
         long a = user("runner-a"), b = user("runner-b");
         paper(56L, b);

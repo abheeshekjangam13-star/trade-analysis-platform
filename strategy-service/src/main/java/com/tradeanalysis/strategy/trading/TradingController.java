@@ -35,12 +35,14 @@ public class TradingController {
     private final Clock clock;
     private final QuoteCache quoteCache;
     private final com.tradeanalysis.strategy.compliance.ComplianceAudit audit;
+    private final ObjectProvider<TradingDays> tradingDays;
 
     public TradingController(TradingService trading, OrderService orders, TradeOrderRepository orderRepo,
                              LivePositionRepository positionRepo, BrokerAccounts accounts, KiteApi platform, NiftyOptions options,
                              ObjectProvider<LiveStrategyRunner> runner, Clock clock, QuoteCache quoteCache,
-                             com.tradeanalysis.strategy.compliance.ComplianceAudit audit) {
+                             com.tradeanalysis.strategy.compliance.ComplianceAudit audit, ObjectProvider<TradingDays> tradingDays) {
         this.audit = audit;
+        this.tradingDays = tradingDays;
         this.quoteCache = quoteCache;
         this.trading = trading; this.orders = orders; this.orderRepo = orderRepo; this.positionRepo = positionRepo;
         this.accounts = accounts; this.platform = platform; this.options = options; this.runner = runner; this.clock = clock;
@@ -70,7 +72,9 @@ public class TradingController {
         out.put("liveBlockedMessage", me == null ? null : trading.liveRefusal(me));   // why the caller can't trade live, or null
         out.put("liveAccessMessage", orders.accessRefusal(me));   // the admin's message while live is restricted and the caller isn't picked, or null
         out.put("runnerEnabled", runner.getIfAvailable() != null);
-        out.put("marketOpen", LiveStrategyRunner.marketOpen(clock.instant()));
+        out.put("marketOpen", LiveStrategyRunner.exchangeOpen(clock.instant(), tradingDays.getIfAvailable()));   // NSE hours, not the runner's 09:20 start
+        out.put("nextMarketOpen", LiveStrategyRunner.nextExchangeOpen(clock.instant(), tradingDays.getIfAvailable())
+                .toOffsetDateTime().toString());   // e.g. 2026-11-18T09:15+05:30, for "resume at 9:15 AM on Wed, 18 Nov"
         out.put("controls", trading.controls());
         out.put("maxDayLoss", trading.currentMaxDayLoss());   // the caller's own, for all their strategies together
         Long who = trading.isAdmin() ? null : me;   // non-admins: their own numbers
@@ -88,7 +92,7 @@ public class TradingController {
     public Map<String, Object> session() {
         java.time.Instant now = clock.instant();
         Map<String, Object> out = new java.util.LinkedHashMap<>();
-        out.put("open", LiveStrategyRunner.marketOpen(now));
+        out.put("open", LiveStrategyRunner.exchangeOpen(now, tradingDays.getIfAvailable()));
         out.put("special", com.tradeanalysis.common.market.SpecialSessions.on(now.atZone(com.tradeanalysis.common.market.SpecialSessions.IST).toLocalDate())
                 .map(s -> Map.of("name", s.name(), "date", s.date().toString(), "preOpen", s.preOpen().toString(),
                         "tradingFrom", s.tradingFrom().toString(), "tradingTo", s.tradingTo().toString(), "close", s.close().toString()))

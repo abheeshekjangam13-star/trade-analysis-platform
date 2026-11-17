@@ -182,6 +182,35 @@ public class LiveStrategyRunner {
                 || com.tradeanalysis.common.market.SpecialSessions.open(now);   // e.g. Muhurat trading on a Sunday
     }
 
+    /**
+     * Whether NSE itself is trading (09:15 to 15:30 IST on a weekday that is not a listed holiday, or a special
+     * session), for what the user is shown. {@link #marketOpen} is the runner's own window, which starts at 09:20 once
+     * the first 5-minute candle is complete, so it must not be used to tell people the market is closed.
+     */
+    static boolean exchangeOpen(Instant now, TradingDays days) {
+        ZonedDateTime t = now.atZone(IST);
+        LocalTime time = t.toLocalTime();
+        boolean normal = (days == null ? t.getDayOfWeek() != DayOfWeek.SATURDAY && t.getDayOfWeek() != DayOfWeek.SUNDAY
+                                       : days.isTradingDay(t.toLocalDate()))
+                && !time.isBefore(LocalTime.of(9, 15)) && time.isBefore(LocalTime.of(15, 30));
+        return normal || com.tradeanalysis.common.market.SpecialSessions.open(now);
+    }
+
+    /** When NSE next opens (09:15 IST), skipping weekends and listed holidays: today if it is before 09:15 on a trading day. */
+    static ZonedDateTime nextExchangeOpen(Instant now, TradingDays days) {
+        ZonedDateTime t = now.atZone(IST);
+        java.time.LocalDate d = t.toLocalDate();
+        if (!t.toLocalTime().isBefore(LocalTime.of(9, 15)) || !tradingDay(d, days)) {
+            d = d.plusDays(1);
+            for (int i = 0; i < 30 && !tradingDay(d, days); i++) d = d.plusDays(1);
+        }
+        return d.atTime(9, 15).atZone(IST);
+    }
+
+    private static boolean tradingDay(java.time.LocalDate d, TradingDays days) {
+        return days != null ? days.isTradingDay(d) : d.getDayOfWeek() != DayOfWeek.SATURDAY && d.getDayOfWeek() != DayOfWeek.SUNDAY;
+    }
+
     String run(StrategyLiveConfig cfg) {
         Evaluation ev = evaluate(cfg.getStrategyId());
         return ev.result == null ? ev.problem : reconcile(cfg, ev.strategy, ev.params, ev.result, ev.today, ev.now);
