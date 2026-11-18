@@ -116,4 +116,36 @@ class StrategyStatusServiceTest {
         assertThat(StrategyStatusService.readable("TARGET_HIT")).isEqualTo("Target hit");
         assertThat(StrategyStatusService.readable("STOPPED_BY_USER")).isEqualTo("Closed by you");
     }
+
+    static Instant at(int h, int m) { return TODAY.atTime(h, m).atZone(IST).toInstant(); }
+
+    @Test
+    void aSignalBeforeTheStrategyWasSwitchedOnEndsItsDayInsteadOfWaiting() {
+        Duration delay = Duration.ofMinutes(5);
+        // #161 on 18 Nov: the 09:35 candle closed below yesterday's low at 09:40; switched on at 11:35; now 11:41.
+        assertThat(StrategyStatusService.missedSignals(List.of(at(9, 40)), 1, delay, at(11, 41), at(11, 35)))
+                .isEqualTo("Today’s signal came at 09:40, before this strategy was switched on at 11:35. "
+                        + "It takes one trade a day, so it trades again on the next trading day.");
+        // Switched on before the signal, but no order went out (kill switch, day-loss limit...).
+        assertThat(StrategyStatusService.missedSignals(List.of(at(9, 40)), 1, delay, at(11, 41), at(9, 0)))
+                .startsWith("Today’s signal came at 09:40, and no order went out for it then.");
+    }
+
+    @Test
+    void aFreshSignalOrATradeStillToComeKeepsItWaiting() {
+        Duration delay = Duration.ofMinutes(5);
+        assertThat(StrategyStatusService.missedSignals(List.of(), 1, delay, at(11, 41), at(11, 35))).isNull();          // no signal yet
+        assertThat(StrategyStatusService.missedSignals(List.of(at(11, 40)), 1, delay, at(11, 43), at(11, 35))).isNull(); // runner can still enter
+        assertThat(StrategyStatusService.missedSignals(List.of(at(9, 40)), 2, delay, at(11, 41), at(11, 35))).isNull();  // a 2nd trade may come
+        assertThat(StrategyStatusService.missedSignals(List.of(at(9, 40), at(10, 30)), 2, delay, at(11, 41), at(11, 35)))
+                .startsWith("Today’s 2 signals came at 09:40, 10:30, before this strategy was switched on at 11:35. It takes up to 2 trades a day");
+    }
+
+    @Test
+    void fixedStopModesTakeOneTradeADayTheOpeningRangeItsMaxTradesPerDay() {
+        assertThat(StrategyStatusService.maxTradesPerDay(p("referenceMode", "PREVIOUS_DAY", "maxTradesPerDay", "3"))).isEqualTo(1);
+        assertThat(StrategyStatusService.maxTradesPerDay(p("referenceMode", "CPR"))).isEqualTo(1);
+        assertThat(StrategyStatusService.maxTradesPerDay(p())).isEqualTo(2);
+        assertThat(StrategyStatusService.maxTradesPerDay(p("maxTradesPerDay", "1"))).isEqualTo(1);
+    }
 }

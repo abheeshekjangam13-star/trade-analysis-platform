@@ -54,7 +54,8 @@ public class StrategyStatusService {
      */
     public record Today(String index, Double spot, Double previousClose, List<Bar> bars, List<Status> strategies, List<IndexChart> charts) {}
 
-    record Engine(Instant at, Double spot, List<Trigger> triggers, String dayStatus, String dayReason, String problem) {}
+    /** {@code signals}: when today's engine trades were signalled (their 5-min entry candle's close), oldest first. */
+    record Engine(Instant at, Double spot, List<Trigger> triggers, String dayStatus, String dayReason, String problem, List<Instant> signals) {}
 
     private final StrategyLiveConfigRepository configs;
     private final LivePositionRepository positions;
@@ -62,12 +63,15 @@ public class StrategyStatusService {
     private final MarketDataClient marketData;
     private final NiftyOpeningBreakoutEngine engine;
     private final Clock clock;
+    private final Duration maxEntryDelay;
     private final Map<Long, Engine> cache = new ConcurrentHashMap<>();
 
     public StrategyStatusService(StrategyLiveConfigRepository configs, LivePositionRepository positions, StrategyService strategies,
-                                 MarketDataClient marketData, NiftyOpeningBreakoutEngine engine, Clock clock) {
+                                 MarketDataClient marketData, NiftyOpeningBreakoutEngine engine, Clock clock,
+                                 @org.springframework.beans.factory.annotation.Value("${trading.runner.max-entry-delay-minutes:5}") long maxEntryDelayMinutes) {
         this.configs = configs; this.positions = positions; this.strategies = strategies;
         this.marketData = marketData; this.engine = engine; this.clock = clock;
+        this.maxEntryDelay = Duration.ofMinutes(maxEntryDelayMinutes);   // the runner's: older signals are never entered
     }
 
     /** Today's 5-minute candles (cached for a minute) of Nifty 50 and each other index the user trades, and their PAPER/LIVE strategies. */
@@ -89,7 +93,7 @@ public class StrategyStatusService {
         try {
             var hit = barsCache.get(index);
             if (hit == null || !fresh(hit.at(), now)) {
-                PriceSeries five = marketData.getRange(index, Interval.MINUTE_5, today.minusDays(5).atStartOfDay(IST).toInstant(), now);
+                PriceSeries five = series(index, Interval.MINUTE_5, today.minusDays(7).atStartOfDay(IST).toInstant(), now);
                 List<Candle> done = five.candles().stream().filter(c -> c.timestamp().plus(Duration.ofMinutes(5)).compareTo(now) <= 0)
                         .sorted(Comparator.comparing(Candle::timestamp)).toList();
                 Double pc = done.stream().filter(c -> c.timestamp().atZone(IST).toLocalDate().isBefore(today))
@@ -119,6 +123,27 @@ public class StrategyStatusService {
     }
 
     private record Chart(Instant at, Double previousClose, List<Bar> bars) {}
+
+    /**
+     * Candles of one index, shared by every strategy (and the chart) on that index for as long as {@link #fresh} allows:
+     * the page used to fetch the same Nifty / Bank Nifty candles once per strategy, ~40 calls in a row on each load.
+     */
+    private record Series(Instant at, PriceSeries data) {}
+    private final Map<String, Series> seriesCache = new ConcurrentHashMap<>();
+
+    private PriceSeries series(String index, Interval interval, Instant from, Instant now) {
+        String key = index + "|" + interval + "|" + from;
+        Series hit = seriesCache.get(key);
+        if (hit != null && fresh(hit.at(), now)) return hit.data();
+        synchronized (key.intern()) {   // two strategies (or users) asking at once fetch it once
+            hit = seriesCache.get(key);
+            if (hit != null && fresh(hit.at(), now)) return hit.data();
+            PriceSeries data = marketData.getRange(index, interval, from, now);
+            seriesCache.put(key, new Series(now, data));
+            seriesCache.entrySet().removeIf(e -> !fresh(e.getValue().at(), now));   // yesterday's keys don't pile up
+            return data;
+        }
+    }
     private final Map<String, Chart> barsCache = new ConcurrentHashMap<>();
 
     /** The user's strategies set to PAPER or LIVE, live ones first. */
@@ -132,13 +157,13 @@ public class StrategyStatusService {
             Strategy s;
             try { s = strategies.load(cfg.getStrategyId()); } catch (RuntimeException e) { continue; }   // deleted
             out.add(status(s, cfg.getMode(), todays.stream()
-                    .filter(p -> p.getStrategyId().equals(s.getId()) && p.getMode() == cfg.getMode()).toList(), now));
+                    .filter(p -> p.getStrategyId().equals(s.getId()) && p.getMode() == cfg.getMode()).toList(), now, cfg.getUpdatedAt()));
         }
         out.sort(Comparator.comparing((Status x) -> x.mode() != TradingMode.LIVE).thenComparing(Status::name));
         return out;
     }
 
-    Status status(Strategy s, TradingMode mode, List<LivePosition> mine, Instant now) {
+    Status status(Strategy s, TradingMode mode, List<LivePosition> mine, Instant now, Instant switchedOnAt) {
         Params p = new Params(new HashMap<String, Object>(s.getParameters() == null ? Map.of() : s.getParameters()));
         LocalTime from = time(p, "entryFrom", LocalTime.of(9, 20)), until = time(p, "entryUntil", LocalTime.of(14, 0));
         String u = Underlying.of(p.stringOr("underlying", "")).indexSymbol;
@@ -162,6 +187,11 @@ public class StrategyStatusService {
         }
         if (e.problem() != null)
             return new Status(s.getId(), s.getName(), mode, u, State.PROBLEM, e.problem(), e.spot(), List.of(), null, null, from, until);
+        // The engine already traded today's signal(s) but this user has no position: the signal came before the
+        // strategy was switched on (the runner never enters an old signal), so the day is over for it.
+        String missed = missedSignals(e.signals(), maxTradesPerDay(p), maxEntryDelay, now, switchedOnAt);
+        if (missed != null)
+            return new Status(s.getId(), s.getName(), mode, u, State.NO_TRADE_TODAY, missed, e.spot(), List.of(), null, null, from, until);
         LocalTime t = now.atZone(IST).toLocalTime();
         boolean windowOpen = t.isBefore(until);
         String reason = e.dayReason();
@@ -184,23 +214,53 @@ public class StrategyStatusService {
             LocalDate today = now.atZone(IST).toLocalDate();
             NiftyOpeningBreakoutEngine.validateParams(p);
             Underlying u = Underlying.of(p.stringOr("underlying", ""));
-            PriceSeries five = marketData.getRange(u.indexSymbol, Interval.MINUTE_5,
+            PriceSeries five = series(u.indexSymbol, Interval.MINUTE_5,
                     today.minusDays(Math.max(7, NiftyOpeningBreakoutEngine.warmupDays(p))).atStartOfDay(IST).toInstant(), now);
-            PriceSeries one = marketData.getRange(u.indexSymbol, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
+            PriceSeries one = series(u.indexSymbol, Interval.MINUTE_1, today.atStartOfDay(IST).toInstant(), now);
             NiftyOpeningBreakoutEngine.BreakoutResult r = engine.runLive(five, one, p, s.getId(), now, today);
             var day = r.days().stream().filter(d -> today.equals(d.date())).findFirst().orElse(null);
             List<Candle> bars = five.candles().stream().filter(c -> c.timestamp().plus(Duration.ofMinutes(5)).compareTo(now) <= 0)
                     .sorted(Comparator.comparing(Candle::timestamp)).toList();
             Double spot = bars.isEmpty() ? null : bars.get(bars.size() - 1).close().doubleValue();
-            fresh = new Engine(now, spot, triggers(p, bars, today, spot), day == null ? null : day.status(), day == null ? null : day.reason(), null);
+            List<Instant> signals = java.util.stream.Stream.concat(r.tradeLogs().stream(), r.openTrades().stream())
+                    .filter(tl -> today.equals(tl.getTradeDate()) && tl.getEntryTimestamp() != null)
+                    .map(tl -> tl.getEntryTimestamp().plus(Duration.ofMinutes(5))).distinct().sorted().toList();
+            fresh = new Engine(now, spot, triggers(p, bars, today, spot), day == null ? null : day.status(), day == null ? null : day.reason(), null, signals);
         } catch (IllegalArgumentException ex) {
-            fresh = new Engine(now, null, List.of(), null, null, "Invalid parameters: " + ex.getMessage());
+            fresh = new Engine(now, null, List.of(), null, null, "Invalid parameters: " + ex.getMessage(), List.of());
         } catch (RuntimeException ex) {
             log.warn("STATUS_FAILED strategy={}: {}", s.getId(), ex.getMessage());
-            fresh = new Engine(now, null, List.of(), null, null, "Market data unavailable right now");
+            fresh = new Engine(now, null, List.of(), null, null, "Market data unavailable right now", List.of());
         }
         cache.put(s.getId(), fresh);
         return fresh;
+    }
+
+    private static String hhmm(Instant i) {
+        java.time.LocalTime t = i.atZone(IST).toLocalTime();
+        return String.format("%02d:%02d", t.getHour(), t.getMinute());
+    }
+
+    /** Trades a day: one for the fixed-stop modes (previous day, CPR, gap fill, EMA cross), maxTradesPerDay (2) for the opening range. */
+    static int maxTradesPerDay(Params p) {
+        return p.stringOr("referenceMode", "").isBlank() ? Math.max(1, p.intOr("maxTradesPerDay", 2)) : 1;
+    }
+
+    /**
+     * Why a strategy with no position today won't trade any more today, or null: the engine has already used all of
+     * today's trades on signals too old for the runner to enter (it enters only within {@code maxEntryDelay} of a
+     * signal): usually they came before the strategy was switched on ({@code switchedOnAt}, its mode's last change).
+     */
+    static String missedSignals(List<Instant> signals, int maxTrades, Duration maxEntryDelay, Instant now, Instant switchedOnAt) {
+        if (signals == null || signals.isEmpty() || signals.size() < maxTrades) return null;
+        if (!now.isAfter(signals.get(signals.size() - 1).plus(maxEntryDelay))) return null;   // the runner can still take it
+        String at = signals.stream().map(StrategyStatusService::hhmm).collect(java.util.stream.Collectors.joining(", "));
+        return (signals.size() == 1 ? "Today’s signal came at " + at : "Today’s " + signals.size() + " signals came at " + at)
+                + (switchedOnAt != null && switchedOnAt.isAfter(signals.get(signals.size() - 1))
+                        ? ", before this strategy was switched on at " + hhmm(switchedOnAt) + ". "
+                        : ", and no order went out for it then. ")
+                + (maxTrades == 1 ? "It takes one trade a day" : "It takes up to " + maxTrades + " trades a day")
+                + ", so it trades again on the next trading day.";
     }
 
     /**

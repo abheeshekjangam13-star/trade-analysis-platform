@@ -30,9 +30,9 @@ public enum Plan {
             "Everything in Premium",
             "Create up to 20 strategies",
             "Up to 12 strategies trading live, up to 4 lots per order")),
-    PREMIUM_PRO(7999, 15998, 50, "PREMIUM", 30, 730, true, true, true, -1, 20, 8, List.of(
+    PREMIUM_PRO(7999, 15998, 50, "PREMIUM", 50, 730, true, true, true, -1, 20, 8, List.of(
             "Everything in Premium Plus",
-            "Create up to 30 strategies",
+            "Create up to 50 strategies",
             "Up to 20 strategies trading live, up to 8 lots per order"));
 
     private final int pricePerMonth;

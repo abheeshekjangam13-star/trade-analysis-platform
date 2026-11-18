@@ -48,6 +48,7 @@ class SignupValidationTest {
         assertThat(Plan.PREMIUM_PLUS.maxLiveStrategies()).isEqualTo(12);
         assertThat(Plan.PREMIUM_PLUS.maxLiveLots()).isEqualTo(4);
         assertThat(Plan.PREMIUM_PRO.pricePerMonth()).isEqualTo(7999);
+        assertThat(Plan.PREMIUM_PRO.maxStrategies()).isEqualTo(50);
         assertThat(Plan.PREMIUM_PRO.maxLiveStrategies()).isEqualTo(20);
         assertThat(Plan.PREMIUM_PRO.maxLiveLots()).isEqualTo(8);
         assertThat(Plan.GOLD.maxLiveStrategies()).isZero();
