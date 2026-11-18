@@ -465,6 +465,7 @@ public class StrategyDescriptionParser {
             case "GAP_DOWN" -> n.append(" Gap-Down");
             case "ANY_GAP" -> n.append(" Gap-Day");
             case "FLAT" -> n.append(" Flat-Open");
+            case "NOT_GAP_DOWN" -> n.append(" No-Gap-Down");
             default -> { }
         }
         if ("PREVIOUS_DAY".equals(p.get("referenceMode"))) {

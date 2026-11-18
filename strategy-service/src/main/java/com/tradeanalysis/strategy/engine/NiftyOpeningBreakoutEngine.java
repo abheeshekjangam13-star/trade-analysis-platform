@@ -36,7 +36,8 @@ import java.util.stream.Collectors;
  *
  * Parameters (defaults reproduce the original rules):
  *   lots (2), directions BOTH|CE|PE (BOTH), maxTradesPerDay (2), trailMinutes (1),
- *   targetPoints (0 = none), gapFilter NONE|GAP_UP|GAP_DOWN|ANY_GAP|FLAT (NONE), gap threshold as gapPct (0.2) in %
+ *   targetPoints (0 = none), gapFilter NONE|GAP_UP|GAP_DOWN|ANY_GAP|FLAT|NOT_GAP_DOWN (NONE; NOT_GAP_DOWN skips
+ *   days that open the threshold or more below the previous close, flat and gap-up days trade), gap threshold as gapPct (0.2) in %
  *   of the previous close, or gapPoints in NIFTY points (set one, not both),
  *   costPerTrade in ₹ per round trip for the whole quantity (0),
  *   entryFrom HH:mm IST (unset = no limit): only 5-min candles starting at or after this time may open a
@@ -79,7 +80,7 @@ public class NiftyOpeningBreakoutEngine {
     private static final LocalTime REF_CANDLE_TIME  = LocalTime.of(9, 15);
     private static final LocalTime EOD_EXIT_TIME    = LocalTime.of(15, 20);
 
-    public enum GapFilter { NONE, GAP_UP, GAP_DOWN, ANY_GAP, FLAT }
+    public enum GapFilter { NONE, GAP_UP, GAP_DOWN, ANY_GAP, FLAT, NOT_GAP_DOWN }
 
     /** openTrades: trades still open at {@code now} (live mode only; a backtest squares them off at the end of data). */
     /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
@@ -230,6 +231,7 @@ public class NiftyOpeningBreakoutEngine {
                 case GAP_DOWN -> g <= -t;
                 case ANY_GAP  -> Math.abs(g) >= t;
                 case FLAT     -> Math.abs(g) < t;
+                case NOT_GAP_DOWN -> g > -t;
                 case NONE     -> true;
             };
             return ok ? null : String.format("Gap %s does not meet %s %s", gap.show(g), gapFilter, gap.show(t));

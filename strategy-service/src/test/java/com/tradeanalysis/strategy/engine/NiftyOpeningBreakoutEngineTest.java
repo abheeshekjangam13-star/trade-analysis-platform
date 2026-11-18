@@ -250,6 +250,31 @@ class NiftyOpeningBreakoutEngineTest {
     }
 
     @Test
+    void notGapDownTradesFlatAndGapUpDaysButSkipsGapDownDays() {
+        // As #139 on 18 Nov 2026: CE breakouts after a gap-down open were its biggest losers.
+        LocalDate d1 = LocalDate.of(2026, 10, 26), d2 = LocalDate.of(2026, 10, 27), d3 = LocalDate.of(2026, 10, 28), d4 = LocalDate.of(2026, 10, 29);
+        List<Candle> candles = new ArrayList<>();
+        candles.add(barOn(d1, 9, 15, 23900, 24000, 23880, 23950));
+        candles.add(barOn(d1, 15, 25, 24000, 24010, 23990, 24000));   // close 24000
+        // d2: opens 23960 = −0.17% → skipped (at least 0.1% down)
+        candles.add(barOn(d2, 9, 15, 23960, 23990, 23950, 23980));
+        candles.add(barOn(d2, 9, 20, 23980, 24050, 23975, 24040));
+        candles.add(barOn(d2, 15, 25, 24000, 24010, 23990, 24000));   // close 24000
+        // d3: opens 23990 = −0.04% (flat) → trades
+        candles.add(barOn(d3, 9, 15, 23990, 24020, 23980, 24010));
+        candles.add(barOn(d3, 9, 20, 24010, 24070, 24005, 24060));
+        candles.add(barOn(d3, 15, 25, 24100, 24110, 24090, 24100));   // close 24100
+        // d4: opens 24200 = +0.41% (gap-up) → trades
+        candles.add(barOn(d4, 9, 15, 24200, 24230, 24190, 24220));
+        candles.add(barOn(d4, 9, 20, 24220, 24280, 24215, 24270));
+
+        Instant now = d4.atTime(15, 30).atZone(IST).toInstant();
+        var r = run(params("directions", "CE", "gapFilter", "NOT_GAP_DOWN", "gapPct", "0.1"), candles, List.of(), now, d2);
+        assertThat(r.tradeLogs()).extracting(NiftyTradeLog::getTradeDate).containsExactly(d3, d4);
+        assertThat(r.days()).anySatisfy(d -> { assertThat(d.date()).isEqualTo(d2); assertThat(d.reason()).contains("NOT_GAP_DOWN"); });
+    }
+
+    @Test
     void gapFilterSkipsDayWithoutPreviousClose() {
         List<Candle> candles = List.of(REF, bar(9, 20, 24060, 24130, 24060, 24120));
         assertThat(run(params("gapFilter", "ANY_GAP"), candles, List.of(), closeOf(9, 20), null).tradeLogs()).isEmpty();
