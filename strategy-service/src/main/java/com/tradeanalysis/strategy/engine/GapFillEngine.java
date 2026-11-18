@@ -46,7 +46,7 @@ public class GapFillEngine {
     }
 
     /** Throws IllegalArgumentException with a readable message when the parameters don't fit this engine. */
-    public static void validateParams(Params params) { Settings.from(params); }
+    public static void validateParams(Params params) { Settings.from(params); FixedStopTrade.Protect.from(params); }
 
     public NiftyOpeningBreakoutEngine.BreakoutResult run(PriceSeries series, PriceSeries minutes, Params params,
                                                          Long strategyId, Instant now, LocalDate tradeFrom) {
@@ -62,6 +62,7 @@ public class GapFillEngine {
     private NiftyOpeningBreakoutEngine.BreakoutResult run(PriceSeries series, PriceSeries minutes, Params params, Long strategyId,
                                                           Instant now, LocalDate tradeFrom, boolean closeAtEnd) {
         Settings cfg = Settings.from(params);
+        FixedStopTrade.Protect protect = FixedStopTrade.Protect.from(params);
         Map<LocalDate, List<Candle>> byDay = series.candles().stream()
                 .collect(Collectors.groupingBy(c -> c.timestamp().atZone(IST).toLocalDate(), TreeMap::new, Collectors.toList()));
         NavigableMap<Instant, Candle> oneMin = new TreeMap<>();
@@ -137,13 +138,14 @@ public class GapFillEngine {
             signals.add(new Signal(entry.timestamp(), Signal.SignalType.BUY, BigDecimal.valueOf(entrySpot), String.format(
                     "ENTRY %s | Strike %d | Gap %.2f%% | Open %.2f | PrevClose %.2f | Target %.2f | Stop %.2f", side, strike, gap, open, pc, target, stop)));
 
-            Exit exit = exitFor(call, stop, target, entry, date, oneMin, now, closeAtEnd);
+            FixedStopTrade.Exit exit = FixedStopTrade.exitFor(call, stop, entrySpot, target, true, protect, entry, date, oneMin, now,
+                    closeAtEnd, trade::trackStop);
             if (exit == null) {   // live: still open
                 openTrades.add(trade);
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "TRADED", null, 1));
                 continue;
             }
-            trade.close(exit.bar().timestamp(), exit.price(), exit.reason(), stop);
+            trade.close(exit.bar().timestamp(), exit.price(), exit.reason(), exit.stop());
             logs.add(trade);
             signals.add(new Signal(exit.bar().timestamp(), Signal.SignalType.SELL, BigDecimal.valueOf(exit.price()),
                     String.format("EXIT %s %d | %s | EntrySpot %.2f | ExitSpot %.2f", side, strike, exit.reason(), entrySpot, exit.price())));
@@ -152,30 +154,7 @@ public class GapFillEngine {
         return new NiftyOpeningBreakoutEngine.BreakoutResult(signals, logs, days, openTrades);
     }
 
-    /** Stop first, then target, on 1-min candles after the entry candle; square-off at 15:20 (or the last bar). */
-    private Exit exitFor(boolean call, double stop, double target, Candle entry, LocalDate date,
-                         NavigableMap<Instant, Candle> oneMin, Instant now, boolean closeAtEnd) {
-        Instant from = entry.timestamp().plus(Duration.ofMinutes(5));
-        Instant to = date.atTime(EOD_EXIT_TIME).atZone(IST).toInstant();
-        Candle last = null;
-        for (Candle bar : oneMin.subMap(from, true, to, true).values()) {
-            if (bar.timestamp().plus(Duration.ofMinutes(1)).isAfter(now)) break;   // still forming
-            if (!bar.timestamp().isBefore(to)) return new Exit(bar, bar.open().doubleValue(), "EOD_SQUAREOFF");
-            last = bar;
-            double o = bar.open().doubleValue();
-            if (call ? bar.low().doubleValue() <= stop : bar.high().doubleValue() >= stop)
-                return new Exit(bar, call ? Math.min(o, stop) : Math.max(o, stop), "SL_HIT");
-            if (call ? bar.high().doubleValue() >= target : bar.low().doubleValue() <= target)
-                return new Exit(bar, call ? Math.max(o, target) : Math.min(o, target), "TARGET_HIT");
-        }
-        if (!closeAtEnd && now.isBefore(to)) return null;
-        if (last == null) return new Exit(entry, entry.close().doubleValue(), "EOD_SQUAREOFF");
-        return new Exit(last, last.close().doubleValue(), "EOD_SQUAREOFF");
-    }
-
     private static LocalTime istTime(Candle c) { return c.timestamp().atZone(IST).toLocalTime(); }
-
-    private record Exit(Candle bar, double price, String reason) {}
 
     private record Settings(int lots, int lotSize, double minGap, double maxGap, double fillTarget, double maxStopPoints,
                             LocalTime entryUntil, Set<DayOfWeek> skipDays, double costPerTrade, Underlying underlying,

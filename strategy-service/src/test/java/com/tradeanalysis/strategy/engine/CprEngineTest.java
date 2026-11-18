@@ -93,4 +93,91 @@ class CprEngineTest {
         // Checked wherever the opening-breakout parameters are checked (saving, the description reader, the live runner).
         assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("maxCprWidthPct", "9"))).isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ── Stop protection (trailAfterPoints / breakevenOnTrail / trailMinutes), as on 18 Nov for #129 ──
+
+    /** PE below S1 at 23,990 (09:20 candle); stop the pivot 24,100 capped at 50 = 24,040. */
+    static List<Candle> peDay() {
+        List<Candle> five = yesterday(24100);
+        five.add(c(DAY, 9, 15, 24100, 24110, 24020, 24030));
+        five.add(c(DAY, 9, 20, 24030, 24035, 23985, 23990));
+        return five;
+    }
+
+    /** 60 points in favour, then back up through entry and on to the capped stop. */
+    static final List<Candle> RUN_UP_AND_BACK = List.of(
+            c(DAY, 9, 25, 23990, 23995, 23950, 23955),    // 40 in favour
+            c(DAY, 9, 26, 23955, 23960, 23930, 23940),    // 60 in favour
+            c(DAY, 9, 27, 23940, 24000, 23935, 23995),    // back above entry
+            c(DAY, 9, 28, 23995, 24045, 23990, 24040));   // up to the capped stop
+
+    @Test
+    void withoutProtectionTheStopStaysAtTheCap() {
+        NiftyTradeLog t = run(peDay(), RUN_UP_AND_BACK, params("maxStopPoints", "50", "targetPoints", "100")).tradeLogs().get(0);
+        assertThat(t.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(24040.0);
+        assertThat(t.getFinalStopLoss()).isEqualTo(24040.0);
+    }
+
+    @Test
+    void breakevenAfterFortyPointsExitsAtEntryInsteadOfTheFullStop() {
+        NiftyTradeLog t = run(peDay(), RUN_UP_AND_BACK, params("maxStopPoints", "50", "targetPoints", "100",
+                "trailAfterPoints", "40", "breakevenOnTrail", "true", "trailMinutes", "0")).tradeLogs().get(0);
+        assertThat(t.getInitialStopLoss()).isEqualTo(24040.0);
+        assertThat(t.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(23990.0);
+        assertThat(t.getFinalStopLoss()).isEqualTo(23990.0);
+
+        // A lock of 10 points: the stop goes to 23,980, so the trade still closes 10 points up.
+        NiftyTradeLog locked = run(peDay(), RUN_UP_AND_BACK, params("maxStopPoints", "50", "targetPoints", "100",
+                "trailAfterPoints", "40", "breakevenOnTrail", "true", "breakevenLockPoints", "10", "trailMinutes", "0")).tradeLogs().get(0);
+        assertThat(locked.getExitSpotPrice()).isEqualTo(23980.0);
+    }
+
+    @Test
+    void notReachingTheTriggerLeavesTheStopWhereItWas() {
+        NiftyTradeLog t = run(peDay(), RUN_UP_AND_BACK, params("maxStopPoints", "50", "targetPoints", "100",
+                "trailAfterPoints", "70", "breakevenOnTrail", "true")).tradeLogs().get(0);
+        assertThat(t.getExitSpotPrice()).isEqualTo(24040.0);
+    }
+
+    @Test
+    void trailingFollowsTheHighOfEachCompletedFiveMinuteBlock() {
+        List<Candle> one = List.of(
+                c(DAY, 9, 25, 23990, 23995, 23950, 23955),   // 40 in favour: trailing on (after 30)
+                c(DAY, 9, 26, 23955, 23960, 23930, 23940),
+                c(DAY, 9, 27, 23940, 24000, 23935, 23995),
+                c(DAY, 9, 28, 23995, 23998, 23970, 23975),
+                c(DAY, 9, 29, 23975, 23980, 23960, 23965),   // block 09:25-09:29 high 24,000: stop 24,040 → 24,000
+                c(DAY, 9, 30, 23965, 24005, 23960, 24002));  // hits 24,000
+        NiftyTradeLog t = run(peDay(), one, params("maxStopPoints", "50", "targetPoints", "100",
+                "trailAfterPoints", "30")).tradeLogs().get(0);
+        assertThat(t.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(24000.0);
+        assertThat(t.getFinalStopLoss()).isEqualTo(24000.0);
+    }
+
+    @Test
+    void anOpenLiveTradeReportsItsMovedStop() {
+        Instant now = LocalDateTime.of(DAY, LocalTime.of(9, 27)).atZone(IST).toInstant();   // 09:25 and 09:26 closed
+        var r = new CprEngine().runLive(new PriceSeries("NIFTY 50", Interval.MINUTE_5, peDay()),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, RUN_UP_AND_BACK),
+                params("maxStopPoints", "50", "targetPoints", "100", "trailAfterPoints", "40", "breakevenOnTrail", "true"), 3L, now, DAY);
+        assertThat(r.tradeLogs()).isEmpty();
+        assertThat(r.openTrades().get(0).getFinalStopLoss()).isEqualTo(23990.0);
+    }
+
+    @Test
+    void protectionSettingsAreChecked() {
+        assertThatThrownBy(() -> CprEngine.validateParams(params("trailAfterPoints", "40", "breakevenOnTrail", "true", "breakevenLockPoints", "40")))
+                .hasMessageContaining("breakevenLockPoints");
+        assertThatThrownBy(() -> CprEngine.validateParams(params("trailAfterPoints", "40", "trailMinutes", "0")))
+                .hasMessageContaining("breakevenOnTrail");
+        assertThatThrownBy(() -> CprEngine.validateParams(params("trailAfterR", "1")))
+                .hasMessageContaining("trailAfterPoints");
+        assertThatThrownBy(() -> PreviousRangeEngine.validateParams(new Params(Map.of("referenceMode", "PREVIOUS_DAY", "trailAfterPoints", "-5"))))
+                .hasMessageContaining("negative");
+        CprEngine.validateParams(params("trailAfterPoints", "40", "breakevenOnTrail", "true", "trailMinutes", "0"));
+        CprEngine.validateParams(params("trailMinutes", "0"));   // ignored while trailAfterPoints is off
+    }
 }

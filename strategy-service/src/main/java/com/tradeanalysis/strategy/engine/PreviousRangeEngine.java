@@ -55,6 +55,7 @@ public class PreviousRangeEngine {
     /** Throws IllegalArgumentException with a readable message when the parameters don't fit this engine. */
     public static void validateParams(Params params) {
         Settings.from(params);
+        FixedStopTrade.Protect.from(params);
     }
 
     public NiftyOpeningBreakoutEngine.BreakoutResult run(PriceSeries series, PriceSeries minutes, Params params,
@@ -71,6 +72,7 @@ public class PreviousRangeEngine {
     private NiftyOpeningBreakoutEngine.BreakoutResult run(PriceSeries series, PriceSeries minutes, Params params,
                                                           Long strategyId, Instant now, LocalDate tradeFrom, boolean closeAtEnd) {
         Settings cfg = Settings.from(params);
+        FixedStopTrade.Protect protect = FixedStopTrade.Protect.from(params);
 
         Map<LocalDate, List<Candle>> byDay = series.candles().stream()
                 .collect(Collectors.groupingBy(c -> c.timestamp().atZone(IST).toLocalDate(), TreeMap::new, Collectors.toList()));
@@ -170,50 +172,21 @@ public class PreviousRangeEngine {
                     BigDecimal.valueOf(entrySpot), String.format("ENTRY %s | Strike %d | YesterdayHigh %.2f | YesterdayLow %.2f | Stop %.2f",
                             side, strike, pHigh, pLow, stop)));
 
-            Exit exit = exitFor(call, stop, entrySpot, cfg.targetPoints(), entryCandle, date, oneMin, now, closeAtEnd);
+            FixedStopTrade.Exit exit = FixedStopTrade.exitFor(call, stop, entrySpot,
+                    call ? entrySpot + cfg.targetPoints() : entrySpot - cfg.targetPoints(), cfg.targetPoints() > 0, protect,
+                    entryCandle, date, oneMin, now, closeAtEnd, trade::trackStop);
             if (exit == null) {   // live: still open now
                 openTrades.add(trade);
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "TRADED", null, 1));
                 continue;
             }
-            trade.close(exit.bar().timestamp(), exit.price(), exit.reason(), stop);
+            trade.close(exit.bar().timestamp(), exit.price(), exit.reason(), exit.stop());
             logs.add(trade);
             signals.add(new Signal(exit.bar().timestamp(), Signal.SignalType.SELL, BigDecimal.valueOf(exit.price()),
                     String.format("EXIT %s %d | %s | EntrySpot %.2f | ExitSpot %.2f", side, strike, exit.reason(), entrySpot, exit.price())));
             days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "TRADED", null, 1));
         }
         return new NiftyOpeningBreakoutEngine.BreakoutResult(signals, logs, days, openTrades);
-    }
-
-    /** Walks the 1-min candles after the entry candle: stop first, then target, else square-off at 15:20 (or the last bar). */
-    private Exit exitFor(boolean call, double stop, double entryPx, double targetPoints, Candle entry, LocalDate date,
-                         NavigableMap<Instant, Candle> oneMin, Instant now) {
-        return exitFor(call, stop, entryPx, targetPoints, entry, date, oneMin, now, true);
-    }
-
-    /** As above; with {@code closeAtEnd} false, a trade with no exit yet before 15:20 returns null (still open). */
-    private Exit exitFor(boolean call, double stop, double entryPx, double targetPoints, Candle entry, LocalDate date,
-                         NavigableMap<Instant, Candle> oneMin, Instant now, boolean closeAtEnd) {
-        Instant from = entry.timestamp().plus(java.time.Duration.ofMinutes(5));
-        Instant to = date.atTime(EOD_EXIT_TIME).atZone(IST).toInstant();
-        double target = call ? entryPx + targetPoints : entryPx - targetPoints;
-        Candle last = null;
-        for (Candle bar : oneMin.subMap(from, true, to, true).values()) {
-            if (bar.timestamp().plus(java.time.Duration.ofMinutes(1)).isAfter(now)) break;   // still forming
-            if (!bar.timestamp().isBefore(to)) return new Exit(bar, bar.open().doubleValue(), "EOD_SQUAREOFF");
-            last = bar;
-            double open = bar.open().doubleValue();
-            if (call ? bar.low().doubleValue() <= stop : bar.high().doubleValue() >= stop)
-                return new Exit(bar, call ? Math.min(open, stop) : Math.max(open, stop), "SL_HIT");
-            if (targetPoints > 0 && (call ? bar.high().doubleValue() >= target : bar.low().doubleValue() <= target))
-                return new Exit(bar, call ? Math.max(open, target) : Math.min(open, target), "TARGET_HIT");
-        }
-        if (!closeAtEnd && now.isBefore(to)) return null;   // live: nothing hit yet, the trade is still open
-        // The data ends before 15:20: square off at the last bar we have (or the entry candle if there is none).
-        if (last == null) {
-            return new Exit(entry, entry.close().doubleValue(), "EOD_SQUAREOFF");
-        }
-        return new Exit(last, last.close().doubleValue(), "EOD_SQUAREOFF");
     }
 
     private static LocalTime istTime(Candle c) {
@@ -236,8 +209,6 @@ public class PreviousRangeEngine {
     public static int sessionsNeeded(Params params) {
         return Math.max(Math.max(0, params.intOr("narrowRangeDays", 0)), Math.max(0, params.intOr("excludeNarrowRangeDays", 0)));
     }
-
-    private record Exit(Candle bar, double price, String reason) {}
 
     private record Settings(int lots, int lotSize, double targetPoints, LocalTime entryUntil, Set<DayOfWeek> skipDays,
                             double costPerTrade, Underlying underlying, boolean allowCe, boolean allowPe, double maxStopPoints,

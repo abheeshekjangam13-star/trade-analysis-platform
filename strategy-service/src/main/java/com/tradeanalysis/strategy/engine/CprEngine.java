@@ -132,13 +132,14 @@ public class CprEngine {
             signals.add(new Signal(entry.timestamp(), Signal.SignalType.BUY, BigDecimal.valueOf(entrySpot), String.format(
                     "ENTRY %s | Strike %d | Pivot %.2f | R1 %.2f | S1 %.2f | CPR %.3f%% | Stop %.2f", side, strike, pivot, r1, s1, widthPct, stop)));
 
-            Exit exit = exitFor(call, stop, entrySpot, b.targetPoints(), entry, date, oneMin, now, closeAtEnd);
+            Exit exit = exitFor(call, stop, entrySpot, call ? entrySpot + b.targetPoints() : entrySpot - b.targetPoints(),
+                    b.targetPoints() > 0, b.protect(), entry, date, oneMin, now, closeAtEnd, trade::trackStop);
             if (exit == null) {   // live: still open
                 openTrades.add(trade);
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "TRADED", null, 1));
                 continue;
             }
-            trade.close(exit.bar().timestamp(), exit.price(), exit.reason(), stop);
+            trade.close(exit.bar().timestamp(), exit.price(), exit.reason(), exit.stop());
             logs.add(trade);
             signals.add(new Signal(exit.bar().timestamp(), Signal.SignalType.SELL, BigDecimal.valueOf(exit.price()),
                     String.format("EXIT %s %d | %s | EntrySpot %.2f | ExitSpot %.2f", side, strike, exit.reason(), entrySpot, exit.price())));
