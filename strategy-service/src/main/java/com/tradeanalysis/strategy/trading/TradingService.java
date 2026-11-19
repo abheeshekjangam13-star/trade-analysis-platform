@@ -28,18 +28,41 @@ public class TradingService {
     private final com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo;
     private final LiveOrderBilling billing;
     private final com.tradeanalysis.strategy.compliance.Compliance compliance;
+    private final com.tradeanalysis.strategy.compliance.ComplianceAudit audit;
+    private final org.springframework.transaction.support.TransactionTemplate tx;
+
+    /** Audit action for every strategy mode change, whichever way it was made. */
+    public static final String MODE_ACTION = "STRATEGY_MODE";
 
     public TradingService(StrategyLiveConfigRepository configs, TradingControlRepository controls, TradeOrderRepository orders,
                           LivePositionRepository positions, OrderService orderService, StrategyService strategies,
                           AppUserRepository users, ObjectProvider<LiveStrategyRunner> runner, BrokerAccounts accounts,
                           com.tradeanalysis.strategy.repository.StrategyRepository strategyRepo, LiveOrderBilling billing,
-                          com.tradeanalysis.strategy.compliance.Compliance compliance) {
+                          com.tradeanalysis.strategy.compliance.Compliance compliance,
+                          com.tradeanalysis.strategy.compliance.ComplianceAudit audit,
+                          org.springframework.transaction.PlatformTransactionManager txManager) {
+        this.audit = audit; this.tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
         this.configs = configs; this.controls = controls; this.orders = orders; this.positions = positions;
         this.orderService = orderService; this.strategies = strategies; this.users = users; this.runner = runner;
         this.accounts = accounts; this.strategyRepo = strategyRepo; this.billing = billing; this.compliance = compliance;
     }
 
     public record StrategyMode(Long strategyId, String name, String type, String direction, TradingMode mode, String product) {}
+
+    /**
+     * Saves one strategy mode change together with its audit record, in one transaction: if the record can't be written
+     * the change is not kept either, so no mode (above all LIVE) is ever switched without a trace. The record names the
+     * strategy, mode and product, whose setting it is when someone else changed it (kill switch), and {@code via}.
+     */
+    private void saveMode(StrategyLiveConfig c, TradingMode mode, String product, String via, boolean nameUser) {
+        Long actor = CurrentUser.id().orElse(null);
+        tx.executeWithoutResult(status -> {
+            c.set(mode, product);
+            configs.save(c);
+            audit.recordOrFail(actor, MODE_ACTION, "strategy " + c.getStrategyId() + " " + c.getMode() + " " + c.getProduct()
+                    + (nameUser ? " user " + c.getUserId() : "") + (via == null ? "" : " (" + via + ")"));
+        });
+    }
 
     /** The caller's own mode for every strategy they can see. */
     public List<StrategyMode> strategyModes() {
@@ -57,6 +80,11 @@ public class TradingService {
 
     /** Sets the caller's own mode: OFF/PAPER for GOLD+ users; LIVE needs PREMIUM + their own Kite or Angel One account (or ADMIN) and live trading enabled. */
     public StrategyMode setMode(Long strategyId, TradingMode mode, String product) {
+        return setMode(strategyId, mode, product, null);
+    }
+
+    /** {@link #setMode(Long, TradingMode, String)}, recording {@code via} (why, e.g. "portfolio 12") with the change. */
+    public StrategyMode setMode(Long strategyId, TradingMode mode, String product, String via) {
         Strategy s = strategies.get(strategyId);
         if (mode != TradingMode.OFF && CurrentUser.limitedPlan().map(p -> !p.paperTrading()).orElse(false))
             throw new TradingException(HttpStatus.FORBIDDEN, "Your plan is " + CurrentUser.limitedPlan().get()
@@ -74,8 +102,7 @@ public class TradingService {
                     + "across all your strategies together");
         Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
         StrategyLiveConfig c = configs.findByStrategyIdAndUserId(strategyId, me).orElseGet(() -> new StrategyLiveConfig(strategyId, me));
-        c.set(mode, product);
-        configs.save(c);
+        saveMode(c, mode, product, via, false);
         return strategyModes().stream().filter(m -> m.strategyId().equals(strategyId)).findFirst().orElseThrow();
     }
 
@@ -85,13 +112,14 @@ public class TradingService {
      */
     public record BulkResult(List<StrategyMode> changed, List<Map<String, Object>> skipped) {}
 
-    public BulkResult setModes(Collection<Long> strategyIds, TradingMode mode, String product) {
+    /** @param via why the strategies change together, recorded with each change (e.g. "portfolio 12") */
+    public BulkResult setModes(Collection<Long> strategyIds, TradingMode mode, String product, String via) {
         if (mode == null) throw new TradingException("Mode must be OFF, PAPER or LIVE");
         List<StrategyMode> changed = new ArrayList<>();
         List<Map<String, Object>> skipped = new ArrayList<>();
         for (Long id : new LinkedHashSet<>(strategyIds)) {
             try {
-                changed.add(setMode(id, mode, product));
+                changed.add(setMode(id, mode, product, via));
             } catch (TradingException e) {
                 // Plan, live-permission and day-loss refusals hold for every strategy: report them once.
                 String reason = String.valueOf(e.getReason());
@@ -168,8 +196,7 @@ public class TradingService {
         controls.save(c);
         int stopped = 0;
         for (StrategyLiveConfig cfg : configs.findByModeNot(TradingMode.OFF)) {
-            cfg.set(TradingMode.OFF, null);
-            configs.save(cfg);
+            saveMode(cfg, TradingMode.OFF, null, "kill switch", true);
             stopped++;
         }
         List<String> details = new ArrayList<>();
@@ -248,8 +275,7 @@ public class TradingService {
         int stopped = 0;
         for (StrategyLiveConfig cfg : configs.findByUserId(me)) {
             if (cfg.getMode() == TradingMode.OFF) continue;
-            cfg.set(TradingMode.OFF, null);
-            configs.save(cfg);
+            saveMode(cfg, TradingMode.OFF, null, "stop all", false);
             stopped++;
         }
         List<String> details = new ArrayList<>();

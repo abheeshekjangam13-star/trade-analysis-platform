@@ -13,7 +13,9 @@ import java.util.List;
 
 /**
  * The compliance audit trail (table compliance_audit): who changed a control, an Algo ID, live access, a LIVE switch,
- * two-factor or a PAN, and when. Rows are never updated or deleted. Recording never fails the action it records.
+ * two-factor or a PAN, and when. Rows are never updated or deleted. {@link #record} never fails the action it records;
+ * {@link #recordOrFail} does, for changes that must not happen unrecorded (strategy modes: written in the same
+ * transaction as the change, so neither is kept without the other).
  */
 @Service
 public class ComplianceAudit {
@@ -35,14 +37,19 @@ public class ComplianceAudit {
 
     public void record(Long userId, String action, String details) {
         try {
-            String username = userId == null ? null
-                    : jdbc.query("SELECT username FROM app_user WHERE id = ?", rs -> rs.next() ? rs.getString(1) : null, userId);
-            jdbc.update("INSERT INTO compliance_audit (created_at, user_id, username, action, details) VALUES (?, ?, ?, ?, ?)",
-                    Timestamp.from(clock.instant()), userId, username, cut(action, 64), cut(details, 2000));
-            log.info("COMPLIANCE_AUDIT user={} action={} {}", username, action, details);
+            recordOrFail(userId, action, details);
         } catch (RuntimeException e) {
             log.error("COMPLIANCE_AUDIT could not record {} {}: {}", action, details, e.getMessage());
         }
+    }
+
+    /** Records an action, throwing when it can't: call it inside the change's own transaction. */
+    public void recordOrFail(Long userId, String action, String details) {
+        String username = userId == null ? null
+                : jdbc.query("SELECT username FROM app_user WHERE id = ?", rs -> rs.next() ? rs.getString(1) : null, userId);
+        jdbc.update("INSERT INTO compliance_audit (created_at, user_id, username, action, details) VALUES (?, ?, ?, ?, ?)",
+                Timestamp.from(clock.instant()), userId, username, cut(action, 64), cut(details, 2000));
+        log.info("COMPLIANCE_AUDIT user={} action={} {}", username, action, details);
     }
 
     /** Entries from {@code from} (inclusive) to {@code to} (exclusive), newest first, at most 1000. */

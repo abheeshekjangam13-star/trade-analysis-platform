@@ -191,9 +191,7 @@ public class TradingController {
     @Operation(summary = "Set a strategy to OFF, PAPER or LIVE (LIVE: PREMIUM with your own Kite account or ADMIN, and the server switch)")
     public TradingService.StrategyMode setMode(@PathVariable Long id, @RequestBody ModeRequest r) {
         if (r.mode() == null) throw new TradingException("Missing mode");
-        TradingService.StrategyMode m = trading.setMode(id, r.mode(), r.product());
-        audit.record("STRATEGY_MODE", "strategy " + id + " " + m.mode() + " " + m.product());
-        return m;
+        return trading.setMode(id, r.mode(), r.product());   // recorded in the audit trail with the change (TradingService)
     }
 
     @PostMapping("/runner/run")

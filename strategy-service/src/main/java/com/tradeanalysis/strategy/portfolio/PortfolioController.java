@@ -29,7 +29,7 @@ public class PortfolioController {
     public com.tradeanalysis.strategy.trading.TradingService.BulkResult trading(@PathVariable Long id, @RequestBody TradingRequest body) {
         if (body == null || body.mode() == null)
             throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing required field: mode");
-        return trading.setModes(svc.get(id).getStrategyIds(), body.mode(), body.product());
+        return trading.setModes(svc.get(id).getStrategyIds(), body.mode(), body.product(), "portfolio " + id);
     }
 
     @PostMapping
