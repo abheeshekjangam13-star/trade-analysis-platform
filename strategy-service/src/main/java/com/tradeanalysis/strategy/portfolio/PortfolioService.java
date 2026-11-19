@@ -254,13 +254,13 @@ public class PortfolioService {
         for (NiftyTradeLog t : blocked) rows.add(row(t, DayLossStop.REASON));
         if (!rows.isEmpty())
             jdbc.batchUpdate("UPDATE nifty_trade_log SET lots = ?, estimated_pnl = ?, skip_reason = ?, exit_timestamp = ?, "
-                    + "exit_spot_price = ?, exit_reason = ?, option_symbol = ?, entry_premium = ?, exit_premium = ? WHERE id = ?", rows);
+                    + "exit_spot_price = ?, exit_reason = ?, option_symbol = ?, entry_premium = ?, exit_premium = ?, slippage = ? WHERE id = ?", rows);
     }
 
     private static Object[] row(NiftyTradeLog t, String skip) {
         return new Object[]{t.getLots(), t.getEstimatedPnl(), skip,
                 t.getExitTimestamp() == null ? null : java.sql.Timestamp.from(t.getExitTimestamp()),
-                t.getExitSpotPrice(), t.getExitReason(), t.getOptionSymbol(), t.getEntryPremium(), t.getExitPremium(), t.getId()};
+                t.getExitSpotPrice(), t.getExitReason(), t.getOptionSymbol(), t.getEntryPremium(), t.getExitPremium(), t.getSlippage(), t.getId()};
     }
 
     /**

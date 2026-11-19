@@ -38,13 +38,35 @@ public class OptionPrices {
 
     record Key(Underlying underlying, String optionType, int strike, LocalDate day) {}
 
-    /** Prices each trade it can (see {@link NiftyTradeLog#priceWith}); the rest keep the estimate. */
-    public void apply(List<NiftyTradeLog> trades) {
+    /** Strategy parameter: slippage allowance in option points per side (else {@link #defaultSlippage}). */
+    public static final String SLIPPAGE_PARAM = "slippagePoints";
+
+    /**
+     * The slippage allowance in option points per side when a strategy sets none, from Usha's Kite fills against the
+     * option's minute closes (Nov 2026): NIFTY fills within about a point, Bank Nifty's several points worse.
+     */
+    public static double defaultSlippage(Underlying u) {
+        return u == Underlying.BANKNIFTY ? 5.0 : 1.0;
+    }
+
+    /** {@link #apply(List, Double)} with each trade's own allowance (stored rows keep theirs; else the default). */
+    public void apply(List<NiftyTradeLog> trades) { apply(trades, null); }
+
+    /**
+     * Gives each trade its slippage allowance and prices each trade it can (see {@link NiftyTradeLog#priceWith}); the
+     * rest keep the estimate (which pays the allowance too).
+     *
+     * @param slippagePoints the strategy's allowance in option points per side; null = the trade's stored one, else
+     *                       {@link #defaultSlippage} for its index
+     */
+    public void apply(List<NiftyTradeLog> trades, Double slippagePoints) {
         if (trades.isEmpty()) return;
         Map<Key, Optional<OptionCandleStore.Day>> days = new HashMap<>();
         boolean[] kiteDown = {false};
         int priced = 0;
         for (NiftyTradeLog t : trades) {
+            t.useSlippage(slippagePoints != null ? slippagePoints
+                    : t.getSlippage() != null ? t.getSlippage() : defaultSlippage(Underlying.of(t.getSymbol())));
             if (t.getOptionType() == null || t.getTradeDate() == null || t.getEntryTimestamp() == null) continue;
             Key key = new Key(Underlying.of(t.getSymbol()), t.getOptionType(), t.getStrikePrice(), t.getTradeDate());
             Optional<OptionCandleStore.Day> day = days.computeIfAbsent(key, k -> day(k, kiteDown));

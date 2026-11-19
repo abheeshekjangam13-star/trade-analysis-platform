@@ -151,7 +151,9 @@ public class BacktestEngine {
         NiftyOpeningBreakoutEngine.BreakoutResult result = assemble(reused.values(), fresh);
         // The real premiums of the options live trading would have bought, where they can be had (else the estimate).
         // After the day cache, which keeps the index-only trades; before the capital fit and the max day loss use them.
-        optionPrices.apply(result.tradeLogs());
+        Double slippage = strategy.getParameters() != null && strategy.getParameters().containsKey(com.tradeanalysis.strategy.estimate.OptionPrices.SLIPPAGE_PARAM)
+                ? params.doubleOr(com.tradeanalysis.strategy.estimate.OptionPrices.SLIPPAGE_PARAM, 0) : null;
+        optionPrices.apply(result.tradeLogs(), slippage);   // each trade pays the slippage allowance (strategy's, else the index default)
 
         // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
         com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);

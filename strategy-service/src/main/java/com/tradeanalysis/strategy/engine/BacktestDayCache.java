@@ -53,11 +53,11 @@ public class BacktestDayCache {
 
     /**
      * Stored trade fields only: no ids (each run saves its own rows), nothing the capital limit adds later, and no real
-     * option prices (OptionPrices adds them on every run, after the cache).
+     * option prices or slippage allowance (OptionPrices adds them on every run, after the cache).
      */
     @JsonIgnoreProperties(value = {"id", "backtestResultId", "createdAt", "skipReason", "estEntryPremium", "capitalUsed",
             "capitalUsedPct", "estIv", "ivAssumed", "backtestCapital", "optionSymbol", "entryPremium", "exitPremium",
-            "premiumCloses"}, ignoreUnknown = true)
+            "premiumCloses", "slippage"}, ignoreUnknown = true)
     private abstract static class TradeFields {}
 
     private final BacktestDayCacheRepository repo;

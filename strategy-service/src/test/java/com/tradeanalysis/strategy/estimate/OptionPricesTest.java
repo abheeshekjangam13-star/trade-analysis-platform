@@ -216,4 +216,64 @@ class OptionPricesTest {
         assertThat(ce.getEntryPremium()).isNull();
         verify(options, times(1)).all(any());
     }
+
+    // ── Slippage allowance ───────────────────────────────────────────────────
+
+    @Test
+    void slippageIsPaidOnBothSidesWhileThePremiumsStayTheMarkets() {
+        NiftyTradeLog t = cprTrade();
+        t.priceWith(PE.tradingsymbol(), pePremiums(), OptionPrices.enteredAt(t));
+        t.useSlippage(1.0);
+
+        assertThat(t.getEntryPremium()).isEqualTo(179.99);
+        assertThat(t.getExitPremium()).isEqualTo(145.65);
+        assertThat(t.getEstimatedPnl()).isCloseTo((145.65 - 179.99) * 260 - 2 * 1.0 * 260, within(0.01));   // −8,928 − 520
+        // Valued open, it pays both sides too: what closing then would make.
+        assertThat(t.pnlAt(at(9, 34), 0)).isCloseTo((160 - 179.99) * 260 - 520, within(0.01));
+    }
+
+    @Test
+    void anEstimatedTradePaysTheAllowanceToo() {
+        NiftyTradeLog t = cprTrade();
+        t.useSlippage(1.0);
+        assertThat(t.getEstimatedPnl()).isCloseTo(-50 * 260 * 0.5 - 520, within(0.01));
+    }
+
+    @Test
+    void theAllowanceIsTheStrategysElseTheStoredOneElseTheIndexDefault() {
+        OptionCandleStore store = mock(OptionCandleStore.class);
+        when(store.find(any(), any(), anyInt(), any())).thenReturn(Optional.empty());
+        OptionPrices prices = new OptionPrices(mock(NiftyOptions.class), mock(KiteApi.class), store, Clock.fixed(at(18, 0), IST));
+
+        NiftyTradeLog nifty = cprTrade();
+        NiftyTradeLog bank = new NiftyTradeLog(7L, "NIFTY BANK", DAY, 1, "BULLISH", 0, 0, at(9, 15), at(9, 45), 61_700, "CE", 61_400, 1, 30, 61_600);
+        bank.close(at(9, 51), 61_780, "TARGET_HIT", 61_600);
+        prices.apply(List.of(nifty, bank));
+        assertThat(nifty.getSlippage()).isEqualTo(1.0);
+        assertThat(bank.getSlippage()).isEqualTo(5.0);
+        assertThat(bank.getEstimatedPnl()).isCloseTo(80 * 30 * 0.5 - 2 * 5.0 * 30, within(0.01));
+
+        prices.apply(List.of(nifty), 0.0);     // the strategy's own setting wins: 0 = none
+        assertThat(nifty.getSlippage()).isZero();
+        nifty.useSlippage(2.5);
+        prices.apply(List.of(nifty));          // a stored trade (portfolio report) keeps its allowance
+        assertThat(nifty.getSlippage()).isEqualTo(2.5);
+    }
+
+    @Test
+    void theMaxDayLossCountsTheAllowance() {
+        // On real prices the 19 Nov day reaches −10,449 at 13:51; with no allowance a 10,600 limit holds, with 1 pt it doesn't.
+        NiftyTradeLog cpr = cprTrade(), ce = ceTrade();
+        cpr.priceWith(PE.tradingsymbol(), pePremiums(), OptionPrices.enteredAt(cpr));
+        ce.priceWith(CE.tradingsymbol(), cePremiums(), OptionPrices.enteredAt(ce));
+        assertThat(DayLossStop.apply(List.of(cpr, ce), 10_600.0, Map.of("NIFTY 50", nifty19Nov())).stops()).isEmpty();
+
+        NiftyTradeLog cpr2 = cprTrade(), ce2 = ceTrade();
+        for (NiftyTradeLog t : List.of(cpr2, ce2)) t.useSlippage(1.0);
+        cpr2.priceWith(PE.tradingsymbol(), pePremiums(), OptionPrices.enteredAt(cpr2));
+        ce2.priceWith(CE.tradingsymbol(), cePremiums(), OptionPrices.enteredAt(ce2));
+        DayLossStop.Result r = DayLossStop.apply(List.of(cpr2, ce2), 10_600.0, Map.of("NIFTY 50", nifty19Nov()));
+        assertThat(r.stops()).hasSize(1);
+        assertThat(ce2.getExitReason()).isEqualTo(DayLossStop.REASON);
+    }
 }

@@ -42,8 +42,8 @@ public class NiftyTradeLog {
     private String exitReason;      // SL_HIT / TARGET_HIT / EOD_SQUAREOFF
     private String skipReason;      // null = taken; CAPITAL = a portfolio report left it out (no capital free at entry)
 
-    // P&L minus charges: (exitPremium − entryPremium) × lotSize × lots when the trade has real option prices
-    // (see OptionPrices), else the estimate spot move × lotSize × lots × 0.5 (ATM delta ≈ 0.5)
+    // P&L minus charges and the slippage allowance: (exitPremium − entryPremium) × lotSize × lots when the trade has
+    // real option prices (see OptionPrices), else the estimate spot move × lotSize × lots × 0.5 (ATM delta ≈ 0.5)
     private double estimatedPnl;
 
     // Real option prices (null = estimated): the contract live trading would have bought, its premium when the entry
@@ -51,6 +51,9 @@ public class NiftyTradeLog {
     private String optionSymbol;
     private Double entryPremium;
     private Double exitPremium;
+    // Slippage allowance in option points per side (bought this much above the market, sold this much below), taken
+    // off the P&L; null = none. Set by OptionPrices.
+    private Double slippage;
 
     /** The contract's 1-minute closes by minute start, while a backtest prices the trade (not stored, not sent). */
     @com.fasterxml.jackson.annotation.JsonIgnore
@@ -127,6 +130,20 @@ public class NiftyTradeLog {
         return e == null || e.getKey().isBefore(at.minusSeconds(6 * 60)) ? null : e.getValue();
     }
 
+    /**
+     * Sets the slippage allowance (option points per side) and restates the P&L of a closed trade with it: the premiums
+     * stay the market's prices, the P&L pays the allowance on both the entry and the exit.
+     */
+    public void useSlippage(double pointsPerSide) {
+        this.slippage = pointsPerSide;
+        if (exitTimestamp != null) this.estimatedPnl = pnlFor(lots);
+    }
+
+    /** The slippage allowance for {@code n} lots, both sides together, in rupees. */
+    private double slippageCost(int n) {
+        return slippage == null ? 0 : 2 * slippage * lotSize * n;
+    }
+
     /** True when the P&L comes from the option's real prices, not the estimate. */
     public boolean hasRealPrices() { return entryPremium != null && exitPremium != null; }
 
@@ -148,7 +165,7 @@ public class NiftyTradeLog {
     /** What the trade would make if it closed at this index price now: the same estimate as its P&L (charges included). */
     public double pnlAt(double spot) {
         double spotDelta = optionType.equals("CE") ? spot - entrySpotPrice : entrySpotPrice - spot;
-        return spotDelta * lotSize * lots * 0.5 - (charges == null ? 0 : charges);
+        return spotDelta * lotSize * lots * 0.5 - (charges == null ? 0 : charges) - slippageCost(lots);
     }
 
     /**
@@ -158,7 +175,7 @@ public class NiftyTradeLog {
     public double pnlAt(Instant at, double spot) {
         Double premium = entryPremium == null ? null : premiumAt(at);
         if (premium == null) return pnlAt(spot);
-        return (premium - entryPremium) * lotSize * lots - (charges == null ? 0 : charges);
+        return (premium - entryPremium) * lotSize * lots - (charges == null ? 0 : charges) - slippageCost(lots);
     }
 
     /**
@@ -166,11 +183,11 @@ public class NiftyTradeLog {
      * else the estimate spot move × lot size × lots × 0.5 (ATM delta).
      */
     private double pnlFor(int n) {
-        if (hasRealPrices()) return (exitPremium - entryPremium) * lotSize * n - (charges == null ? 0 : charges);
+        if (hasRealPrices()) return (exitPremium - entryPremium) * lotSize * n - (charges == null ? 0 : charges) - slippageCost(n);
         double spotDelta = optionType.equals("CE")
                 ? exitSpotPrice - entrySpotPrice
                 : entrySpotPrice - exitSpotPrice;
-        return spotDelta * lotSize * n * 0.5 - (charges == null ? 0 : charges);
+        return spotDelta * lotSize * n * 0.5 - (charges == null ? 0 : charges) - slippageCost(n);
     }
 
     /** Live use: record the stop currently in force on a still-open trade. */
@@ -211,6 +228,7 @@ public class NiftyTradeLog {
     public String getOptionSymbol()       { return optionSymbol; }
     public Double getEntryPremium()       { return entryPremium; }
     public Double getExitPremium()        { return exitPremium; }
+    public Double getSlippage()           { return slippage; }
     public Instant getCreatedAt()         { return createdAt; }
 
     // ── Estimates for display (not stored; see OptionEstimates) ──────────────

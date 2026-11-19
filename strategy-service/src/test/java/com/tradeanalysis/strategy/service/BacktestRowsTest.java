@@ -34,6 +34,7 @@ class BacktestRowsTest {
                 Instant.parse("2026-11-05T03:56:00Z"), 150.25, Instant.parse("2026-11-05T06:10:00Z"), 190.5)),
                 Instant.parse("2026-11-05T03:57:00Z"));
         assertThat(closed.hasRealPrices()).isTrue();
+        closed.useSlippage(1.5);
         closed.setBacktestResultId(backtestId);
         NiftyTradeLog skipped = new NiftyTradeLog(7L, "NIFTY 50", LocalDate.of(2026, 11, 6), 2, "BEARISH", 1, 1,
                 null, Instant.parse("2026-11-06T04:00:00Z"), 1, "PE", 25_000, 1, 65, 1);
@@ -50,6 +51,7 @@ class BacktestRowsTest {
         assertThat(back.get(0).getOptionSymbol()).isEqualTo("NIFTY26N1025100CE");
         assertThat(back.get(0).getEntryPremium()).isEqualTo(150.25);
         assertThat(back.get(0).getExitPremium()).isEqualTo(190.5);
+        assertThat(back.get(0).getSlippage()).isEqualTo(1.5);
         assertThat(back.get(1)).usingRecursiveComparison().ignoringFields("id", "createdAt").isEqualTo(skipped);
         assertThat(back.get(1).getReferenceTimestamp()).isNull();
         assertThat(back.get(1).getExitTimestamp()).isNull();
