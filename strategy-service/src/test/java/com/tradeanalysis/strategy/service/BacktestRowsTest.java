@@ -29,6 +29,11 @@ class BacktestRowsTest {
                 Instant.parse("2026-11-05T03:45:00Z"), Instant.parse("2026-11-05T03:52:00Z"), 25_125.75, "CE", 25_100, 2, 65, 25_100.375);
         closed.setContext(0.42, 120.5);
         closed.close(Instant.parse("2026-11-05T06:10:00Z"), 25_190.0, "TARGET_HIT", 25_150.0);
+        // Priced with its option's real candles (OptionPrices): bought as the 03:52 signal candle closed, sold as 06:10 ended.
+        closed.priceWith("NIFTY26N1025100CE", new java.util.TreeMap<>(java.util.Map.of(
+                Instant.parse("2026-11-05T03:56:00Z"), 150.25, Instant.parse("2026-11-05T06:10:00Z"), 190.5)),
+                Instant.parse("2026-11-05T03:57:00Z"));
+        assertThat(closed.hasRealPrices()).isTrue();
         closed.setBacktestResultId(backtestId);
         NiftyTradeLog skipped = new NiftyTradeLog(7L, "NIFTY 50", LocalDate.of(2026, 11, 6), 2, "BEARISH", 1, 1,
                 null, Instant.parse("2026-11-06T04:00:00Z"), 1, "PE", 25_000, 1, 65, 1);
@@ -41,7 +46,10 @@ class BacktestRowsTest {
                 .sorted(java.util.Comparator.comparing(NiftyTradeLog::getTradeDate)).toList();
         assertThat(back).hasSize(2);
         assertThat(back.get(0).getId()).isNotNull();
-        assertThat(back.get(0)).usingRecursiveComparison().ignoringFields("id", "createdAt").isEqualTo(closed);
+        assertThat(back.get(0)).usingRecursiveComparison().ignoringFields("id", "createdAt", "premiumCloses").isEqualTo(closed);
+        assertThat(back.get(0).getOptionSymbol()).isEqualTo("NIFTY26N1025100CE");
+        assertThat(back.get(0).getEntryPremium()).isEqualTo(150.25);
+        assertThat(back.get(0).getExitPremium()).isEqualTo(190.5);
         assertThat(back.get(1)).usingRecursiveComparison().ignoringFields("id", "createdAt").isEqualTo(skipped);
         assertThat(back.get(1).getReferenceTimestamp()).isNull();
         assertThat(back.get(1).getExitTimestamp()).isNull();

@@ -22,12 +22,14 @@ public class BacktestRows {
     private static final String TRADE_SQL = "INSERT INTO nifty_trade_log (backtest_result_id, strategy_id, symbol, trade_date, "
             + "trade_number, breakout_type, reference_high, reference_low, reference_timestamp, entry_timestamp, entry_spot_price, "
             + "option_type, strike_price, lots, requested_lots, lot_size, initial_stop_loss, final_stop_loss, gap_percent, charges, "
-            + "exit_timestamp, exit_spot_price, exit_reason, skip_reason, estimated_pnl, created_at) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            + "exit_timestamp, exit_spot_price, exit_reason, skip_reason, estimated_pnl, created_at, "
+            + "option_symbol, entry_premium, exit_premium) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final int[] TRADE_TYPES = {Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.DATE,
             Types.INTEGER, Types.VARCHAR, Types.DOUBLE, Types.DOUBLE, Types.TIMESTAMP_WITH_TIMEZONE, Types.TIMESTAMP_WITH_TIMEZONE, Types.DOUBLE,
             Types.VARCHAR, Types.INTEGER, Types.INTEGER, Types.INTEGER, Types.INTEGER, Types.DOUBLE, Types.DOUBLE, Types.DOUBLE, Types.DOUBLE,
-            Types.TIMESTAMP_WITH_TIMEZONE, Types.DOUBLE, Types.VARCHAR, Types.VARCHAR, Types.DOUBLE, Types.TIMESTAMP_WITH_TIMEZONE};
+            Types.TIMESTAMP_WITH_TIMEZONE, Types.DOUBLE, Types.VARCHAR, Types.VARCHAR, Types.DOUBLE, Types.TIMESTAMP_WITH_TIMEZONE,
+            Types.VARCHAR, Types.DOUBLE, Types.DOUBLE};
 
     private static final String DAILY_SQL = "INSERT INTO backtest_daily_report (backtest_result_id, trade_date, day_of_week, "
             + "gap_percent, status, reason, trades, net_pnl) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
@@ -54,7 +56,8 @@ public class BacktestRows {
                 t.getOptionType(), t.getStrikePrice(), t.getLots(), t.getRequestedLots(), t.getLotSize(), t.getInitialStopLoss(),
                 t.getFinalStopLoss(), t.getGapPercent(), t.getCharges(),
                 at(t.getExitTimestamp()), t.getExitSpotPrice(), t.getExitReason(), t.getSkipReason(), t.getEstimatedPnl(),
-                at(t.getCreatedAt() == null ? Instant.now() : t.getCreatedAt())});
+                at(t.getCreatedAt() == null ? Instant.now() : t.getCreatedAt()),
+                t.getOptionSymbol(), t.getEntryPremium(), t.getExitPremium()});
         if (!rows.isEmpty()) jdbc.batchUpdate(TRADE_SQL, rows, TRADE_TYPES);
     }
 
