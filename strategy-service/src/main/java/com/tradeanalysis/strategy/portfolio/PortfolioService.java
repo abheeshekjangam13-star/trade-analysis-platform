@@ -33,12 +33,14 @@ public class PortfolioService {
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final com.tradeanalysis.strategy.user.DeleteAllowance deletes;
     private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
+    private final com.tradeanalysis.strategy.estimate.OptionPrices optionPrices;
 
     public PortfolioService(PortfolioRepository portfolios, PortfolioReportRepository reports, StrategyService strategies,
                             org.springframework.jdbc.core.JdbcTemplate jdbc, com.tradeanalysis.strategy.user.DeleteAllowance deletes,
-                            com.tradeanalysis.strategy.estimate.CapitalFit capitalFit) {
+                            com.tradeanalysis.strategy.estimate.CapitalFit capitalFit,
+                            com.tradeanalysis.strategy.estimate.OptionPrices optionPrices) {
         this.portfolios = portfolios; this.reports = reports; this.strategies = strategies; this.jdbc = jdbc;
-        this.deletes = deletes; this.capitalFit = capitalFit;
+        this.deletes = deletes; this.capitalFit = capitalFit; this.optionPrices = optionPrices;
     }
 
     /** What an update did: the portfolio, and how many stored reports were deleted (strategies changed = start fresh). */
@@ -168,6 +170,8 @@ public class PortfolioService {
                 all.addAll(strategies.getNiftyTradeLogs(bt.getId()));
                 strategyOfBacktest.put(bt.getId(), strategyId);
             }
+            // The stored trades carry their real premiums; the max day loss also needs each option's minute prices.
+            optionPrices.apply(all);
             com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(all, capital);
             if (maxDayLoss != null) {
                 List<String> missing = fit.kept().stream().map(NiftyTradeLog::getSymbol).distinct()

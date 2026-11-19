@@ -119,7 +119,7 @@ public class OptionEstimates {
     // ── Trades ───────────────────────────────────────────────────────────────
 
     /**
-     * Fills each trade's estimated entry premium and capital used (premium × lots × lot size), and its share of the
+     * Fills each trade's entry premium (its real one when known) and capital used (premium × lots × lot size), and its share of the
      * capital of the backtest it came from ({@code capitalByBacktest}; missing = no percentage).
      */
     public void estimate(List<NiftyTradeLog> trades, Map<Long, Double> capitalByBacktest) {
@@ -135,7 +135,9 @@ public class OptionEstimates {
                     : t.getTradeDate().atTime(9, 20).atZone(IST).toInstant();   // older rows may lack the entry time
             com.tradeanalysis.common.market.Underlying u = underlyingOf(t);
             double years = yearsToExpiry(entry, expiryFor(u, t.getTradeDate()));
-            double premium = price("CE".equals(t.getOptionType()), t.getEntrySpotPrice(), t.getStrikePrice(), years, vol);
+            // The real premium when the trade was priced from the option's own candles (OptionPrices), else Black-Scholes.
+            double premium = t.getEntryPremium() != null ? t.getEntryPremium()
+                    : price("CE".equals(t.getOptionType()), t.getEntrySpotPrice(), t.getStrikePrice(), years, vol);
             // A trade of a backtest that is still running has no id yet, and Map.of() rejects a null key.
             Double capital = t.getBacktestResultId() == null ? null : capitalByBacktest.get(t.getBacktestResultId());
             t.estimated(premium, capital, vol, assumed);

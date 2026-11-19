@@ -40,12 +40,15 @@ public class BacktestEngine {
     private final EmaCrossEngine             emaCrossEngine;
     private final com.tradeanalysis.strategy.estimate.CapitalFit capitalFit;
     private final BacktestDayCache dayCache;
+    private final com.tradeanalysis.strategy.estimate.OptionPrices optionPrices;
 
     public BacktestEngine(MarketDataClient mdClient, IndicatorClient indClient,
                           NiftyOpeningBreakoutEngine niftyEngine, PreviousRangeEngine previousRangeEngine,
                           com.tradeanalysis.strategy.estimate.CapitalFit capitalFit, GapFillEngine gapFillEngine,
-                          CprEngine cprEngine, EmaCrossEngine emaCrossEngine, BacktestDayCache dayCache) {
+                          CprEngine cprEngine, EmaCrossEngine emaCrossEngine, BacktestDayCache dayCache,
+                          com.tradeanalysis.strategy.estimate.OptionPrices optionPrices) {
         this.dayCache = dayCache;
+        this.optionPrices = optionPrices;
         this.gapFillEngine = gapFillEngine;
         this.cprEngine = cprEngine;
         this.emaCrossEngine = emaCrossEngine;
@@ -146,6 +149,9 @@ public class BacktestEngine {
         List<BacktestDayCache.Day> fresh = byDay(simulated);
         if (cacheable) dayCache.store(key, fresh, today);   // before the capital limit resizes the trades
         NiftyOpeningBreakoutEngine.BreakoutResult result = assemble(reused.values(), fresh);
+        // The real premiums of the options live trading would have bought, where they can be had (else the estimate).
+        // After the day cache, which keeps the index-only trades; before the capital fit and the max day loss use them.
+        optionPrices.apply(result.tradeLogs());
 
         // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
         com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);

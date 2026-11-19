@@ -13,8 +13,8 @@ import java.util.*;
  * valued at that minute's index close. Once it is at or below −limit, every open trade is closed at that close (exit
  * reason {@link #REASON}) and the day's later entries are not taken (skip reason {@link #REASON}).
  *
- * <p>Values use the same estimate as the trades themselves ({@link NiftyTradeLog#pnlAt}: index move × lot size × lots ×
- * 0.5, minus charges). Give it the trades that were taken (after the capital fit), with their final lots.
+ * <p>Values are the trades' own: the option's real price at that minute for trades priced by OptionPrices, else the
+ * estimate ({@link NiftyTradeLog#pnlAt}: index move × lot size × lots × 0.5), minus charges. Give it the trades that were taken (after the capital fit), with their final lots.
  */
 public final class DayLossStop {
 
@@ -91,7 +91,7 @@ public final class DayLossStop {
             for (NiftyTradeLog t : trades) {
                 if (entered.get(t).isAfter(end)) continue;                                // not entered yet
                 if (t.getExitTimestamp() != null && !t.getExitTimestamp().isAfter(end)) pnl += t.getEstimatedPnl();
-                else { open.add(t); pnl += t.pnlAt(spot(closes, t, start)); }
+                else { open.add(t); pnl += t.pnlAt(end, spot(closes, t, start)); }   // real option price when known
             }
             if (pnl > -limit) continue;
             int closed = 0, notTaken = 0;

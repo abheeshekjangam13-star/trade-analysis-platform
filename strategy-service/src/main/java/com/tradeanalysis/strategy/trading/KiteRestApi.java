@@ -148,6 +148,26 @@ public class KiteRestApi implements KiteApi {
         return out;
     }
 
+    @Override public List<Ohlc> minuteCandles(long instrumentToken, java.time.Instant from, java.time.Instant to) {
+        if (instrumentToken <= 0) return List.of();
+        Object data = call(c -> c.get().uri("/instruments/historical/{token}/minute?from={f}&to={t}",
+                instrumentToken, KITE_TIME.format(from), KITE_TIME.format(to)));
+        return parseOhlc(map(data).get("candles"));
+    }
+
+    /** Kite candles: [timestamp, open, high, low, close, volume], timestamp like 2026-11-13T10:58:00+0530. */
+    static List<Ohlc> parseOhlc(Object candles) {
+        List<Ohlc> out = new ArrayList<>();
+        java.time.format.DateTimeFormatter ts = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
+        for (Object row : list(candles)) {
+            List<Object> r = list(row);
+            if (r.size() < 5) continue;
+            out.add(new Ohlc(java.time.OffsetDateTime.parse(r.get(0).toString(), ts).toInstant(),
+                    num(r.get(1)), num(r.get(2)), num(r.get(3)), num(r.get(4))));
+        }
+        return out;
+    }
+
     /**
      * Options of one index from the NFO list, by its option name ("NIFTY", "BANKNIFTY").
      * Columns: instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
@@ -167,7 +187,8 @@ public class KiteRestApi implements KiteApi {
                 if (!optionName.equals(unquote(c[col.get("name")])) || !(type.equals("CE") || type.equals("PE"))) continue;
                 out.add(new OptionInstrument(c[col.get("tradingsymbol")].trim(), LocalDate.parse(c[col.get("expiry")].trim()),
                         (int) Math.round(Double.parseDouble(c[col.get("strike")])), type,
-                        Integer.parseInt(c[col.get("lot_size")].trim()), Double.parseDouble(c[col.get("tick_size")])));
+                        Integer.parseInt(c[col.get("lot_size")].trim()), Double.parseDouble(c[col.get("tick_size")]),
+                        col.containsKey("instrument_token") ? Long.parseLong(c[col.get("instrument_token")].trim()) : 0));
             }
         } catch (java.io.IOException e) {
             throw new TradingException("Could not read the Kite NFO instruments list");

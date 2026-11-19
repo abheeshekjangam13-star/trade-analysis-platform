@@ -51,9 +51,13 @@ public class BacktestDayCache {
     /** One simulated day: its report, its trades before the capital limit, and its signals. */
     public record Day(LocalDate date, NiftyOpeningBreakoutEngine.DayReport report, List<NiftyTradeLog> trades, List<Signal> signals) {}
 
-    /** Stored trade fields only: no ids (each run saves its own rows) and nothing the capital limit adds later. */
+    /**
+     * Stored trade fields only: no ids (each run saves its own rows), nothing the capital limit adds later, and no real
+     * option prices (OptionPrices adds them on every run, after the cache).
+     */
     @JsonIgnoreProperties(value = {"id", "backtestResultId", "createdAt", "skipReason", "estEntryPremium", "capitalUsed",
-            "capitalUsedPct", "estIv", "ivAssumed", "backtestCapital"}, ignoreUnknown = true)
+            "capitalUsedPct", "estIv", "ivAssumed", "backtestCapital", "optionSymbol", "entryPremium", "exitPremium",
+            "premiumCloses"}, ignoreUnknown = true)
     private abstract static class TradeFields {}
 
     private final BacktestDayCacheRepository repo;

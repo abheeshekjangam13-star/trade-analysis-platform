@@ -42,8 +42,19 @@ public class NiftyTradeLog {
     private String exitReason;      // SL_HIT / TARGET_HIT / EOD_SQUAREOFF
     private String skipReason;      // null = taken; CAPITAL = a portfolio report left it out (no capital free at entry)
 
-    // Indicative P&L using spot delta × lotSize × lots × 0.5 (ATM delta ≈ 0.5), minus charges
+    // P&L minus charges: (exitPremium − entryPremium) × lotSize × lots when the trade has real option prices
+    // (see OptionPrices), else the estimate spot move × lotSize × lots × 0.5 (ATM delta ≈ 0.5)
     private double estimatedPnl;
+
+    // Real option prices (null = estimated): the contract live trading would have bought, its premium when the entry
+    // was taken (the signal candle's close) and when the exit was (the end of the exit minute)
+    private String optionSymbol;
+    private Double entryPremium;
+    private Double exitPremium;
+
+    /** The contract's 1-minute closes by minute start, while a backtest prices the trade (not stored, not sent). */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient java.util.NavigableMap<Instant, Double> premiumCloses;
 
     private Instant createdAt = Instant.now();
 
@@ -77,8 +88,47 @@ public class NiftyTradeLog {
         this.exitTimestamp = exitTimestamp;
         this.exitSpotPrice = exitSpotPrice;
         this.exitReason = exitReason;
+        if (premiumCloses != null) this.exitPremium = premiumAt(exitPricedAt());
         this.estimatedPnl = pnlFor(lots);
     }
+
+    /**
+     * Prices the trade with its option's real 1-minute candles: the entry premium at {@code enteredAt} (when the signal
+     * candle closed and live trading would buy) and, once closed, the exit premium. Without a premium at the entry the
+     * trade stays estimated.
+     */
+    public void priceWith(String optionSymbol, java.util.NavigableMap<Instant, Double> closes, Instant enteredAt) {
+        Double entry = premiumBefore(closes, enteredAt);
+        if (entry == null) return;
+        this.optionSymbol = optionSymbol;
+        this.premiumCloses = closes;
+        this.entryPremium = entry;
+        this.exitPremium = exitTimestamp == null ? null : premiumAt(exitPricedAt());
+        if (exitTimestamp != null) this.estimatedPnl = pnlFor(lots);
+    }
+
+    /**
+     * When the exit is priced. An engine stamps an exit with the 1-minute candle the stop or target was hit in and live
+     * trading sells as that minute ends; the max day loss closes trades at the moment it is checked (a minute's end).
+     */
+    private Instant exitPricedAt() {
+        return "MAX_DAY_LOSS".equals(exitReason) ? exitTimestamp : exitTimestamp.plusSeconds(60);
+    }
+
+    /** The option's price at {@code at}: the close of the latest minute ending by then (null without real prices). */
+    public Double premiumAt(Instant at) {
+        return premiumCloses == null ? null : premiumBefore(premiumCloses, at);
+    }
+
+    /** The close of the latest minute that ended by {@code at}, if it ended at most 5 minutes before; null if none. */
+    static Double premiumBefore(java.util.NavigableMap<Instant, Double> closes, Instant at) {
+        if (closes == null || at == null) return null;
+        java.util.Map.Entry<Instant, Double> e = closes.lowerEntry(at.minusSeconds(59));
+        return e == null || e.getKey().isBefore(at.minusSeconds(6 * 60)) ? null : e.getValue();
+    }
+
+    /** True when the P&L comes from the option's real prices, not the estimate. */
+    public boolean hasRealPrices() { return entryPremium != null && exitPremium != null; }
 
     /**
      * Sets the lots this trade is taken with, for backtests that must fit their capital (see CapitalFit), and
@@ -101,8 +151,22 @@ public class NiftyTradeLog {
         return spotDelta * lotSize * lots * 0.5 - (charges == null ? 0 : charges);
     }
 
-    /** Indicative P&L for a number of lots: spot move × lot size × lots × 0.5 (ATM delta), minus charges. */
+    /**
+     * What the trade would make if it closed at {@code at}: at the option's real price then when the trade has real
+     * prices, else the estimate at this index price (charges included either way).
+     */
+    public double pnlAt(Instant at, double spot) {
+        Double premium = entryPremium == null ? null : premiumAt(at);
+        if (premium == null) return pnlAt(spot);
+        return (premium - entryPremium) * lotSize * lots - (charges == null ? 0 : charges);
+    }
+
+    /**
+     * P&L for a number of lots, minus charges: the real premium move × lot size × lots when the trade has real prices,
+     * else the estimate spot move × lot size × lots × 0.5 (ATM delta).
+     */
     private double pnlFor(int n) {
+        if (hasRealPrices()) return (exitPremium - entryPremium) * lotSize * n - (charges == null ? 0 : charges);
         double spotDelta = optionType.equals("CE")
                 ? exitSpotPrice - entrySpotPrice
                 : entrySpotPrice - exitSpotPrice;
@@ -144,10 +208,13 @@ public class NiftyTradeLog {
     public double getExitSpotPrice()      { return exitSpotPrice; }
     public String getExitReason()         { return exitReason; }
     public double getEstimatedPnl()       { return estimatedPnl; }
+    public String getOptionSymbol()       { return optionSymbol; }
+    public Double getEntryPremium()       { return entryPremium; }
+    public Double getExitPremium()        { return exitPremium; }
     public Instant getCreatedAt()         { return createdAt; }
 
     // ── Estimates for display (not stored; see OptionEstimates) ──────────────
-    @Transient private Double estEntryPremium;   // option premium per unit at entry (Black-Scholes, India VIX)
+    @Transient private Double estEntryPremium;   // option premium per unit at entry (the real one when known, else Black-Scholes, India VIX)
     @Transient private Double capitalUsed;       // estEntryPremium × lots × lotSize
     @Transient private Double capitalUsedPct;    // of the backtest's capital
     @Transient private Double estIv;             // volatility used (India VIX / 100)

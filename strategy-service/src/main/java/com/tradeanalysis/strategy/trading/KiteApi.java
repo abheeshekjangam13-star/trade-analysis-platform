@@ -22,9 +22,13 @@ public interface KiteApi {
             this(exchange, tradingsymbol, transactionType, quantity, product, orderType, price, triggerPrice, tag, null);
         }
     }
-    /** One index option contract from the NFO instruments list. */
+    /** One index option contract from the NFO instruments list (instrumentToken 0 = unknown). */
     record OptionInstrument(String tradingsymbol, LocalDate expiry, int strike, String optionType, int lotSize,
-                            double tickSize) {}
+                            double tickSize, long instrumentToken) {
+        public OptionInstrument(String tradingsymbol, LocalDate expiry, int strike, String optionType, int lotSize, double tickSize) {
+            this(tradingsymbol, expiry, strike, optionType, lotSize, tickSize, 0);
+        }
+    }
 
     Profile profile();
     Margins margins();
@@ -46,4 +50,13 @@ public interface KiteApi {
      * cover every tick so far, which a once-a-second price can miss. Empty when unknown.
      */
     default List<MinuteBar> minuteBars(String indexSymbol, java.time.Instant from, java.time.Instant to) { return List.of(); }
+
+    /** One 1-minute candle of an instrument (start = the minute's start). */
+    record Ohlc(java.time.Instant start, double open, double high, double low, double close) {}
+
+    /**
+     * An instrument's 1-minute candles from {@code from} to {@code to}, by its Kite instrument token (e.g. an option
+     * contract's). Kite only has them while the contract is listed. Empty when unknown.
+     */
+    default List<Ohlc> minuteCandles(long instrumentToken, java.time.Instant from, java.time.Instant to) { return List.of(); }
 }
