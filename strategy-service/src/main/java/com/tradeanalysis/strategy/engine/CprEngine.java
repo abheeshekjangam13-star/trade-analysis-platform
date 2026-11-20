@@ -21,6 +21,10 @@ import static com.tradeanalysis.strategy.engine.FixedStopTrade.*;
  * - Levels from yesterday's high H, low L and close C: pivot P = (H + L + C) / 3, BC = (H + L) / 2, TC = 2P − BC
  *   (the CPR band is BC to TC), R1 = 2P − L, S1 = 2P − H.
  * - Optional narrow-CPR filter: with maxCprWidthPct set, trade only when |TC − BC| is at most that % of P.
+ * - Optional wide-CPR filter: with minCprWidthPct set, trade only when |TC − BC| is above that % of P (both together
+ *   make a band, e.g. above 0.15% and at most 0.30%).
+ * - Optional narrow-range day filter (narrowRangeDays / excludeNarrowRangeDays), as in the previous-day mode; see
+ *   {@link NarrowRange}.
  * - The day must open (09:15 open) between S1 and R1.
  * - Entry: the first 5-min candle after 09:15 that closes above R1 (CE) or below S1 (PE), a fresh cross, before
  *   entryUntil (default 14:00), once a day.
@@ -28,7 +32,8 @@ import static com.tradeanalysis.strategy.engine.FixedStopTrade.*;
  *   (0 = none). Checked on 1-min candles, stop first; square-off at 15:20.
  *
  * Selected by {@code referenceMode=CPR}; see {@link BacktestEngine}. Parameters: those of {@link FixedStopTrade.Basics}
- * (directions default BOTH) and maxCprWidthPct (0 = any width).
+ * (directions default BOTH), maxCprWidthPct (0 = any width), minCprWidthPct (0 = any width), narrowRangeDays
+ * (0 = off, 2-20), excludeNarrowRangeDays (0 = off, above narrowRangeDays, up to 20).
  */
 @Component
 public class CprEngine {
@@ -96,6 +101,13 @@ public class CprEngine {
                         String.format("CPR width %.3f%% is above %.3f%%", widthPct, cfg.maxCprWidthPct()), 0));
                 continue;
             }
+            if (cfg.minCprWidthPct() > 0 && widthPct <= cfg.minCprWidthPct()) {
+                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE",
+                        String.format("CPR width %.3f%% is not above %.3f%%", widthPct, cfg.minCprWidthPct()), 0));
+                continue;
+            }
+            NiftyOpeningBreakoutEngine.DayReport narrow = cfg.narrowRange().block(byDay, dates, i, gap);
+            if (narrow != null) { days.add(narrow); continue; }
             double open = ref.open().doubleValue();
             if (open < s1 || open > r1) {
                 days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE",
@@ -148,11 +160,15 @@ public class CprEngine {
         return new NiftyOpeningBreakoutEngine.BreakoutResult(signals, logs, days, openTrades);
     }
 
-    private record Settings(Basics basics, double maxCprWidthPct) {
+    private record Settings(Basics basics, double maxCprWidthPct, double minCprWidthPct, NarrowRange narrowRange) {
         static Settings from(Params p) {
             double w = p.doubleOr("maxCprWidthPct", 0);
             if (w < 0 || w > 5) throw new IllegalArgumentException("maxCprWidthPct must be 0 (any width) up to 5: " + w);
-            return new Settings(Basics.from(p, "CPR"), w);
+            double min = p.doubleOr("minCprWidthPct", 0);
+            if (min < 0 || min > 5) throw new IllegalArgumentException("minCprWidthPct must be 0 (any width) up to 5: " + min);
+            if (min > 0 && w > 0 && min >= w)
+                throw new IllegalArgumentException("minCprWidthPct must be below maxCprWidthPct: " + min + " vs " + w);
+            return new Settings(Basics.from(p, "CPR"), w, min, NarrowRange.from(p));
         }
     }
 }

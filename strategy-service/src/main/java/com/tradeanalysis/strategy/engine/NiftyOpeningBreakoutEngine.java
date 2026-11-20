@@ -71,7 +71,9 @@ import java.util.stream.Collectors;
  *   ((close − low) / (high − low) ≥ x), or bottom fraction for PE; a weaker breakout is skipped and the next entry
  *   needs a fresh cross,
  *   trendSma (0 = off): CE only when the previous session's close is above the simple average of the last N session
- *   closes, PE only when below (needs N sessions of 5-min history before the day; see {@link #warmupDays})
+ *   closes, PE only when below (needs N sessions of 5-min history before the day; see {@link #warmupDays}),
+ *   narrowRangeDays (0 = off, 2-20) / excludeNarrowRangeDays (0 = off, above narrowRangeDays): trade only after an
+ *   NR-N day that is not also an NR-M day, as in the previous-day mode (see {@link NarrowRange})
  */
 @Component
 public class NiftyOpeningBreakoutEngine {
@@ -99,8 +101,10 @@ public class NiftyOpeningBreakoutEngine {
      * or the sessions the previous-day narrow-range filter compares.
      */
     public static int warmupDays(Params params) {
+        // narrowRangeDays / excludeNarrowRangeDays: the previous-day, CPR and opening-range modes (0 when not set).
+        boolean narrowRangeMode = !GapFillEngine.handles(params) && !EmaCrossEngine.handles(params);
         int n = Math.max(Math.max(0, params.intOr("trendSma", 0)),
-                PreviousRangeEngine.handles(params) ? PreviousRangeEngine.sessionsNeeded(params) : 0);
+                narrowRangeMode ? PreviousRangeEngine.sessionsNeeded(params) : 0);
         if (n == 0) return 7;   // only the previous close is needed
         return Math.max(7, (int) Math.ceil(n * 7 / 5.0) + 10);   // N sessions ≈ 7N/5 calendar days, plus holidays
     }
@@ -132,7 +136,8 @@ public class NiftyOpeningBreakoutEngine {
                             double failedBreakoutPoints, double maxStopPoints, double breakevenLockPoints,
                             Set<DayOfWeek> skipDays, LocalTime referenceTime, StopBasis stopBasis, LocalDate onlyOn,
                             com.tradeanalysis.common.market.Underlying underlying, int referenceMinutes,
-                            boolean withGap, double targetR, double trailAfterR, double breakoutStrength, int trendSma) {
+                            boolean withGap, double targetR, double trailAfterR, double breakoutStrength, int trendSma,
+                            NarrowRange narrowRange) {
         static Settings from(Params p) {
             com.tradeanalysis.common.market.Underlying u = com.tradeanalysis.common.market.Underlying.of(p.stringOr("underlying", ""));
             String dirs = p.stringOr("directions", "BOTH").toUpperCase();
@@ -170,7 +175,7 @@ public class NiftyOpeningBreakoutEngine {
                     Optional.ofNullable(parseTime("referenceTime", p.stringOr("referenceTime", ""))).orElse(REF_CANDLE_TIME),
                     parseStop(p.stringOr("initialStop", "MIDPOINT")),
                     parseDate("onlyOn", p.stringOr("onlyOn", "")), u, refMinutes,
-                    dirs.equals("WITH_GAP"), targetR, trailAfterR, strength, trendSma);
+                    dirs.equals("WITH_GAP"), targetR, trailAfterR, strength, trendSma, NarrowRange.from(p));
         }
 
         private static StopBasis parseStop(String v) {
@@ -308,9 +313,12 @@ public class NiftyOpeningBreakoutEngine {
         List<NiftyTradeLog> openTrades = new ArrayList<>();
         Double prevSessionClose = null;
         List<Double> sessionCloses = new ArrayList<>();   // every earlier session's close, for trendSma
+        List<LocalDate> dates = new ArrayList<>(byDay.keySet());   // for the narrow-range filter
+        int dayIndex = -1;
 
         for (Map.Entry<LocalDate, List<Candle>> entry : byDay.entrySet()) {
             LocalDate date = entry.getKey();
+            dayIndex++;
             List<Candle> dayCandles = entry.getValue().stream()
                     .sorted(Comparator.comparing(Candle::timestamp))
                     .toList();
@@ -358,6 +366,11 @@ public class NiftyOpeningBreakoutEngine {
             String blocked = cfg.dayBlockReason(gap, gapPoints);
             if (blocked != null) {
                 days.add(new DayReport(date, gap, "NO_TRADE", blocked, 0));
+                continue;
+            }
+            DayReport narrow = cfg.narrowRange().block(byDay, dates, dayIndex, gap);   // null when off
+            if (narrow != null) {
+                days.add(narrow);
                 continue;
             }
 

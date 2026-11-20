@@ -94,6 +94,82 @@ class CprEngineTest {
         assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("maxCprWidthPct", "9"))).isInstanceOf(IllegalArgumentException.class);
     }
 
+    // ── Minimum CPR width (minCprWidthPct): a wide-CPR or band strategy ──
+
+    /** Yesterday closing at {@code close}, then a 09:20 close above R1 (computed from that close). */
+    static List<Candle> ceBreakout(double close) {
+        double pivot = (24200 + 24000 + close) / 3, r1 = 2 * pivot - 24000;
+        List<Candle> five = yesterday(close);
+        five.add(c(DAY, 9, 15, pivot, pivot + 5, pivot - 5, pivot));
+        five.add(c(DAY, 9, 20, pivot, r1 + 15, pivot - 1, r1 + 10));
+        return five;
+    }
+
+    @Test
+    void minCprWidthTradesOnlyAboveTheMinimum() {
+        // Close 24,180: width 0.22%, above 0.15%: trades.
+        var wide = run(ceBreakout(24180), List.of(), params("minCprWidthPct", "0.15"));
+        assertThat(wide.tradeLogs()).hasSize(1);
+        assertThat(wide.tradeLogs().get(0).getOptionType()).isEqualTo("CE");
+        // Close 24,100: width 0%: skipped, with the reason.
+        var narrow = run(ceBreakout(24100), List.of(), params("minCprWidthPct", "0.15"));
+        assertThat(narrow.tradeLogs()).isEmpty();
+        assertThat(narrow.days()).anySatisfy(d -> assertThat(d.reason()).contains("is not above 0.150%"));
+        // A band: above 0.15% and at most 0.20% skips the 0.22% day.
+        var band = run(ceBreakout(24180), List.of(), params("minCprWidthPct", "0.15", "maxCprWidthPct", "0.2"));
+        assertThat(band.tradeLogs()).isEmpty();
+        assertThat(band.days()).anySatisfy(d -> assertThat(d.reason()).contains("is above 0.200%"));
+    }
+
+    @Test
+    void withoutTheNewSettingsANarrowCprStrategyTradesAsBefore() {
+        assertThat(run(ceBreakout(24100), List.of(), params("maxCprWidthPct", "0.15")).tradeLogs()).hasSize(1);
+        assertThat(run(ceBreakout(24180), List.of(), params()).tradeLogs()).hasSize(1);
+        assertThat(NiftyOpeningBreakoutEngine.warmupDays(params("maxCprWidthPct", "0.15"))).isEqualTo(7);
+    }
+
+    @Test
+    void minCprWidthIsChecked() {
+        assertThatThrownBy(() -> CprEngine.validateParams(params("minCprWidthPct", "-1"))).hasMessageContaining("minCprWidthPct");
+        assertThatThrownBy(() -> CprEngine.validateParams(params("minCprWidthPct", "0.3", "maxCprWidthPct", "0.2")))
+                .hasMessageContaining("below maxCprWidthPct");
+        assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(params("minCprWidthPct", "9"))).isInstanceOf(IllegalArgumentException.class);
+        CprEngine.validateParams(params("minCprWidthPct", "0.15", "maxCprWidthPct", "0.3"));
+    }
+
+    // ── Narrow-range day filter (narrowRangeDays / excludeNarrowRangeDays), as in the previous-day mode ──
+
+    /** Sessions before PREV with these ranges (oldest first), centred on 24,100; then yesterday (range 200) and a CE break. */
+    static List<Candle> withHistory(double... ranges) {
+        List<Candle> five = new ArrayList<>();
+        for (int k = 0; k < ranges.length; k++) {
+            LocalDate d = PREV.minusDays(ranges.length - k);
+            five.add(c(d, 9, 15, 24100, 24100 + ranges[k] / 2, 24100 - ranges[k] / 2, 24100));
+            five.add(c(d, 15, 25, 24100, 24100, 24100, 24100));
+        }
+        five.addAll(ceBreakout(24100));
+        return five;
+    }
+
+    @Test
+    void nr4TradesOnlyWhenYesterdayWasTheNarrowestOfFourSessions() {
+        assertThat(run(withHistory(300, 280, 260), List.of(), params("narrowRangeDays", "4")).tradeLogs()).hasSize(1);
+        var notNr4 = run(withHistory(300, 280, 150), List.of(), params("narrowRangeDays", "4"));
+        assertThat(notNr4.tradeLogs()).isEmpty();
+        assertThat(notNr4.days()).anySatisfy(d -> assertThat(d.reason()).contains("not NR4"));
+        // NR4 but not NR7: a day that is also NR7 is left out.
+        var alsoNr7 = run(withHistory(300, 290, 280, 270, 260, 250), List.of(), params("narrowRangeDays", "4", "excludeNarrowRangeDays", "7"));
+        assertThat(alsoNr7.tradeLogs()).isEmpty();
+        assertThat(alsoNr7.days()).anySatisfy(d -> assertThat(d.reason()).contains("also an NR7"));
+        // Too little history: no trade, NO_DATA.
+        var short_ = run(withHistory(300), List.of(), params("narrowRangeDays", "4"));
+        assertThat(short_.days()).anySatisfy(d -> assertThat(d.status()).isEqualTo("NO_DATA"));
+        // The same history without the setting trades.
+        assertThat(run(withHistory(300, 280, 150), List.of(), params()).tradeLogs()).hasSize(1);
+        assertThat(NiftyOpeningBreakoutEngine.warmupDays(params("narrowRangeDays", "7"))).isGreaterThanOrEqualTo(20);
+        assertThatThrownBy(() -> CprEngine.validateParams(params("excludeNarrowRangeDays", "7"))).hasMessageContaining("needs narrowRangeDays");
+    }
+
     // ── Stop protection (trailAfterPoints / breakevenOnTrail / trailMinutes), as on 18 Nov for #129 ──
 
     /** PE below S1 at 23,990 (09:20 candle); stop the pivot 24,100 capped at 50 = 24,040. */

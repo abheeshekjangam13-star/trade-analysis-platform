@@ -321,6 +321,31 @@ class StrategyDescriptionParserTest {
     }
 
     @Test
+    void wideCprBandAndNarrowRangeOnCpr() {
+        var band = parse("Nifty CPR breakout, both CE and PE, only when the CPR width is between 0.15% and 0.3%. Stop at the pivot, "
+                + "but never more than 100 points from entry. No new entries after 11:00. 4 lots.");
+        assertThat(band.parameters()).containsAllEntriesOf(Map.of("referenceMode", "CPR", "minCprWidthPct", "0.15", "maxCprWidthPct", "0.3",
+                "maxStopPoints", "100", "entryUntil", "11:00"));
+        assertThat(band.warnings()).isEmpty();
+        assertThat(band.suggestedName()).startsWith("Nifty CE/PE CPR-Band Breakout");
+
+        var wide = parse("Nifty CPR breakout, both CE and PE, CPR wider than 0.15%. Target 80 points. 4 lots.");
+        assertThat(wide.parameters()).containsEntry("minCprWidthPct", "0.15").doesNotContainKey("maxCprWidthPct");
+        assertThat(wide.suggestedName()).startsWith("Nifty CE/PE Wide-CPR Breakout");
+
+        var nr = parse("Nifty CPR breakout, both CE and PE, after an NR4 day but not NR7. Target 80 points. 4 lots.");
+        assertThat(nr.parameters()).containsAllEntriesOf(Map.of("referenceMode", "CPR", "narrowRangeDays", "4", "excludeNarrowRangeDays", "7"));
+        assertThat(nr.suggestedName()).startsWith("Nifty CE/PE CPR Breakout NR4 not NR7");
+    }
+
+    @Test
+    void narrowRangeOnTheOpeningRange() {
+        var r = parse("Nifty PE breakdown of the first 5-min candle, only after an NR4 day. Target 40 points. 4 lots.");
+        assertThat(r.parameters()).containsEntry("narrowRangeDays", "4").doesNotContainKey("referenceMode");
+        assertThat(r.suggestedName()).isEqualTo("Nifty PE Breakdown NR4 40 Target - 4 lots");
+    }
+
+    @Test
     void emaCrossoverBuysOptionsAndReadsAStartTime() {
         var r = parse("Nifty 5-min EMA 9/21 crossover, both CE and PE. Buy CE when the 9 EMA crosses above the 21 EMA, PE when it crosses "
                 + "below. No entries before 09:45 and no new entries after 14:00. 1 trade per day. Stop at the low (CE) / high (PE) of the "

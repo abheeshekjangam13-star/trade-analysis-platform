@@ -112,6 +112,11 @@ public class StrategyDescriptionParser {
         if (cpr) {
             s.params.put("referenceMode", "CPR");
             s.findings.add(new Finding("referenceMode", "CPR", "CPR / pivot", "Pivot (CPR) breakout: CE above yesterday's R1, PE below S1"));
+            // A width band ("CPR width between 0.15% and 0.3%") and a minimum ("CPR wider than 0.15%") come before the maximum.
+            s.match("\\b(cpr|cpr\\s+band|cpr\\s+width)\\s+(is\\s+)?between\\s+" + NUM + "\\s*%?\\s*(and|-|–|to)\\s*" + NUM + "\\s*%",
+                    m -> { s.setNum("minCprWidthPct", m.group(3), 0.01, 5, m); s.setNum("maxCprWidthPct", m.group(5), 0.01, 5, m); });
+            s.match("\\b(cpr|cpr\\s+band|cpr\\s+width)\\s+(is\\s+)?(wider\\s+than|above|over|more\\s+than|>|greater\\s+than)\\s*" + NUM + "\\s*%",
+                    m -> s.setNum("minCprWidthPct", m.group(4), 0.01, 5, m));
             s.match("\\b(cpr|cpr\\s+band|cpr\\s+width)\\s+(is\\s+)?(narrower\\s+than|below|under|less\\s+than|at\\s+most|up\\s+to|<=?|≤)\\s*" + NUM + "\\s*%"
                     + "|\\bnarrow[- ]cpr\\s*(days?)?\\s*\\(?\\s*(width\\s+)?(below|under|at\\s+most|up\\s+to|<=?|≤)\\s*" + NUM + "\\s*%\\s*\\)?",
                     m -> s.setNum("maxCprWidthPct", m.group(4) != null ? m.group(4) : m.group(8), 0.01, 5, m));
@@ -153,13 +158,7 @@ public class StrategyDescriptionParser {
                     "Entry on a 5-min close beyond yesterday's low (PE) / high (CE)");
             s.builtin("\\b(sl|stop(?:[- ]loss)?)\\s+(at|on|=)\\s+" + YDAY + "\\s+(high|low)\\b",
                     "Stop at yesterday's high (PE) / low (CE)");
-            // Narrow-range days: NR7 = yesterday's range the smallest of the last 7 sessions. The exclusion comes first.
-            s.match("\\b(but\\s+)?not\\s+(also\\s+)?(an?\\s+)?nr\\s*-?(\\d{1,2})(\\s+days?)?\\b",
-                    m -> s.setInt("excludeNarrowRangeDays", m.group(4), 3, 20, m));
-            s.match("\\b(after\\s+)?(an?\\s+)?nr\\s*-?(\\d{1,2})(\\s+days?)?\\b",
-                    m -> s.setInt("narrowRangeDays", m.group(3), 2, 20, m));
-            s.match("\\b(when\\s+)?" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\s+(was|is)\\s+the\\s+(smallest|narrowest|lowest)\\s+(of|in)\\s+the\\s+last\\s+(?<n>\\d{1,2})\\s+(sessions|days|trading\\s+days)\\b",
-                    m -> s.setInt("narrowRangeDays", m.group("n"), 2, 20, m));
+            narrowRangeDays(s, YDAY);
             s.builtin("\\b" + YDAY + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\b", "Yesterday's high-low range");
         }
         // ── Gap fill: after an opening gap, trade back towards yesterday's close once price re-enters the gap (GapFillEngine) ──
@@ -182,6 +181,8 @@ public class StrategyDescriptionParser {
                     "Stop at the 09:15 candle's high (PE) / low (CE)");
             s.builtin("\\bgap[- ]?fill(ing|s)?\\b|\\b(back\\s+)?(in|into|inside)\\s+the\\s+gap\\b|\\bre-?enters?\\s+the\\s+gap\\b", "Gap fill");
         }
+        // The CPR and opening-range modes take the same narrow-range day filter as the previous-day mode.
+        if (!prevDay && !emaCross && !gapFill) narrowRangeDays(s, YDAY);
         s.builtin("\\bfresh\\s+cross(es|ing)?\\b", "Fresh crosses only");
         s.builtin("\\bfrom\\s+the\\s+09?[:.]20\\s+candle\\b", "Entries checked from the 09:20 candle");
 
@@ -474,8 +475,11 @@ public class StrategyDescriptionParser {
             if (p.containsKey("excludeNarrowRangeDays")) n.append(" not NR").append(p.get("excludeNarrowRangeDays"));
         }
         else if ("CPR".equals(p.get("referenceMode")) || "EMA_CROSS".equals(p.get("referenceMode"))) {
-            if ("CPR".equals(p.get("referenceMode")))
-                n.append(p.containsKey("maxCprWidthPct") ? " Narrow-CPR" : " CPR").append(" Breakout");
+            if ("CPR".equals(p.get("referenceMode"))) {
+                n.append(p.containsKey("minCprWidthPct") && p.containsKey("maxCprWidthPct") ? " CPR-Band"
+                        : p.containsKey("minCprWidthPct") ? " Wide-CPR" : p.containsKey("maxCprWidthPct") ? " Narrow-CPR" : " CPR").append(" Breakout");
+                appendNarrowRange(n, p);
+            }
             else n.append(" EMA ").append(p.getOrDefault("fastEma", "9")).append("/").append(p.getOrDefault("slowEma", "21")).append(" Cross");
             if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
             if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
@@ -492,11 +496,27 @@ public class StrategyDescriptionParser {
         }
         else if (p.containsKey("referenceMinutes") && !p.get("referenceMinutes").equals("5")) n.append(" ").append(p.get("referenceMinutes")).append("-min");
         n.append(dir.equals("PE") ? " Breakdown" : " Breakout");
+        if (!p.containsKey("referenceMode")) appendNarrowRange(n, p);
         if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
         else if (p.containsKey("targetR")) n.append(" ").append(trim(p.get("targetR"))).append("R Target");
         if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
         if (p.containsKey("lots")) n.append(" - ").append(lots(p.get("lots")));
         return n.toString();
+    }
+
+    private static void appendNarrowRange(StringBuilder n, Map<String, String> p) {
+        if (p.containsKey("narrowRangeDays")) n.append(" NR").append(p.get("narrowRangeDays"));
+        if (p.containsKey("excludeNarrowRangeDays")) n.append(" not NR").append(p.get("excludeNarrowRangeDays"));
+    }
+
+    /** Narrow-range days: NR7 = yesterday's range the smallest of the last 7 sessions. The exclusion comes first. */
+    private static void narrowRangeDays(Scan s, String yday) {
+        s.match("\\b(but\\s+)?not\\s+(also\\s+)?(an?\\s+)?nr\\s*-?(\\d{1,2})(\\s+days?)?\\b",
+                m -> s.setInt("excludeNarrowRangeDays", m.group(4), 3, 20, m));
+        s.match("\\b(after\\s+)?(an?\\s+)?nr\\s*-?(\\d{1,2})(\\s+days?)?\\b",
+                m -> s.setInt("narrowRangeDays", m.group(3), 2, 20, m));
+        s.match("\\b(when\\s+)?" + yday + "\\s+(high\\s*[-/–]?\\s*low\\s+)?range\\s+(was|is)\\s+the\\s+(smallest|narrowest|lowest)\\s+(of|in)\\s+the\\s+last\\s+(?<n>\\d{1,2})\\s+(sessions|days|trading\\s+days)\\b",
+                m -> s.setInt("narrowRangeDays", m.group("n"), 2, 20, m));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
