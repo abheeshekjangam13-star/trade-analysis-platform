@@ -155,17 +155,43 @@ public class LiveStrategyRunner {
             try { refusal = orderService.dayLossRefusal(first.getMode(), first.getUserId()); }
             catch (RuntimeException e) { log.warn("DAY_LOSS_CHECK_FAILED user={}: {}", first.getUserId(), e.getMessage()); continue; }
             if (refusal == null) continue;
-            for (LivePosition p : open) {
-                try {
-                    Params params = new Params(new HashMap<>(strategies.load(p.getStrategyId()).getParameters()));
-                    report.add("#" + p.getStrategyId() + " " + p.getMode() + " user " + p.getUserId() + ": "
-                            + exit(p, null, "MAX_DAY_LOSS", null, "MAX_DAY_LOSS", params));
-                } catch (RuntimeException e) {
-                    log.error("DAY_LOSS_EXIT_FAILED position={}: {}", p.getId(), e.getMessage(), e);
-                    report.add("#" + p.getStrategyId() + " user " + p.getUserId() + ": max day loss exit failed — " + e.getMessage());
-                }
-            }
+            report.addAll(closeForDayLoss(open));
             log.warn("MAX_DAY_LOSS user={} mode={}: {}", first.getUserId(), first.getMode(), refusal);
+        }
+        return report;
+    }
+
+    /**
+     * From {@link LiveExitWatcher}, every few seconds: the same max day loss check for one user and mode, valued at the
+     * option prices the watcher already read, so the loss is caught within seconds instead of at the next minute run.
+     * Reads the open positions again under the lock, so ones the minute run or a stop already closed are left alone.
+     */
+    public List<String> exitOnDayLoss(Long userId, TradingMode mode, Map<String, Double> optionPrices) {
+        synchronized (positionLock) {
+            LocalDate today = LocalDate.now(clock.withZone(IST));
+            List<LivePosition> open = positions.findByTradeDateAndModeAndStatus(today, mode, LivePosition.Status.OPEN).stream()
+                    .filter(p -> userId.equals(p.getUserId())).toList();
+            if (open.isEmpty()) return List.of();
+            String refusal = orderService.dayLossRefusal(mode, userId, optionPrices);
+            if (refusal == null) return List.of();
+            List<String> report = closeForDayLoss(open);
+            log.warn("MAX_DAY_LOSS user={} mode={} (exit watcher): {}", userId, mode, refusal);
+            return report;
+        }
+    }
+
+    /** Sells every one of these open positions with exit reason MAX_DAY_LOSS; a line for each. Call under the lock. */
+    private List<String> closeForDayLoss(List<LivePosition> open) {
+        List<String> report = new ArrayList<>();
+        for (LivePosition p : open) {
+            try {
+                Params params = new Params(new HashMap<>(strategies.load(p.getStrategyId()).getParameters()));
+                report.add("#" + p.getStrategyId() + " " + p.getMode() + " user " + p.getUserId() + ": "
+                        + exit(p, null, "MAX_DAY_LOSS", null, "MAX_DAY_LOSS", params));
+            } catch (RuntimeException e) {
+                log.error("DAY_LOSS_EXIT_FAILED position={}: {}", p.getId(), e.getMessage(), e);
+                report.add("#" + p.getStrategyId() + " user " + p.getUserId() + ": max day loss exit failed — " + e.getMessage());
+            }
         }
         return report;
     }

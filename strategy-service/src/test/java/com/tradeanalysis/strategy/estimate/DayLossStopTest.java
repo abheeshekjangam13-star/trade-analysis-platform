@@ -133,4 +133,91 @@ class DayLossStopTest {
         assertThat(DayLossStop.rupees(85)).isEqualTo("₹85");
         assertThat(DayLossStop.rupees(12345678)).isEqualTo("₹1,23,45,678");
     }
+
+    /** NIFTY flat at 25000, then the 10:00 candle closes 50 points lower in one minute, then flat again. */
+    static Map<String, PriceSeries> jumpingNifty() {
+        List<Candle> out = new ArrayList<>();
+        for (Instant t = at(9, 15); t.isBefore(at(15, 30)); t = t.plusSeconds(60)) {
+            BigDecimal p = BigDecimal.valueOf(t.isBefore(at(10, 0)) ? 25000 : 24950);
+            out.add(new Candle(t, p, p, p, p, 0));
+        }
+        return Map.of("NIFTY 50", new PriceSeries("NIFTY 50", Interval.MINUTE_1, out));
+    }
+
+    @Test
+    void atTheLimitAJumpInsideAMinuteStopsAtTheLimitNotAtTheMinutesClose() {
+        // Two CE trades lose 130 a point together: −5000 is 38.46 points down, reached 46 s into the 10:00 minute.
+        NiftyTradeLog a = trade("CE", at(9, 30), 25000, at(11, 0), 24900, "SL_HIT");
+        NiftyTradeLog b = trade("CE", at(9, 30), 25000, at(11, 0), 24900, "SL_HIT");
+        NiftyTradeLog atClose = trade("PE", at(10, 0), 24950, at(11, 0), 24900, "TARGET_HIT");   // enters at that minute's close
+
+        DayLossStop.Result r = DayLossStop.apply(List.of(a, b, atClose), 5000.0, jumpingNifty(), true);
+
+        DayLossStop.Stop stop = r.stops().get(0);
+        assertThat(stop.at()).isEqualTo(at(10, 0).plusSeconds(46));
+        assertThat(stop.pnlAtStop()).isCloseTo(-5000, org.assertj.core.data.Offset.offset(1.0));
+        assertThat(stop.closed()).isEqualTo(2);
+        for (NiftyTradeLog t : List.of(a, b)) {
+            assertThat(t.getExitReason()).isEqualTo(DayLossStop.REASON);
+            assertThat(t.getEstimatedPnl()).isCloseTo(-2500, org.assertj.core.data.Offset.offset(1.0));
+            assertThat(t.getExitSpotPrice()).isCloseTo(24961.54, org.assertj.core.data.Offset.offset(0.01));
+        }
+        assertThat(atClose.getSkipReason()).isEqualTo(DayLossStop.REASON);   // came after the stop
+        assertThat(r.kept()).containsExactly(a, b);
+    }
+
+    @Test
+    void withoutAtLimitTheSameJumpStopsAtTheMinutesCloseAsBefore() {
+        NiftyTradeLog a = trade("CE", at(9, 30), 25000, at(11, 0), 24900, "SL_HIT");
+        NiftyTradeLog b = trade("CE", at(9, 30), 25000, at(11, 0), 24900, "SL_HIT");
+        DayLossStop.Result r = DayLossStop.apply(List.of(a, b), 5000.0, jumpingNifty());
+        assertThat(r.stops().get(0).at()).isEqualTo(at(10, 1));
+        assertThat(a.getEstimatedPnl() + b.getEstimatedPnl()).isEqualTo(-6500);
+    }
+
+    /** NIFTY flat at 25000; the 10:00 candle dips to 24,870 and closes at 24,900, flat after. */
+    static Map<String, PriceSeries> dippingNifty() {
+        List<Candle> out = new ArrayList<>();
+        for (Instant t = at(9, 15); t.isBefore(at(15, 30)); t = t.plusSeconds(60)) {
+            boolean dip = t.equals(at(10, 0));
+            double close = t.isBefore(at(10, 0)) ? 25000 : 24900;
+            out.add(new Candle(t, BigDecimal.valueOf(dip ? 25000 : close), BigDecimal.valueOf(dip ? 25000 : close),
+                    BigDecimal.valueOf(dip ? 24870 : close), BigDecimal.valueOf(close), 0));
+        }
+        return Map.of("NIFTY 50", new PriceSeries("NIFTY 50", Interval.MINUTE_1, out));
+    }
+
+    @Test
+    void atTheLimitAStopBiggerThanTheLimitIsCaughtAtTheLimitFirst() {
+        // Its own stop at 24,880 would lose 7,800 (120 points × 65); on the way down −5,000 comes 76.9 points down, first.
+        NiftyTradeLog big = trade("CE", at(9, 30), 25000, at(10, 0), 24880, "SL_HIT");
+        NiftyTradeLog later = trade("CE", at(10, 30), 24900, at(11, 0), 25000, "TARGET_HIT");
+
+        DayLossStop.Result r = DayLossStop.apply(List.of(big, later), 5000.0, dippingNifty(), true);
+
+        assertThat(big.getExitReason()).isEqualTo(DayLossStop.REASON);
+        assertThat(big.getEstimatedPnl()).isCloseTo(-5000, org.assertj.core.data.Offset.offset(1.0));
+        assertThat(big.getExitSpotPrice()).isCloseTo(24923.08, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(r.stops().get(0).at()).isEqualTo(at(10, 0).plusSeconds(36));
+        assertThat(r.blocked()).containsExactly(later);
+
+        // Without it, as before: the stop's full loss.
+        NiftyTradeLog again = trade("CE", at(9, 30), 25000, at(10, 0), 24880, "SL_HIT");
+        DayLossStop.apply(List.of(again), 5000.0, dippingNifty());
+        assertThat(again.getEstimatedPnl()).isEqualTo(-7800);
+    }
+
+    @Test
+    void atTheLimitAStopReachedBeforeTheLimitKeepsItsOwnExit() {
+        // A 30-point stop (−1,950) fills first, at −3,900 for the day; the other trade then carries it to −5,000 further down.
+        NiftyTradeLog small = trade("CE", at(9, 30), 25000, at(10, 0), 24970, "SL_HIT");
+        NiftyTradeLog other = trade("CE", at(9, 30), 25000, at(11, 0), 24800, "SL_HIT");
+
+        DayLossStop.apply(List.of(small, other), 5000.0, dippingNifty(), true);
+
+        assertThat(small.getExitReason()).isEqualTo("SL_HIT");
+        assertThat(small.getEstimatedPnl()).isEqualTo(-1950);
+        assertThat(other.getExitReason()).isEqualTo(DayLossStop.REASON);
+        assertThat(small.getEstimatedPnl() + other.getEstimatedPnl()).isCloseTo(-5000, org.assertj.core.data.Offset.offset(1.0));
+    }
 }

@@ -213,9 +213,7 @@ public class OrderService {
      * entry price or a quote count as 0).
      */
     public double unrealizedToday(TradingMode mode, Long userId) {
-        List<LivePosition> open = positions.findByTradeDateAndModeAndStatus(today(), mode, LivePosition.Status.OPEN).stream()
-                .filter(p -> userId == null || userId.equals(p.getUserId()))
-                .filter(p -> p.getTradingsymbol() != null && p.getEntryPrice() != null && p.getQuantity() > 0).toList();
+        List<LivePosition> open = pricedOpenPositions(mode, userId);
         if (open.isEmpty()) return 0;
         Map<String, Double> ltp;
         try {
@@ -224,6 +222,18 @@ public class OrderService {
             log.debug("No LTP for open positions: {}", e.getMessage());
             return 0;
         }
+        return unrealized(open, ltp);
+    }
+
+    /** The user's open strategy positions today in this mode that can be valued (symbol, entry price, quantity). */
+    private List<LivePosition> pricedOpenPositions(TradingMode mode, Long userId) {
+        return positions.findByTradeDateAndModeAndStatus(today(), mode, LivePosition.Status.OPEN).stream()
+                .filter(p -> userId == null || userId.equals(p.getUserId()))
+                .filter(p -> p.getTradingsymbol() != null && p.getEntryPrice() != null && p.getQuantity() > 0).toList();
+    }
+
+    /** Open P&L of these positions at these prices (keyed "NFO:symbol"); a position without a price counts as 0. */
+    static double unrealized(List<LivePosition> open, Map<String, Double> ltp) {
         double sum = 0;
         for (LivePosition p : open) {
             Double px = ltp == null ? null : ltp.get("NFO:" + p.getTradingsymbol());
@@ -249,7 +259,20 @@ public class OrderService {
     public String dayLossRefusal(TradingMode mode, Long userId) {
         Double limit = maxDayLoss(userId);
         if (limit == null || limit <= 0) return null;
-        double pnl = dayPnl(mode, userId);
+        return dayLossText(dayPnl(mode, userId), limit);
+    }
+
+    /**
+     * The same check with option prices the caller already has (keyed "NFO:symbol", e.g. from {@link QuoteCache}), so
+     * the exit watcher can run it every few seconds without a Kite call of its own.
+     */
+    public String dayLossRefusal(TradingMode mode, Long userId, Map<String, Double> optionPrices) {
+        Double limit = maxDayLoss(userId);
+        if (limit == null || limit <= 0) return null;
+        return dayLossText(realizedToday(mode, userId) + unrealized(pricedOpenPositions(mode, userId), optionPrices), limit);
+    }
+
+    private static String dayLossText(double pnl, double limit) {
         return pnl <= -limit ? String.format("Your max day loss is reached (today %.0f, limit %.0f): no new entries today", pnl, limit) : null;
     }
 

@@ -246,6 +246,43 @@ class LiveStrategyRunnerTest {
     }
 
     @Test
+    void theExitWatcherClosesOnTheMaxDayLossWithinSecondsWithoutWaitingForTheMinuteRun() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET max_day_loss = 3000 WHERE id = ?", a);
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("BUY 130 NIFTY26N0324150CE"));
+        watcher.checkDayLossNextCheck();
+        prices(110.0, 24180);
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(10));
+        assertThat(watcher.check()).isEmpty();                                     // (110 − 120) × 130 = −1,300: under the limit
+
+        // 2 s later the option is at 90 while the index is still between stop and target: −3,900, past the 3,000 limit.
+        prices(90.0, 24180);
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(12));
+        assertThat(watcher.check()).anyMatch(l -> l.contains("SELL 130 NIFTY26N0324150CE (MAX_DAY_LOSS)"));
+        LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+        assertThat(p.getStatus()).isEqualTo(LivePosition.Status.CLOSED);
+        assertThat(p.getExitReason()).isEqualTo("MAX_DAY_LOSS");
+
+        CLOCK.set(at(TUE, 9, 27).plusSeconds(3));                                  // the minute run doesn't sell again
+        runner.runAll();
+        assertThat(orders.findByTradeDateOrderByCreatedAtDesc(TUE)).extracting(TradeOrder::getTransactionType).containsExactly("SELL", "BUY");
+    }
+
+    @Test
+    void theExitWatcherLeavesAUserWithoutAMaxDayLossAlone() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();
+        watcher.checkDayLossNextCheck();
+        prices(10.0, 24180);                                                       // a huge open loss, but no limit set
+        CLOCK.set(at(TUE, 9, 26).plusSeconds(10));
+        assertThat(watcher.check()).isEmpty();
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0).getStatus()).isEqualTo(LivePosition.Status.OPEN);
+    }
+
+    @Test
     void theExitWatcherDoesNothingWithoutAnIndexPrice() {
         prices(120.0, 24180);
         CLOCK.set(at(TUE, 9, 26));

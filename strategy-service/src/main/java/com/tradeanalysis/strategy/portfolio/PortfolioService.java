@@ -24,6 +24,10 @@ import jakarta.annotation.PreDestroy;
 @Service
 public class PortfolioService {
 
+    /** Backtests take the max day loss where it was reached inside the minute, as live trading's few-second check does (DayLossStop). */
+    @org.springframework.beans.factory.annotation.Value("${backtest.day-loss.at-limit:true}")
+    boolean dayLossAtLimit = true;
+
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PortfolioService.class);
 
@@ -178,7 +182,7 @@ public class PortfolioService {
                         .filter(sym -> !minutes.containsKey(sym)).toList();
                 if (!missing.isEmpty()) minutes.putAll(strategies.minuteCandles(missing, today.minusDays(longest), today));
             }
-            DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, minutes);
+            DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, minutes, dayLossAtLimit);
             List<NiftyTradeLog> kept = stop.kept();
             storeFit(kept, fit.left(), stop.blocked());
             List<PortfolioReportItem> items = new ArrayList<>();

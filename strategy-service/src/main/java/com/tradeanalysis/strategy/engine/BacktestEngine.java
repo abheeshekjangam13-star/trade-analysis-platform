@@ -26,6 +26,10 @@ import java.util.*;
 @Component
 public class BacktestEngine {
 
+    /** Backtests take the max day loss where it was reached inside the minute, as live trading's few-second check does (DayLossStop). */
+    @org.springframework.beans.factory.annotation.Value("${backtest.day-loss.at-limit:true}")
+    boolean dayLossAtLimit = true;
+
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final Logger log = LoggerFactory.getLogger(BacktestEngine.class);
     /** More separate runs of missing days than this: simulate the whole window once instead. */
@@ -158,7 +162,7 @@ public class BacktestEngine {
         // Only the lots the free capital can buy at each entry, and no trade when not even one lot fits.
         com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(result.tradeLogs(), capital);
         // Then the user's max day loss: open trades closed and later entries not taken once the day's loss reaches it.
-        DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, dayLossMinutes(fit.kept(), maxDayLoss));
+        DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, dayLossMinutes(fit.kept(), maxDayLoss), dayLossAtLimit);
         List<NiftyTradeLog> logs = stop.kept();
         int total = logs.size();
         int wins  = (int) logs.stream().filter(t -> t.getEstimatedPnl() > 0).count();

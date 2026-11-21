@@ -96,6 +96,25 @@ public class NiftyTradeLog {
     }
 
     /**
+     * Closes the trade inside a minute at index price {@code exitSpot}: the backtests' max day loss checked tick by tick,
+     * as live trading does, reached the limit there. With real prices the option's exit is its price at the minute's
+     * start moved by half the index move (ATM delta), as no tick prices are kept; {@code spotAtStart} is the index then.
+     */
+    public void closeInMinute(Instant at, Instant minuteStart, double spotAtStart, double exitSpot, String reason, double finalStopLoss) {
+        this.finalStopLoss = finalStopLoss;
+        this.exitTimestamp = at;
+        this.exitSpotPrice = exitSpot;
+        this.exitReason = reason;
+        if (premiumCloses != null && entryPremium != null) {
+            Double p0 = premiumAt(minuteStart);
+            if (p0 == null) p0 = entryPremium;
+            double move = optionType.equals("CE") ? exitSpot - spotAtStart : spotAtStart - exitSpot;
+            this.exitPremium = Math.max(0.05, p0 + 0.5 * move);
+        }
+        this.estimatedPnl = pnlFor(lots);
+    }
+
+    /**
      * Prices the trade with its option's real 1-minute candles: the entry premium at {@code enteredAt} (when the signal
      * candle closed and live trading would buy) and, once closed, the exit premium. Without a premium at the entry the
      * trade stays estimated.

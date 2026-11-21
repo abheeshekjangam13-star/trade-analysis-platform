@@ -35,6 +35,11 @@ import java.util.*;
  * <p>A once-a-second price misses a touch that lasts less than a second, so every few seconds
  * (trading.exit-watch.candle-every-ms) it also reads the previous and the forming 1-minute candle from Kite, whose
  * high and low hold every tick: a touch is acted on within those few seconds instead of after the candle closes.
+ *
+ * <p>Every couple of seconds (trading.day-loss-watch.every-ms, 0 = off) it also checks each user's own max day loss:
+ * closed trades plus open positions at their options' live prices, read in the same shared quote call. Once it is at or
+ * below −limit, the user's open positions in that mode are closed (MAX_DAY_LOSS) through
+ * {@link LiveStrategyRunner#exitOnDayLoss}, instead of waiting for the next minute run, which still checks too.
  */
 @Component
 @ConditionalOnProperty(name = "trading.runner.enabled", havingValue = "true", matchIfMissing = true)
@@ -51,15 +56,21 @@ public class LiveExitWatcher {
     private final Clock clock;
     private final KiteApi kite;
     private final Duration candleEvery;
+    private final OrderService orders;
+    private final Duration dayLossEvery;
+    private volatile Instant lastDayLossCheck = Instant.EPOCH;
     private volatile String lastProblem;
     private volatile String lastCandleProblem;
     private volatile Instant lastCandleCheck = Instant.EPOCH;
 
     public LiveExitWatcher(LivePositionRepository positions, StrategyService strategies, QuoteCache quotes,
                            LiveStrategyRunner runner, Clock clock, KiteApi kite,
-                           @Value("${trading.exit-watch.candle-every-ms:3000}") long candleEveryMs) {
+                           @Value("${trading.exit-watch.candle-every-ms:3000}") long candleEveryMs,
+                           OrderService orders,
+                           @Value("${trading.day-loss-watch.every-ms:2000}") long dayLossEveryMs) {
         this.positions = positions; this.strategies = strategies; this.quotes = quotes; this.runner = runner; this.clock = clock;
         this.kite = kite; this.candleEvery = Duration.ofMillis(candleEveryMs);
+        this.orders = orders; this.dayLossEvery = Duration.ofMillis(dayLossEveryMs);
     }
 
     @Scheduled(fixedDelayString = "${trading.exit-watch.interval-ms:1000}", initialDelayString = "${trading.exit-watch.initial-delay-ms:30000}")
@@ -91,7 +102,21 @@ public class LiveExitWatcher {
             });
             symbol.put(p.getId(), "NSE:" + NiftyOpeningBreakoutEngine.underlyingOf(pr).indexSymbol);
         }
-        QuoteCache.Quotes q = quotes.get(symbol.values().stream().distinct().sorted().toList());
+        // The max day loss check, every few seconds: the options of users who set a limit go in the same quote call.
+        Instant started = clock.instant();
+        boolean dayLossDue = !dayLossEvery.isZero() && !started.isBefore(lastDayLossCheck.plus(dayLossEvery));
+        Map<String, List<LivePosition>> byUserMode = new TreeMap<>();
+        if (dayLossDue) {
+            Map<Long, Boolean> hasLimit = new HashMap<>();
+            for (LivePosition p : open) {
+                if (p.getUserId() == null) continue;
+                if (!hasLimit.computeIfAbsent(p.getUserId(), u -> { Double l = orders.maxDayLoss(u); return l != null && l > 0; })) continue;
+                byUserMode.computeIfAbsent(p.getUserId() + "|" + p.getMode(), k -> new ArrayList<>()).add(p);
+            }
+        }
+        List<String> wanted = new ArrayList<>(symbol.values());
+        byUserMode.values().forEach(ps -> ps.stream().filter(p -> p.getTradingsymbol() != null).forEach(p -> wanted.add("NFO:" + p.getTradingsymbol())));
+        QuoteCache.Quotes q = quotes.get(wanted.stream().distinct().sorted().toList());
         Instant now = clock.instant();
         List<String> did = new ArrayList<>();
         Set<Long> closed = new HashSet<>();
@@ -112,6 +137,17 @@ public class LiveExitWatcher {
         if (!now.isBefore(lastCandleCheck.plus(candleEvery))) {
             lastCandleCheck = now;
             did.addAll(checkCandles(open, closed, params, symbol, now));
+        }
+        if (dayLossDue) {
+            lastDayLossCheck = now;
+            if (!byUserMode.isEmpty() && q.asOf() != null && !q.asOf().isBefore(now.minus(MAX_QUOTE_AGE)))
+                for (List<LivePosition> ps : byUserMode.values()) {
+                    LivePosition first = ps.get(0);
+                    for (String r : runner.exitOnDayLoss(first.getUserId(), first.getMode(), q.prices())) {
+                        log.info("EXIT_WATCH {}", r);
+                        did.add(r);
+                    }
+                }
         }
         return did;
     }
@@ -158,6 +194,9 @@ public class LiveExitWatcher {
 
     /** Tests: the next check reads the candles, whatever the clock said before. */
     void readCandlesNextCheck() { lastCandleCheck = Instant.EPOCH; }
+
+    /** Tests: the next check runs the max day loss check, whatever the clock said before. */
+    void checkDayLossNextCheck() { lastDayLossCheck = Instant.EPOCH; }
 
     private List<KiteApi.MinuteBar> minuteBars(String index, Instant from, Instant to) {
         try {
