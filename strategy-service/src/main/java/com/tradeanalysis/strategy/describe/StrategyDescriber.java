@@ -64,6 +64,7 @@ public final class StrategyDescriber {
                 String gap = p.get("gapPct");
                 if (gap != null) out.add(dirs.equals("CE") ? "Gap-down days above " + gap + "%." : dirs.equals("PE") ? "Gap-up days above " + gap + "%."
                         : "Gap-up or gap-down days above " + gap + "%.");
+                if (p.containsKey("maxGapPct")) out.add("Skip gaps above " + p.get("maxGapPct") + "%.");
                 String t = p.get("gapFillTarget");
                 if (t != null) out.add("1".equals(t) || "1.0".equals(t) ? "Target the full gap fill." : "0.5".equals(t) ? "Target half the gap."
                         : "Target " + num(Double.parseDouble(t) * 100) + "% of the gap.");

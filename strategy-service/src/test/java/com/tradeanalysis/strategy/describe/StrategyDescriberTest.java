@@ -67,7 +67,7 @@ class StrategyDescriberTest {
                 "targetPoints", "80", "maxStopPoints", "40", "breakevenOnTrail", "true", "trailAfterPoints", "32", "trailMinutes", "0"));
         roundTrip(B, m("referenceMode", "PREVIOUS_DAY", "directions", "CE", "underlying", "BANKNIFTY", "entryUntil", "11:00", "targetPoints", "0", "skipDays", "MON"));
         roundTrip(B, m("referenceMode", "PREVIOUS_DAY", "lots", "2"));
-        roundTrip(B, m("referenceMode", "GAP_FILL", "directions", "PE", "underlying", "BANKNIFTY", "gapPct", "0.5", "gapFillTarget", "0.5",
+        roundTrip(B, m("referenceMode", "GAP_FILL", "directions", "PE", "underlying", "BANKNIFTY", "gapPct", "0.5", "maxGapPct", "2", "gapFillTarget", "0.5",
                 "lots", "1", "skipMonthEndExpiry", "true"));
         roundTrip(B, m("referenceMode", "GAP_FILL", "directions", "CE", "gapFillTarget", "1"));
         roundTrip(B, m("referenceMode", "EMA_CROSS", "directions", "BOTH", "fastEma", "9", "slowEma", "21", "swingBars", "3", "entryFrom", "10:00",
