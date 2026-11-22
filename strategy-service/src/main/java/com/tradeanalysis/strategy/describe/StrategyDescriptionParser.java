@@ -441,6 +441,9 @@ public class StrategyDescriptionParser {
         // The month-end (monthly) expiry day.
         s.match("\\b(skip|avoid|no\\s+trades?\\s+on)\\s+(the\\s+)?month[- ]end\\s+expir(y|ies)(\\s+days?)?\\b",
                 m -> s.set("skipMonthEndExpiry", "true", m, "No trades on the month-end expiry day"));
+        // Trading on the month-end expiry day only.
+        s.match("\\b(trades?\\s+)?only\\s+on\\s+(the\\s+)?month[- ]end\\s+expir(y|ies)(\\s+days?)?\\b",
+                m -> s.set("onlyMonthEndExpiry", "true", m, "Trades on the month-end expiry day only"));
         // Slippage allowance in index points (backtests).
         s.match("\\bslippage\\s*(of|=|:)?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("slippagePoints", m.group(2), 0, 1000, m));
 

@@ -58,6 +58,7 @@ import java.util.stream.Collectors;
  *   onlyOn (none): yyyy-MM-dd — trade on this date only,
  *   skipDays (none): comma-separated weekdays not to trade, e.g. "THU" or "MON,FRIDAY" (case-insensitive;
  *   3-letter or full names). A skipped day still supplies the previous close for the next day's gap,
+ *   onlyMonthEndExpiry (false): true = trades on the month-end expiry day only (the opposite of skipMonthEndExpiry).
  *   skipMonthEndExpiry (false): true = no trades on the month-end expiry day (last Tuesday, moved earlier for a
  *   holiday; see {@link MonthEndExpiry}), in every reference mode,
  *   referenceMinutes (5): length of the reference range from referenceTime, a multiple of 5 up to 60 (15 = the
@@ -88,7 +89,7 @@ public class NiftyOpeningBreakoutEngine {
     /** Throws IllegalArgumentException with a readable message if the parameters are not valid for this engine. */
     public static void validateParams(Params params) {
         Settings.from(params);
-        MonthEndExpiry.enabled(params);   // skipMonthEndExpiry: true or false (every reference mode)
+        MonthEndExpiry.validate(params);   // skipMonthEndExpiry / onlyMonthEndExpiry: true or false, not both (every reference mode)
         // The other reference modes check their own parameters too (saving, the description reader, the live runner).
         if (PreviousRangeEngine.handles(params)) PreviousRangeEngine.validateParams(params);
         if (GapFillEngine.handles(params)) GapFillEngine.validateParams(params);
@@ -352,7 +353,7 @@ public class NiftyOpeningBreakoutEngine {
                 continue;
             }
             if (MonthEndExpiry.skips(params, date)) {
-                days.add(new DayReport(date, gap, "SKIPPED", MonthEndExpiry.REASON, 0));
+                days.add(new DayReport(date, gap, "SKIPPED", MonthEndExpiry.reason(params, date), 0));
                 continue;
             }
             if (refCandle == null) {

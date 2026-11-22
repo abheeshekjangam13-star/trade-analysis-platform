@@ -106,7 +106,7 @@ public class PreviousRangeEngine {
                 continue;
             }
             if (MonthEndExpiry.skips(params, date)) {
-                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", MonthEndExpiry.REASON, 0));
+                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "SKIPPED", MonthEndExpiry.reason(params, date), 0));
                 continue;
             }
             if (ref == null) {

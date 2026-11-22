@@ -63,4 +63,39 @@ class MonthEndExpiryTest {
             assertThat(d.reason()).isEqualTo(MonthEndExpiry.REASON);
         });
     }
+
+    @Test
+    void onlyMonthEndExpiryTradesThatDayAndNoOther() {
+        java.util.function.Function<LocalDate, PriceSeries[]> data = day -> {
+            LocalDate prev = day.minusDays(1);
+            PriceSeries five = new PriceSeries("NIFTY 50", Interval.MINUTE_5, List.of(
+                    c(prev, 9, 15, 24050, 24200, 24000, 24100), c(prev, 15, 25, 24100, 24150, 24080, 24100),
+                    c(day, 9, 15, 24100, 24120, 24050, 24080), c(day, 9, 20, 24080, 24090, 24060, 24070),
+                    c(day, 9, 25, 24070, 24075, 23985, 23990), c(day, 9, 30, 23990, 24000, 23960, 23970)));
+            return new PriceSeries[]{five, new PriceSeries("NIFTY 50", Interval.MINUTE_1, List.of(c(day, 9, 30, 23990, 23992, 23950, 23955)))};
+        };
+        Params only = params(Map.of("onlyMonthEndExpiry", "true"));
+        LocalDate monthEnd = LocalDate.of(2026, 10, 27), weekly = LocalDate.of(2026, 10, 20);
+
+        PriceSeries[] me = data.apply(monthEnd);
+        assertThat(new PreviousRangeEngine().run(me[0], me[1], only, 7L, monthEnd.plusDays(1).atTime(10, 0).atZone(IST).toInstant(), null).tradeLogs()).hasSize(1);
+
+        PriceSeries[] wk = data.apply(weekly);
+        var skipped = new PreviousRangeEngine().run(wk[0], wk[1], only, 7L, weekly.plusDays(1).atTime(10, 0).atZone(IST).toInstant(), null);
+        assertThat(skipped.tradeLogs()).isEmpty();
+        assertThat(skipped.days()).anySatisfy(d -> {
+            assertThat(d.date()).isEqualTo(weekly);
+            assertThat(d.status()).isEqualTo("SKIPPED");
+            assertThat(d.reason()).isEqualTo(MonthEndExpiry.ONLY_REASON);
+        });
+    }
+
+    @Test
+    void skipAndOnlyCantBothBeTrue() {
+        assertThat(MonthEndExpiry.only(new Params(Map.of()))).isFalse();
+        assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(new Params(Map.of("skipMonthEndExpiry", "true", "onlyMonthEndExpiry", "true"))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("can't both be true");
+        assertThatThrownBy(() -> NiftyOpeningBreakoutEngine.validateParams(new Params(Map.of("onlyMonthEndExpiry", "maybe"))))
+                .hasMessageContaining("onlyMonthEndExpiry");
+    }
 }

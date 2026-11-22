@@ -46,6 +46,9 @@ class StrategyDescriberTest {
                 "gapFilter", "GAP_DOWN", "maxGapPct", "2", "skipDays", "THU,TUE", "initialStop", "MIDPOINT", "entryFrom", "10:00"));
         roundTrip(B, m("directions", "PE", "narrowRangeDays", "4", "targetPoints", "40", "maxStopPoints", "100", "trailMinutes", "0",
                 "breakevenOnTrail", "true", "underlying", "NIFTY"));
+        roundTrip(B, m("underlying", "BANKNIFTY", "directions", "PE", "referenceMinutes", "15", "initialStop", "OPPOSITE", "maxStopPoints", "250",
+                "targetPoints", "200", "entryUntil", "14:00", "trailMinutes", "5", "trailAfterPoints", "1000", "maxTradesPerDay", "1",
+                "onlyMonthEndExpiry", "true", "lots", "1", "costPerTrade", "85"));
         roundTrip(B, m("directions", "WITH_GAP", "gapFilter", "ANY_GAP", "gapPct", "0.3", "targetPoints", "0", "slippagePoints", "2"));
     }
 
@@ -57,6 +60,7 @@ class StrategyDescriberTest {
                 "breakevenOnTrail", "true", "trailAfterPoints", "30", "trailMinutes", "0", "skipDays", "TUE"));
         roundTrip(B, m("referenceMode", "CPR", "directions", "CE", "minCprWidthPct", "0.1", "narrowRangeDays", "4", "excludeNarrowRangeDays", "7"));
         roundTrip(B, m("referenceMode", "CPR", "directions", "PE", "underlying", "BANKNIFTY", "lots", "1", "skipDays", "MON"));
+        roundTrip(B, m("referenceMode", "CPR", "directions", "BOTH", "maxStopPoints", "40", "targetPoints", "80", "onlyMonthEndExpiry", "true", "lots", "4"));
     }
 
     @Test

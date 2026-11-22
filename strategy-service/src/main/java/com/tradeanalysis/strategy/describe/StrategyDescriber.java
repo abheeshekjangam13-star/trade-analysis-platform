@@ -114,6 +114,7 @@ public final class StrategyDescriber {
             if (!d.isEmpty()) out.add("Skip " + String.join(" and ", d) + ".");
         }
         if ("true".equalsIgnoreCase(p.get("skipMonthEndExpiry"))) out.add("Skip the month-end expiry day.");
+        if ("true".equalsIgnoreCase(p.get("onlyMonthEndExpiry"))) out.add("Only on the month-end expiry day.");
 
         if (p.containsKey("maxStopPoints")) out.add("Stop never more than " + p.get("maxStopPoints") + " points from entry.");
         if (p.containsKey("trailAfterPoints")) out.add("Trail after " + p.get("trailAfterPoints") + " points.");

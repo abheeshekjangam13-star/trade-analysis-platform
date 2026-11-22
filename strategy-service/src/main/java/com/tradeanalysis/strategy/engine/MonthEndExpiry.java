@@ -13,13 +13,17 @@ import java.util.Set;
  * before September 2025), moved to the trading day before when it falls on an NSE holiday (e.g. 24 Nov 2026 → 23 Nov).
  * <p>
  * Strategy parameter {@code skipMonthEndExpiry} (false): true takes no trades on that day, in backtests and live
- * trading alike (every engine checks it next to skipDays, and the live runner reruns the engines). The holidays come
+ * trading alike (every engine checks it next to skipDays, and the live runner reruns the engines).
+ * Strategy parameter {@code onlyMonthEndExpiry} (false): the opposite, true trades on that day only. The two can't
+ * both be true. The holidays come
  * from trading.market-holidays (TradingDays hands them over at startup); without them only weekends move the day.
  */
 public final class MonthEndExpiry {
 
     public static final String PARAM = "skipMonthEndExpiry";
     public static final String REASON = "Month-end expiry day (skipMonthEndExpiry)";
+    public static final String ONLY_PARAM = "onlyMonthEndExpiry";
+    public static final String ONLY_REASON = "Not the month-end expiry day (onlyMonthEndExpiry)";
     /** NSE moved monthly expiries from Thursday to Tuesday from September 2025. */
     static final LocalDate TUESDAY_FROM = LocalDate.of(2025, 9, 1);
 
@@ -46,16 +50,38 @@ public final class MonthEndExpiry {
 
     /** Whether the strategy asks to skip month-end expiry days. */
     public static boolean enabled(Params params) {
-        String v = params.stringOr(PARAM, "false").trim().toLowerCase(Locale.ROOT);
+        return flag(params, PARAM);
+    }
+
+    /** Whether the strategy trades on month-end expiry days only. */
+    public static boolean only(Params params) {
+        return flag(params, ONLY_PARAM);
+    }
+
+    /** Checks both settings: each true or false, and not both true. */
+    public static void validate(Params params) {
+        boolean skip = enabled(params), only = only(params);   // both read, so a bad value in either is reported
+        if (skip && only)
+            throw new IllegalArgumentException(PARAM + " and " + ONLY_PARAM + " can't both be true");
+    }
+
+    private static boolean flag(Params params, String key) {
+        String v = params.stringOr(key, "false").trim().toLowerCase(Locale.ROOT);
         return switch (v) {
             case "true", "yes", "y", "1", "on" -> true;
             case "false", "no", "n", "0", "off", "" -> false;
-            default -> throw new IllegalArgumentException(PARAM + " must be true or false: " + v);
+            default -> throw new IllegalArgumentException(key + " must be true or false: " + v);
         };
     }
 
-    /** Whether this strategy takes no trades on {@code day}. */
+    /** Whether this strategy takes no trades on {@code day}: a skipped month-end expiry, or any other day when it trades only that one. */
     public static boolean skips(Params params, LocalDate day) {
-        return enabled(params) && is(day);
+        boolean me = is(day);
+        return (enabled(params) && me) || (only(params) && !me);
+    }
+
+    /** Why {@link #skips} is true on {@code day}. */
+    public static String reason(Params params, LocalDate day) {
+        return is(day) ? REASON : ONLY_REASON;
     }
 }
