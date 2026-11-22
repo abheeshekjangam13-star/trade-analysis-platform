@@ -70,7 +70,8 @@ class StrategyCloneIntegrationTest {
         assertThat(c.get("parameters").get("lots").asText()).isEqualTo("5");
         assertThat(c.get("createdByUserId").asLong()).isEqualTo(id("ravi"));
         assertThat(c.get("clonedFromStrategyId").asLong()).isEqualTo(ravis);
-        assertThat(c.get("description").asText()).contains("Cloned from '", "5 lots").doesNotContain("#" + ravis);
+        // The copy describes its own settings (5 lots), in words "create from description" reads back the same.
+        assertThat(c.get("description").asText()).contains("5 lots.").doesNotContain("Cloned from").doesNotContain("#" + ravis);
         // every other parameter is copied unchanged
         source.get("parameters").fields().forEachRemaining(e -> {
             if (!e.getKey().equals("lots")) assertThat(c.get("parameters").get(e.getKey()).asText()).isEqualTo(e.getValue().asText());

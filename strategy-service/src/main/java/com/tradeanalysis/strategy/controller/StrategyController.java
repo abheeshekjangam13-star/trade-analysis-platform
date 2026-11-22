@@ -35,6 +35,17 @@ public class StrategyController {
         return parser.parse(d);
     }
 
+    public record SettingsRequest(String type, Map<String, String> parameters) {}
+    public record DescriptionResponse(String description) {}
+
+    @PostMapping("/describe")
+    @Operation(summary = "Write settings as a plain-English description that /parse reads back to exactly the same "
+            + "settings (nothing is saved)")
+    public DescriptionResponse describe(@RequestBody SettingsRequest body) {
+        if (body == null || body.type() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing required field: type");
+        return new DescriptionResponse(com.tradeanalysis.strategy.describe.StrategyDescriber.describe(body.type(), body.parameters()));
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Create a new strategy")

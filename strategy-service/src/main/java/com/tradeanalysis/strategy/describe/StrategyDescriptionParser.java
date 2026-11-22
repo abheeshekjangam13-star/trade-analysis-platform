@@ -51,6 +51,10 @@ public class StrategyDescriptionParser {
             scan.params.put("underlying", "BANKNIFTY");
             scan.builtin("\\b(bank\\s*nifty|banknifty|nifty\\s*bank)\\b",
                     "Index: Bank Nifty (monthly expiry, 100-point strikes, lot 30)");
+        } else if (scan.find("\\bnifty\\s*50\\b")) {
+            // Written out as "Nifty 50" (as StrategyDescriber does when the strategy names its index): keep it explicit.
+            scan.params.put("underlying", "NIFTY");
+            scan.builtin("\\bnifty\\s*50\\b", "Index: NIFTY 50 (weekly expiry, 50-point strikes, lot 65)");
         }
 
         switch (type) {
@@ -187,6 +191,12 @@ public class StrategyDescriptionParser {
         s.builtin("\\bfrom\\s+the\\s+09?[:.]20\\s+candle\\b", "Entries checked from the 09:20 candle");
 
         // ── Reference range length: "first 15-min candle", "09:15-09:30", "15-minute opening range" ──
+        // "Reference range 5 minutes" names the length outright, the default 5 included (StrategyDescriber writes it).
+        s.match("\\breference\\s+range\\s+(of\\s+)?(\\d{1,2})\\s+min(ute)?s?\\b", m -> {
+            int v = Integer.parseInt(m.group(2));
+            if (v < 5 || v > 60 || v % 5 != 0) s.warnings.add("Reference range " + v + " minutes must be a multiple of 5 from 5 to 60; not set");
+            else s.set("referenceMinutes", String.valueOf(v), m, "Reference range " + v + " minutes from the reference time");
+        });
         s.match("\\b(first|opening|reference|ref)\\s+(\\d{1,2})[- ]?min(ute)?s?\\s+(candle|range|bar)(\\s*\\(?\\s*09[:.]15\\s*[-–]\\s*\\d{1,2}[:.]\\d{2}(\\s*ist)?\\s*\\)?)?"
                 + "|\\b(\\d{1,2})[- ]?min(ute)?s?\\s+(opening\\s+range|reference(\\s+(candle|range))?|orb)\\b",
                 m -> s.setReferenceMinutes(m.group(2) != null ? m.group(2) : m.group(7), m));
@@ -326,6 +336,23 @@ public class StrategyDescriptionParser {
         s.match("\\b(but\\s+)?(never|not|no)\\s+more\\s+than\\s+" + NUM + "\\s*(points?|pts?)\\s+(above|below|from|away\\s+from)\\s+(the\\s+)?entry\\b",
                 m -> s.setNum("maxStopPoints", m.group(3), 5, 3000, m));
 
+        // "Except on gap-down days of 0.1% or more": every day but a gap-down (NOT_GAP_DOWN), read before the gap-down rules.
+        s.match("\\b(except|not)\\s+on\\s+gap[- ]?down\\s+days(\\s+of\\s+" + NUM + "\\s*(%|points?|pts?)\\s+or\\s+more)?",
+                m -> {
+                    s.set("gapFilter", "NOT_GAP_DOWN", m, "Every day except a gap-down");
+                    if (m.group(3) != null) {
+                        if (m.group(4).startsWith("%")) s.setNum("gapPct", m.group(3), 0.01, 5, m);
+                        else s.setNum("gapPoints", m.group(3), 1, 1000, m);
+                    }
+                });
+        // "Flat opens within 0.1% of the previous close": the flat-open filter with its size.
+        s.match("\\bflat\\s+opens?\\s+within\\s+" + NUM + "\\s*(%|points?|pts?)(\\s+of\\s+(the\\s+)?(previous|prev|yesterday'?s?)\\s+close)?",
+                m -> {
+                    s.set("gapFilter", "FLAT", m, "Flat opens only");
+                    if (m.group(2).startsWith("%")) s.setNum("gapPct", m.group(1), 0.01, 5, m);
+                    else s.setNum("gapPoints", m.group(1), 1, 1000, m);
+                });
+
         // "opens >= 0.2% and < 1% away from the previous close": a gap either way, with a minimum and a maximum
         String AWAY = "\\s*(away\\s+)?from\\s+(the\\s+)?(previous|prev|yesterday'?s?)('?s)?\\s+close";
         String MIN = "(>=|≥|>|at\\s+least|more\\s+than|above|over)?\\s*";
@@ -408,6 +435,14 @@ public class StrategyDescriptionParser {
         s.match("\\bfailed[- ]break(out|down)(\\s+exit)?(\\s+(of|at|after))?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("failedBreakoutPoints", m.group(5), 1, 1000, m));
         s.match("\\bfailed[- ]break(out|down)(\\s+exit)?\\b", m -> s.note(m, "Failed-breakout exit: give the points, e.g. \"failed breakout exit 10 points\""));
         s.match("\\b" + NUM + "\\s*(points?|pts?)\\s+(sl|stop)\\s+cap\\b|\\b(max(imum)?\\s+(sl|stop)(\\s+distance)?|(sl|stop)\\s+cap)\\s*(of)?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("maxStopPoints", m.group(1) != null ? m.group(1) : m.group(10), 5, 3000, m));
+
+        // No trailing on candles (trailMinutes 0): the stop only moves by the breakeven step.
+        s.match("\\bno\\s+candle\\s+trail(ing)?\\b", m -> s.set("trailMinutes", "0", m, "No candle trail"));
+        // The month-end (monthly) expiry day.
+        s.match("\\b(skip|avoid|no\\s+trades?\\s+on)\\s+(the\\s+)?month[- ]end\\s+expir(y|ies)(\\s+days?)?\\b",
+                m -> s.set("skipMonthEndExpiry", "true", m, "No trades on the month-end expiry day"));
+        // Slippage allowance in index points (backtests).
+        s.match("\\bslippage\\s*(of|=|:)?\\s*" + NUM + "\\s*(points?|pts?)?", m -> s.setNum("slippagePoints", m.group(2), 0, 1000, m));
 
         // Weekdays to skip
         s.match("\\b(skip|avoid|no\\s+trades?\\s+on|don'?t\\s+trade\\s+on)\\s+((mon|tue|wed|thu|fri)[a-z]*(\\s*(,|and|&|/)\\s*(mon|tue|wed|thu|fri)[a-z]*)*)", m -> {

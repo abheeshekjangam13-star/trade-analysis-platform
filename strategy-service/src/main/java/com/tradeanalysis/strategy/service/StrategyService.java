@@ -1,5 +1,7 @@
 package com.tradeanalysis.strategy.service;
 
+import com.tradeanalysis.strategy.describe.StrategyDescriber;
+
 import com.tradeanalysis.strategy.report.BacktestDailyReport;
 import com.tradeanalysis.strategy.report.BacktestDailyReportRepository;
 import com.tradeanalysis.strategy.report.BacktestMonthlyStat;
@@ -68,6 +70,8 @@ public class StrategyService {
                     "You already have a strategy named '" + name + "'");
         checkStrategyLimit(owner);
         params = cleanParams(type, params);
+        // No description given: write one from the settings, which "create from description" reads back exactly.
+        if (description == null || description.isBlank()) description = StrategyDescriber.describe(type, params);
         Strategy strategy = new Strategy(name, description, type, params);
         strategy.setCreatedByUserId(owner);
         return stratRepo.save(strategy);
@@ -156,9 +160,9 @@ public class StrategyService {
         p = cleanParams(src.getType(), p);
         boolean lotsOnly = params == null && lots != null;
         String fallback = src.getName() + (lotsOnly ? " (" + lots + " lots)" : " (copy)");
-        String desc = description != null ? description
-                : (src.getDescription() == null || src.getDescription().isBlank() ? "" : src.getDescription() + "\n\n")
-                        + "Cloned from '" + src.getName() + "'" + (lotsOnly ? " with " + lots + " lots." : ".");
+        // No description given: describe the copy's own settings (its lots included). The source stays linked through
+        // clonedFromStrategyId, which the strategy page shows as "Cloned from".
+        String desc = description != null ? description : StrategyDescriber.describe(src.getType(), p);
         return saveCopy(src, CurrentUser.id().orElse(null), name, fallback, desc, p);
     }
 
@@ -277,6 +281,10 @@ public class StrategyService {
             if (!clean.equals(s.getParameters())) {
                 if (onlySkipMonthEndChanged(s.getParameters(), clean)) requireNoOpenPosition(s, "change the parameters of");
                 else requireNotTrading(s, "change the parameters of");
+                // A description written from the old settings (or none) follows the new ones; one the user wrote stays.
+                String old = s.getDescription();
+                if (description == null && (old == null || old.isBlank() || old.equals(StrategyDescriber.describe(s.getType(), s.getParameters()))))
+                    s.setDescription(StrategyDescriber.describe(s.getType(), clean));
                 s.setParameters(clean);
             }
         }
