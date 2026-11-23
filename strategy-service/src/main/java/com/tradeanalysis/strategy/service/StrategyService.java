@@ -489,6 +489,17 @@ public class StrategyService {
         return niftyRepo.findByBacktestResultId(backtestResultId);
     }
 
+    /**
+     * A backtest's trades; with a portfolio report, as that report counted them (its lots from the shared capital,
+     * trades it left out, max day loss exits; see PortfolioTrades). Read-only: the backtest's own trades never change.
+     */
+    @Transactional(readOnly = true)
+    public List<NiftyTradeLog> getNiftyTradeLogs(Long backtestResultId, Long portfolioReportId) {
+        List<NiftyTradeLog> trades = getNiftyTradeLogs(backtestResultId);
+        return portfolioReportId == null ? trades
+                : com.tradeanalysis.strategy.portfolio.PortfolioTrades.asCounted(jdbc, portfolioReportId, backtestResultId, trades);
+    }
+
     /** Trades of the caller's own backtests of a strategy (admins: everyone's). */
     @Transactional(readOnly = true)
     public List<NiftyTradeLog> getNiftyTradeLogsByStrategy(Long strategyId) {

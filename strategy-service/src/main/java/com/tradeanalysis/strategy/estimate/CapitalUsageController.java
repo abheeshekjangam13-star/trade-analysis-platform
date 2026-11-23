@@ -41,13 +41,13 @@ public class CapitalUsageController {
      */
     @GetMapping("/api/backtests/capital-usage/combined")
     @Operation(summary = "Capital used by these backtests' trades together: per trade and the peak at once (yours; admins: any)")
-    public Combined combined(@RequestParam List<Long> ids, @RequestParam double capital) {
+    public Combined combined(@RequestParam List<Long> ids, @RequestParam double capital, @RequestParam(required = false) Long report) {
         if (ids.size() > MAX_IDS) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At most " + MAX_IDS + " backtests at a time");
         List<NiftyTradeLog> trades = new ArrayList<>();
         Map<Long, Double> capitals = new HashMap<>();
         for (Long id : new LinkedHashSet<>(ids)) {
             // checks the caller may see it (else 404); trades a portfolio left out for capital used none
-            strategies.getNiftyTradeLogs(id).stream().filter(t -> t.getSkipReason() == null).forEach(trades::add);
+            strategies.getNiftyTradeLogs(id, report).stream().filter(t -> t.getSkipReason() == null).forEach(trades::add);
             capitals.put(id, capital);
         }
         estimates.estimate(trades, capitals);

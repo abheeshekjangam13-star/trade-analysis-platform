@@ -184,7 +184,6 @@ public class PortfolioService {
             }
             DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, minutes, dayLossAtLimit);
             List<NiftyTradeLog> kept = stop.kept();
-            storeFit(kept, fit.left(), stop.blocked());
             List<PortfolioReportItem> items = new ArrayList<>();
             for (Map.Entry<Long, Long> e : strategyOfBacktest.entrySet()) {
                 List<NiftyTradeLog> mine = kept.stream().filter(t -> e.getKey().equals(t.getBacktestResultId())).toList();
@@ -195,6 +194,8 @@ public class PortfolioService {
             made.setCapitalToFitAll(PortfolioMath.capitalToFitAll(all));   // kept and left out, at the lots asked for
             made.setDayLoss(maxDayLoss, stop.stops().size());
             PortfolioReport report = reports.save(made);
+            // The report's own version of the trades; the backtests' trades stay as each backtest made them.
+            PortfolioTrades.store(jdbc, report.getId(), kept, fit.left(), stop.blocked());
             replaceOlderReports(report);
             saved.add(report);
         }
@@ -240,31 +241,6 @@ public class PortfolioService {
         }
         log.info("PORTFOLIO_BACKTESTS strategies={} windows={} candleFetches={}", done.size(), longestFirst, candles.fetches());
         return done;
-    }
-
-    /**
-     * Stores the portfolio's capital fit and max day loss on its trades, so the Trades page shows what the report
-     * counted: the lots (and P&L) each kept trade was taken with and how it exited (MAX_DAY_LOSS when the stop closed
-     * it), the trades left out for lack of capital, marked CAPITAL, and those the max day loss kept out, marked
-     * MAX_DAY_LOSS. The backtests a report runs are its own (fresh per run), so this changes no other report.
-     */
-    private void storeFit(List<NiftyTradeLog> kept, List<NiftyTradeLog> left, List<NiftyTradeLog> blocked) {
-        List<Object[]> rows = new ArrayList<>();
-        for (NiftyTradeLog t : kept) rows.add(row(t, null));
-        for (NiftyTradeLog t : left) {
-            t.markSkipped("CAPITAL");
-            rows.add(row(t, "CAPITAL"));
-        }
-        for (NiftyTradeLog t : blocked) rows.add(row(t, DayLossStop.REASON));
-        if (!rows.isEmpty())
-            jdbc.batchUpdate("UPDATE nifty_trade_log SET lots = ?, estimated_pnl = ?, skip_reason = ?, exit_timestamp = ?, "
-                    + "exit_spot_price = ?, exit_reason = ?, option_symbol = ?, entry_premium = ?, exit_premium = ?, slippage = ? WHERE id = ?", rows);
-    }
-
-    private static Object[] row(NiftyTradeLog t, String skip) {
-        return new Object[]{t.getLots(), t.getEstimatedPnl(), skip,
-                t.getExitTimestamp() == null ? null : java.sql.Timestamp.from(t.getExitTimestamp()),
-                t.getExitSpotPrice(), t.getExitReason(), t.getOptionSymbol(), t.getEntryPremium(), t.getExitPremium(), t.getSlippage(), t.getId()};
     }
 
     /**

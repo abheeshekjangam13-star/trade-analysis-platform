@@ -48,9 +48,10 @@ public class NiftyTradeLogController {
     }
 
     @GetMapping("/backtest/{backtestResultId}")
-    @Operation(summary = "Get all trade logs for a specific backtest run")
-    public List<NiftyTradeLog> byBacktest(@PathVariable Long backtestResultId) {
-        return withCapital(svc.getNiftyTradeLogs(backtestResultId));
+    @Operation(summary = "Get all trade logs for a specific backtest run; with report, as that portfolio report counted them "
+            + "(lots from its shared capital, trades it left out, max day loss exits)")
+    public List<NiftyTradeLog> byBacktest(@PathVariable Long backtestResultId, @RequestParam(required = false) Long report) {
+        return withCapital(svc.getNiftyTradeLogs(backtestResultId, report));
     }
 
     @GetMapping("/strategy/{strategyId}")

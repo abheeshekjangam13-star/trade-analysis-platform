@@ -277,4 +277,16 @@ public class NiftyTradeLog {
     /** Marks the trade as left out (e.g. CAPITAL: not even one lot was free at its entry); its P&L is what it would have made. */
     public void markSkipped(String reason) { this.skipReason = reason; }
     public void setBacktestCapital(Double capital) { this.backtestCapital = capital; }
+
+    /**
+     * This trade as a portfolio report counted it (see PortfolioTrades): the lots the shared capital bought, the P&L at
+     * those lots, whether it was left out, and the exit (the max day loss may have closed it early). Only the copy in
+     * hand changes: never saved back over the backtest's own trade.
+     */
+    public void asCountedByPortfolio(int lots, double pnl, String skipReason, Instant exitTimestamp, double exitSpotPrice,
+                                     String exitReason, String optionSymbol, Double entryPremium, Double exitPremium, Double slippage) {
+        this.lots = lots; this.estimatedPnl = pnl; this.skipReason = skipReason;
+        this.exitTimestamp = exitTimestamp; this.exitSpotPrice = exitSpotPrice; this.exitReason = exitReason;
+        this.optionSymbol = optionSymbol; this.entryPremium = entryPremium; this.exitPremium = exitPremium; this.slippage = slippage;
+    }
 }

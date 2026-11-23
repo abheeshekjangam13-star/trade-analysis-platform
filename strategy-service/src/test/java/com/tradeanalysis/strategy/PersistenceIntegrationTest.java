@@ -65,7 +65,7 @@ class PersistenceIntegrationTest {
                 new DayReport(TUE, 0.60, "TRADED", null, 1));
         double net = trades.stream().mapToDouble(NiftyTradeLog::getEstimatedPnl).sum();
         when(engine.run(any(), anyString(), anyInt(), anyDouble(), any())).thenAnswer(inv -> new BacktestEngine.BacktestOutput(
-                100000 + net, net / 1000, 1.0, 3, 2, 0, List.of(), trades.stream().map(t ->
+                (double) inv.getArgument(3) + net, net / 1000, 1.0, 3, 2, 0, List.of(), trades.stream().map(t ->   // capital + P&L, as the engine
                         trade(t.getTradeDate(), t.getOptionType(), t.getEntrySpotPrice(), t.getExitSpotPrice(), t.getExitReason())).toList(),
                 days));
     }
@@ -135,23 +135,39 @@ class PersistenceIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM nifty_trade_log WHERE backtest_result_id = ?", Integer.class, oldBacktest)).isZero();
 
         // A capital too small for some trades (the in-the-money one costs more than ₹1,000 a lot; the far out-of-the-money
-        // ones are cheap): the report leaves those out, and the stored trades say which (and carry the capital their
-        // backtest ran with), so the Trades page can show them as skipped.
+        // ones are cheap): the report leaves those out, and its version of the trades says which (and carries the capital
+        // their backtest ran with), so the Trades page can show them as skipped.
         JsonNode tiny = call(post("/api/portfolios/" + portfolio.get("id").asText() + "/reports")
                 .param("windows", "30").param("capital", "1000"), 201);
         int left = tiny.get(0).get("skippedTrades").asInt();
         assertThat(left).isPositive();
         assertThat(tiny.get(0).get("trades").asInt() + left).isEqualTo(3);
         assertThat(tiny.get(0).get("capitalToFitAll").asDouble()).isGreaterThan(1000);   // what would fit them all
-        JsonNode tinyTrades = call(get("/api/nifty-trades/backtest/" + tiny.get(0).get("items").get(0).get("backtestResultId").asText()), 200);
+        String tinyBacktest = tiny.get(0).get("items").get(0).get("backtestResultId").asText();
+        // The backtest's own trades stay as the backtest made them, adding up to its stored result.
+        JsonNode own = call(get("/api/nifty-trades/backtest/" + tinyBacktest), 200);
+        assertThat(own.findValues("skipReason")).allMatch(JsonNode::isNull);
+        double ownNet = 0;
+        for (JsonNode t : own) ownNet += t.get("estimatedPnl").asDouble();
+        assertThat(ownNet).isCloseTo(jdbc.queryForObject("SELECT final_capital - initial_capital FROM backtest_result WHERE id = ?",
+                Double.class, Long.valueOf(tinyBacktest)), org.assertj.core.data.Offset.offset(0.01));
+        assertThat(own).hasSize(jdbc.queryForObject("SELECT total_trades FROM backtest_result WHERE id = ?", Integer.class, Long.valueOf(tinyBacktest)));
+        // The report's version: what it counted.
+        JsonNode tinyTrades = call(get("/api/nifty-trades/backtest/" + tinyBacktest).param("report", tiny.get(0).get("id").asText()), 200);
         assertThat(tinyTrades).hasSize(3);
+        double counted = 0;
+        for (JsonNode t : tinyTrades) if (t.path("skipReason").isNull() || t.path("skipReason").isMissingNode()) counted += t.get("estimatedPnl").asDouble();
+        assertThat(counted).isCloseTo(tiny.get(0).get("netPnl").asDouble(), org.assertj.core.data.Offset.offset(0.01));
+        // Only for a backtest that report combined.
+        call(get("/api/nifty-trades/backtest/" + tinyBacktest).param("report", rerun.get(0).get("id").asText()), 404);
         List<String> reasons = new java.util.ArrayList<>();
         tinyTrades.forEach(t -> reasons.add(t.path("skipReason").isNull() || t.path("skipReason").isMissingNode() ? "TAKEN" : t.get("skipReason").asText()));
         assertThat(reasons).filteredOn("CAPITAL"::equals).hasSize(left);
         assertThat(reasons).filteredOn("TAKEN"::equals).hasSize(3 - left);
         assertThat(tinyTrades.get(0).get("backtestCapital").asDouble()).isEqualTo(1000.0);
         // A report with room for every trade marks none.
-        JsonNode roomy = call(get("/api/nifty-trades/backtest/" + rerun.get(0).get("items").get(0).get("backtestResultId").asText()), 200);
+        JsonNode roomy = call(get("/api/nifty-trades/backtest/" + rerun.get(0).get("items").get(0).get("backtestResultId").asText())
+                .param("report", rerun.get(0).get("id").asText()), 200);
         assertThat(roomy.findValues("skipReason")).allMatch(JsonNode::isNull);
         assertThat(roomy.get(0).get("backtestCapital").asDouble()).isEqualTo(50000.0);
 
