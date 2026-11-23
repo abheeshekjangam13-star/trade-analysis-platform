@@ -141,4 +141,30 @@ class StrategyCloneIntegrationTest {
         body.put("name", "Broken");
         call(post("/api/strategies/" + meenas + "/clone").content(body.toString()), "meena", 400);
     }
+
+    @Test @Order(6)
+    void aBlankOrPrefilledDescriptionIsWrittenFromTheCopysSettings() throws Exception {
+        user("usha2", "GOLD");
+        long hers = ownCopyOfMaster("usha2", "Usha CE");
+        // Give the source the description the app writes from its settings, as the strategies in use have.
+        call(put("/api/strategies/" + hers).content("{\"description\":\"\"}"), "usha2", 200);
+        JsonNode source = call(get("/api/strategies/" + hers), "usha2", 200);
+        String sourceDesc = source.get("description").asText();
+        assertThat(sourceDesc).isNotBlank().doesNotContain("Skip Monday");    // a blank edit writes it from the settings
+
+        var params = (com.fasterxml.jackson.databind.node.ObjectNode) source.get("parameters").deepCopy();
+        params.put("skipDays", "MON,THU");
+        // The copy form sends a blank description, or the source's text it filled in: both describe the copy itself.
+        for (String desc : new String[]{"", sourceDesc}) {
+            var body = json.createObjectNode().put("description", desc);
+            body.set("parameters", params);
+            JsonNode c = call(post("/api/strategies/" + hers + "/clone").content(body.toString()), "usha2", 201);
+            assertThat(c.get("description").asText()).contains("Skip Monday and Thursday.").isNotEqualTo(sourceDesc);
+        }
+        // A description the user wrote is kept.
+        var body = json.createObjectNode().put("description", "My own words");
+        body.set("parameters", params);
+        assertThat(call(post("/api/strategies/" + hers + "/clone").content(body.toString()), "usha2", 201)
+                .get("description").asText()).isEqualTo("My own words");
+    }
 }

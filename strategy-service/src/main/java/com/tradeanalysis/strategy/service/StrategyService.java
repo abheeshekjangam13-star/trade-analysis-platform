@@ -160,9 +160,13 @@ public class StrategyService {
         p = cleanParams(src.getType(), p);
         boolean lotsOnly = params == null && lots != null;
         String fallback = src.getName() + (lotsOnly ? " (" + lots + " lots)" : " (copy)");
-        // No description given: describe the copy's own settings (its lots included). The source stays linked through
-        // clonedFromStrategyId, which the strategy page shows as "Cloned from".
-        String desc = description != null ? description : StrategyDescriber.describe(src.getType(), p);
+        // No description given (or a blank one, or the source's own written-from-settings text the copy form fills in):
+        // describe the copy's own settings (its lots included). The source stays linked through clonedFromStrategyId,
+        // which the strategy page shows as "Cloned from".
+        String srcDesc = src.getDescription();
+        boolean followsSettings = description == null || description.isBlank()
+                || (description.equals(srcDesc) && srcDesc.equals(StrategyDescriber.describe(src.getType(), src.getParameters())));
+        String desc = followsSettings ? StrategyDescriber.describe(src.getType(), p) : description;
         return saveCopy(src, CurrentUser.id().orElse(null), name, fallback, desc, p);
     }
 
@@ -275,7 +279,9 @@ public class StrategyService {
                         "You already have a strategy named '" + n + "'");
             s.setName(n);
         }
-        if (description != null) s.setDescription(description);
+        // A blank description means "write it from the settings", as when creating one.
+        boolean describe = description != null && description.isBlank();
+        if (description != null && !describe) s.setDescription(description);
         if (params != null) {
             Map<String, String> clean = cleanParams(s.getType(), params);
             if (!clean.equals(s.getParameters())) {
@@ -288,6 +294,7 @@ public class StrategyService {
                 s.setParameters(clean);
             }
         }
+        if (describe) s.setDescription(StrategyDescriber.describe(s.getType(), s.getParameters()));
         return stratRepo.save(s);
     }
 
