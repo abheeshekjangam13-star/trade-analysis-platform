@@ -299,15 +299,18 @@ public class TradingService {
     }
 
     /**
-     * These orders or positions without those of deleted strategies: a deleted strategy's paper and live trades are kept
-     * as the record but shown to admins only. Manual orders (no strategy) stay.
+     * These orders or positions without the PAPER ones of deleted strategies: a deleted strategy's paper trades are kept
+     * as the record but shown to admins only. LIVE trades always stay: they were real money, so the user's live P&L
+     * must count them. Manual orders (no strategy) stay.
      */
-    public <T> java.util.List<T> withoutDeletedStrategies(java.util.List<T> rows, java.util.function.Function<T, Long> strategyOf) {
+    public <T> java.util.List<T> withoutDeletedStrategies(java.util.List<T> rows, java.util.function.Function<T, Long> strategyOf,
+                                                          java.util.function.Function<T, TradingMode> modeOf) {
         java.util.Set<Long> ids = new java.util.HashSet<>();
-        for (T r : rows) if (strategyOf.apply(r) != null) ids.add(strategyOf.apply(r));
+        for (T r : rows) if (strategyOf.apply(r) != null && modeOf.apply(r) != TradingMode.LIVE) ids.add(strategyOf.apply(r));
         if (ids.isEmpty()) return rows;
         java.util.Set<Long> deleted = strategyRepo.findDeletedIds(ids);
-        return deleted.isEmpty() ? rows : rows.stream().filter(r -> !deleted.contains(strategyOf.apply(r))).toList();
+        return deleted.isEmpty() ? rows
+                : rows.stream().filter(r -> modeOf.apply(r) == TradingMode.LIVE || !deleted.contains(strategyOf.apply(r))).toList();
     }
 
     /** Whether the caller is an ADMIN (non-admins only see paper trading). */

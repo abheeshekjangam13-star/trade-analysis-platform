@@ -187,11 +187,12 @@ class StrategyEditDeleteIntegrationTest {
         long t = create("ravi", "Has live trades");
         jdbc.update("INSERT INTO live_position (strategy_id, user_id, trade_date, mode, option_type, quantity, entry_candle, entry_spot, "
                 + "status, opened_at) VALUES (?, ?, CURRENT_DATE, 'LIVE', 'CE', 65, CURRENT_TIMESTAMP, 24000, 'CLOSED', CURRENT_TIMESTAMP)", t, id("ravi"));
-        call(delete("/api/strategies/" + t), "ravi", 204);   // its LIVE trades stay, for admins only
+        call(delete("/api/strategies/" + t), "ravi", 204);   // its LIVE trades stay, and its owner still sees them
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM live_position WHERE strategy_id = ?", Integer.class, t)).isOne();
-        // a deleted strategy's paper and live trades are shown to admins only
+        // a deleted strategy's paper trades are shown to admins only; its live trades were real money, so they always count
         String days = "/api/trading/positions/history?from=" + java.time.LocalDate.now().minusDays(2) + "&to=" + java.time.LocalDate.now().plusDays(2);
-        assertThat(call(get(days), "ravi", 200).findValuesAsText("strategyId")).doesNotContain(String.valueOf(s), String.valueOf(t));
+        assertThat(call(get(days), "ravi", 200).findValuesAsText("strategyId")).doesNotContain(String.valueOf(s)).contains(String.valueOf(t));
+        assertThat(call(get("/api/trading/positions"), "ravi", 200).findValuesAsText("strategyId")).doesNotContain(String.valueOf(s)).contains(String.valueOf(t));
         assertThat(call(get(days), "admin", 200).findValuesAsText("strategyId")).contains(String.valueOf(s), String.valueOf(t));
         assertThat(call(get("/api/users/me/usage"), "ravi", 200).get("maxDeletes").asInt()).isEqualTo(-1);   // GOLD: no limit
     }

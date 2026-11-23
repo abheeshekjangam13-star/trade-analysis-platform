@@ -208,7 +208,7 @@ public class TradingController {
         LocalDate day = date == null ? orders.today() : date;
         return trading.isAdmin() ? orderRepo.findByTradeDateOrderByCreatedAtDesc(day)          // admins: everyone's
                 : trading.withoutDeletedStrategies(orderRepo.findByTradeDateAndUserIdOrderByCreatedAtDesc(day, CurrentUser.id().orElseThrow()),
-                        TradeOrder::getStrategyId);
+                        TradeOrder::getStrategyId, TradeOrder::getMode);
     }
 
     @PostMapping("/orders")
@@ -239,7 +239,7 @@ public class TradingController {
         LocalDate day = date == null ? orders.today() : date;
         return trading.isAdmin() ? positionRepo.findByTradeDateOrderByOpenedAtDesc(day)
                 : trading.withoutDeletedStrategies(positionRepo.findByTradeDateAndUserIdOrderByOpenedAtDesc(day, CurrentUser.id().orElseThrow()),
-                        LivePosition::getStrategyId);
+                        LivePosition::getStrategyId, LivePosition::getMode);
     }
 
     /** At most this many days per history request. */
@@ -247,7 +247,7 @@ public class TradingController {
 
     @GetMapping("/positions/history")
     @Operation(summary = "Strategy positions (paper and live) between two days, oldest first: for the dashboard's history "
-            + "(default the last 90 days, at most " + MAX_HISTORY_DAYS + " days). Non-admins see their own, without deleted strategies' trades")
+            + "(default the last 90 days, at most " + MAX_HISTORY_DAYS + " days). Non-admins see their own, without deleted strategies' paper trades")
     public List<LivePosition> positionHistory(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
@@ -258,7 +258,7 @@ public class TradingController {
             throw new TradingException("Pick at most " + MAX_HISTORY_DAYS + " days");
         return trading.isAdmin() ? positionRepo.findByTradeDateBetweenOrderByTradeDateAscOpenedAtAsc(start, end)
                 : trading.withoutDeletedStrategies(positionRepo.findByTradeDateBetweenAndUserIdOrderByTradeDateAscOpenedAtAsc(
-                        start, end, CurrentUser.id().orElseThrow()), LivePosition::getStrategyId);
+                        start, end, CurrentUser.id().orElseThrow()), LivePosition::getStrategyId, LivePosition::getMode);
     }
 
     /** Your own Kite or Angel One account (admins without one: the platform Kite account). */
