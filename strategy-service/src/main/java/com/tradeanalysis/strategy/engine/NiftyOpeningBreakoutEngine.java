@@ -410,9 +410,11 @@ public class NiftyOpeningBreakoutEngine {
             TrailingStopLoss stop = null;
             double openTarget  = 0;   // target distance in points for the open trade (0 = none)
             double prevClose   = lastRef.close().doubleValue();
+            Instant walkedTo   = null;   // end of the last completed 5-min candle walked
 
             for (Candle candle : tradingCandles) {
                 if (candle.timestamp().plus(TrailingStopLoss.ENTRY_CANDLE).isAfter(now)) break; // still forming
+                walkedTo = candle.timestamp().plus(TrailingStopLoss.ENTRY_CANDLE);
                 LocalTime ist = candle.timestamp().atZone(IST).toLocalTime();
                 double spot   = candle.close().doubleValue();
 
@@ -496,6 +498,7 @@ public class NiftyOpeningBreakoutEngine {
 
             // Residual open position that didn't hit EOD candle (data ends before 15:20)
             if (open != null && !closeAtEnd) {
+                if (walkedTo != null) trailFormingCandle(stop, open, openTarget, walkedTo, date, oneMin, now);
                 open.trackStop(stop.currentStop());
                 openTrades.add(open);
                 open = null;
@@ -537,6 +540,25 @@ public class NiftyOpeningBreakoutEngine {
             }
         }
         return null;
+    }
+
+    /**
+     * Live: trails the open trade's stop on the completed 1-min candles of the 5-min candle still forming, so the
+     * stop the runner saves (and the exit watcher and Trading page use) moves within a minute instead of at the next
+     * 5-min close. Same order as {@link #checkExit}; it never exits: on a bar that reaches the stop or the target it
+     * stops there and leaves the exit to the exit watcher and the next 5-min close.
+     */
+    private void trailFormingCandle(TrailingStopLoss stop, NiftyTradeLog trade, double targetPoints, Instant from,
+                                    LocalDate date, NavigableMap<Instant, Candle> oneMin, Instant now) {
+        Instant eod = date.atTime(EOD_EXIT_TIME).atZone(IST).toInstant();
+        for (Candle bar : oneMin.subMap(from, true, eod, false).values()) {
+            if (bar.timestamp().plus(TrailingStopLoss.TRAIL_CANDLE).isAfter(now)) break;   // still forming
+            if (stop.isHitWithin(bar) || targetExit(trade, targetPoints, bar) != null) break;
+            if (stop.onCandle(bar, now) == TrailingStopLoss.UpdateOutcome.MISSING_CANDLES) {
+                stop.resyncTo(bar.timestamp().minus(TrailingStopLoss.TRAIL_CANDLE));
+                stop.onCandle(bar, now);
+            }
+        }
     }
 
     /** Completed 5-min candle closed back inside the reference range before the stop started trailing. */

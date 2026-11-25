@@ -583,6 +583,41 @@ class NiftyOpeningBreakoutEngineTest {
         assertThat(backtest.tradeLogs()).extracting(NiftyTradeLog::getExitReason).containsExactly("EOD_SQUAREOFF");
     }
 
+    @Test
+    void runLiveTrailsTheStopOnTheFormingCandlesClosedMinutes() {
+        // CE entry 24120 at the 09:20 close (stop 24050); +20 → breakeven. At 09:28 the 09:25 candle is still forming.
+        List<Candle> fiveMin = List.of(REF, bar(9, 20, 24060, 24130, 24060, 24120));
+        List<Candle> oneMin = List.of(
+                bar(9, 25, 24120, 24145, 24122, 24140),   // +25: armed → stop to entry 24120
+                bar(9, 26, 24140, 24150, 24130, 24145),
+                bar(9, 27, 24145, 24148, 24135, 24140),
+                bar(9, 28, 24140, 24141, 24100, 24105));  // still forming at 09:28: ignored
+        Params p = params("trailMinutes", "10", "trailAfterPoints", "20", "breakevenOnTrail", "true");
+
+        NiftyOpeningBreakoutEngine.BreakoutResult live = engine.runLive(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin), p, 1L, at(9, 28), null);
+
+        assertThat(live.tradeLogs()).isEmpty();
+        assertThat(live.openTrades()).hasSize(1);
+        assertThat(live.openTrades().get(0).getFinalStopLoss()).isEqualTo(24120.0);   // not 24050 until the 09:30 close
+    }
+
+    @Test
+    void runLiveNeverExitsOnTheFormingCandleAndStopsTrailingAtATouch() {
+        List<Candle> fiveMin = List.of(REF, bar(9, 20, 24060, 24130, 24060, 24120));
+        List<Candle> oneMin = List.of(
+                bar(9, 25, 24120, 24125, 24040, 24045),   // touches the 24050 stop: left to the exit watcher
+                bar(9, 26, 24045, 24150, 24045, 24145));  // would arm breakeven, but walking stopped at the touch
+        Params p = params("trailMinutes", "10", "trailAfterPoints", "20", "breakevenOnTrail", "true");
+
+        NiftyOpeningBreakoutEngine.BreakoutResult live = engine.runLive(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
+                new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin), p, 1L, at(9, 28), null);
+
+        assertThat(live.tradeLogs()).isEmpty();
+        assertThat(live.openTrades()).hasSize(1);
+        assertThat(live.openTrades().get(0).getFinalStopLoss()).isEqualTo(24050.0);
+    }
+
     // 10:45 reference candle: high 24,372, low 24,345 (Candles.DAY is Tue 27 Oct 2026).
     private static final Candle REF_1045 = bar(10, 45, 24360, 24372, 24345, 24369);
 

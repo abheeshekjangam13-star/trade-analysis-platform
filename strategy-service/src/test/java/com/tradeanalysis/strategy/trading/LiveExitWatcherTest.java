@@ -39,6 +39,19 @@ class LiveExitWatcherTest {
     }
 
     @Test
+    void breakevenMovesTheStopToEntryPlusTheLockOnceThePriceIsTrailAfterPointsInFavour() {
+        // #183 on 25 Nov: CE from 25,774.1, breakeven after +40 locking 10 → stop 25,784.1 once Nifty reaches 25,814.1.
+        LivePosition ce = new LivePosition(183L, 7L, LocalDate.of(2026, 11, 25), TradingMode.LIVE, "CE", "X", 260, Instant.EPOCH, 25774.1, 25674.1);
+        Params be = p("trailAfterPoints", "40", "breakevenOnTrail", "true", "breakevenLockPoints", "10");
+        assertThat(LiveExitWatcher.breakevenStop(ce, be, 25814.0)).isNull();
+        assertThat(LiveExitWatcher.breakevenStop(ce, be, 25817.7)).isCloseTo(25784.1, org.assertj.core.data.Offset.offset(1e-9));
+        LivePosition pe = new LivePosition(1L, 1L, LocalDate.of(2026, 11, 25), TradingMode.PAPER, "PE", "X", 65, Instant.EPOCH, 25000, 25060.0);
+        assertThat(LiveExitWatcher.breakevenStop(pe, p("trailAfterPoints", "20", "breakevenOnTrail", "true"), 24980)).isEqualTo(25000.0);
+        assertThat(LiveExitWatcher.breakevenStop(ce, p("trailAfterPoints", "40"), 25900)).isNull();                        // no breakeven
+        assertThat(LiveExitWatcher.breakevenStop(ce, p("trailAfterR", "1", "breakevenOnTrail", "true"), 25900)).isNull();   // R: minute run
+    }
+
+    @Test
     void theTargetIsEntryPlusOrMinusTargetPointsWhereThatIsTheRule() {
         LivePosition ce = new LivePosition(1L, 1L, LocalDate.of(2026, 11, 3), TradingMode.PAPER, "CE", "X", 65, Instant.EPOCH, 24190, 24115.0);
         LivePosition pe = new LivePosition(1L, 1L, LocalDate.of(2026, 11, 3), TradingMode.PAPER, "PE", "X", 65, Instant.EPOCH, 24190, 24250.0);

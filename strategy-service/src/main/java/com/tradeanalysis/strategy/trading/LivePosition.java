@@ -23,6 +23,7 @@ public class LivePosition {
     @Column(nullable = false) private Instant entryCandle;
     private double entrySpot;
     private Double currentStop;
+    private Instant stopFrom;     // first 1-min candle currentStop applies to (null = every candle after entry)
     private Long entryOrderId;
     private Double entryPrice;
     private Long exitOrderId;
@@ -50,7 +51,18 @@ public class LivePosition {
         if (order.getStatus() == TradeOrder.Status.REJECTED) { status = Status.FAILED; message = order.getMessage(); closedAt = Instant.now(); }
     }
     void failed(String why)                  { status = Status.FAILED; message = why; closedAt = Instant.now(); }
-    void trackStop(Double stop)              { currentStop = stop; }
+    /**
+     * Moves the stop only in the trade's favour (up for CE, down for PE), as the engines' stops only ever move, so a
+     * stop the exit watcher already lifted to breakeven is never put back by a minute run that hasn't seen it yet.
+     * {@code from}: the first 1-minute candle the new stop applies to. True when the stop changed.
+     */
+    boolean tightenStop(Double stop, Instant from) {
+        if (stop == null) return false;
+        boolean call = "CE".equals(optionType);
+        if (currentStop != null && (call ? stop <= currentStop : stop >= currentStop)) return false;
+        currentStop = stop; stopFrom = from;
+        return true;
+    }
     void entryPrice(Double price)            { if (price != null && price > 0) entryPrice = price; }
     void closed(TradeOrder exit, Double exitSpot, String reason, Double pnl, String msg) {
         exitOrderId = exit == null ? null : exit.getId();
@@ -73,6 +85,7 @@ public class LivePosition {
     public Instant getEntryCandle() { return entryCandle; }
     public double getEntrySpot()    { return entrySpot; }
     public Double getCurrentStop()  { return currentStop; }
+    public Instant getStopFrom()    { return stopFrom; }
     public Long getEntryOrderId()   { return entryOrderId; }
     public Double getEntryPrice()   { return entryPrice; }
     public Long getExitOrderId()    { return exitOrderId; }

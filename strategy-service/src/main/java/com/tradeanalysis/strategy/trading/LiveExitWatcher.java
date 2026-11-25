@@ -25,7 +25,8 @@ import java.util.*;
  * the live index price (through {@link QuoteCache}: one Kite call a second for the whole account, shared with the
  * screens) and compares it with each open position's
  * <ul>
- *   <li>stop: the one the engine keeps (trailed every minute by {@link LiveStrategyRunner}), and</li>
+ *   <li>stop: the one the engine keeps (trailed every minute by {@link LiveStrategyRunner}), lifted to breakeven
+ *       (entry ± breakevenLockPoints) the moment the price reaches trailAfterPoints with breakevenOnTrail, and</li>
  *   <li>target: entry ± targetPoints, for the strategies whose target is that (not gap fill, not a targetR target,
  *       which stay with the minute run).</li>
  * </ul>
@@ -120,11 +121,18 @@ public class LiveExitWatcher {
         Instant now = clock.instant();
         List<String> did = new ArrayList<>();
         Set<Long> closed = new HashSet<>();
+        Map<Long, Stop> stops = new HashMap<>();
+        for (LivePosition p : open) stops.put(p.getId(), new Stop(p.getCurrentStop(), p.getStopFrom()));
         if (q.asOf() != null && !q.asOf().isBefore(now.minus(MAX_QUOTE_AGE))) {   // no fresh price: skip, never act on an old one
             for (LivePosition p : open) {
                 Double spot = q.prices().get(symbol.get(p.getId()));
                 if (spot == null) continue;
-                String reason = touched(p.getOptionType(), spot, p.getCurrentStop(), target(p, params.get(p.getStrategyId())));
+                // At the breakeven trigger now: the stop moves to entry (± lock) at once, not at the next minute run.
+                // The minute now forming may already have traded below it, so candle checks apply it from the next one.
+                Stop stop = protect(p, params.get(p.getStrategyId()), spot, stops.get(p.getId()),
+                        now.truncatedTo(java.time.temporal.ChronoUnit.MINUTES).plusSeconds(60));
+                stops.put(p.getId(), stop);
+                String reason = touched(p.getOptionType(), spot, stop.level(), target(p, params.get(p.getStrategyId())));
                 if (reason == null) continue;
                 String r = runner.exitOnTouch(p.getId(), spot, reason);
                 if (r != null) {
@@ -136,7 +144,7 @@ public class LiveExitWatcher {
         }
         if (!now.isBefore(lastCandleCheck.plus(candleEvery))) {
             lastCandleCheck = now;
-            did.addAll(checkCandles(open, closed, params, symbol, now));
+            did.addAll(checkCandles(open, closed, params, symbol, stops, now));
         }
         if (dayLossDue) {
             lastDayLossCheck = now;
@@ -159,7 +167,7 @@ public class LiveExitWatcher {
      * position's entry minute count, so a move before the entry never closes it.
      */
     private List<String> checkCandles(List<LivePosition> open, Set<Long> closed, Map<Long, Params> params,
-                                      Map<Long, String> symbol, Instant now) {
+                                      Map<Long, String> symbol, Map<Long, Stop> stops, Instant now) {
         Instant minute = now.truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
         Map<String, List<KiteApi.MinuteBar>> bars = new HashMap<>();
         List<String> did = new ArrayList<>();
@@ -168,12 +176,20 @@ public class LiveExitWatcher {
             String index = symbol.get(p.getId()).substring("NSE:".length());
             List<KiteApi.MinuteBar> mine = bars.computeIfAbsent(index, i -> minuteBars(i, minute.minusSeconds(60), now));
             Instant entryMinute = enteredAt(p, now).truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
-            Double stop = p.getCurrentStop(), target = target(p, params.get(p.getStrategyId()));
+            Stop stop = stops.getOrDefault(p.getId(), new Stop(p.getCurrentStop(), p.getStopFrom()));
+            Double target = target(p, params.get(p.getStrategyId()));
             for (KiteApi.MinuteBar b : mine) {
                 if (!b.start().isAfter(entryMinute)) continue;
-                String reason = touchedRange(p.getOptionType(), b.high(), b.low(), stop, target);
-                if (reason == null) continue;
-                double level = "SL_HIT".equals(reason) ? stop : target;
+                // A stop counts only on candles from when it applies; the target always does. Then, as the engine
+                // does, the candle's best price may reach the breakeven trigger: the stop moves from the next candle.
+                Double sl = stop.from() == null || !b.start().isBefore(stop.from()) ? stop.level() : null;
+                String reason = touchedRange(p.getOptionType(), b.high(), b.low(), sl, target);
+                if (reason == null) {
+                    stop = protect(p, params.get(p.getStrategyId()), "CE".equals(p.getOptionType()) ? b.high() : b.low(), stop,
+                            b.start().plusSeconds(60));
+                    continue;
+                }
+                double level = "SL_HIT".equals(reason) ? sl : target;
                 String r = runner.exitOnTouch(p.getId(), level, reason);
                 if (r != null) {
                     log.info("EXIT_WATCH {} (candle {} high {} low {})", r, b.start().atZone(IST).toLocalTime(), b.high(), b.low());
@@ -208,6 +224,44 @@ public class LiveExitWatcher {
             lastCandleProblem = e.getMessage();
             return List.of();
         }
+    }
+
+    /** A position's stop as the watcher sees it this second, and the first 1-min candle it applies to (null = all). */
+    record Stop(Double level, Instant from) {}
+
+    /**
+     * When {@code price} has reached the strategy's breakeven trigger (entry ± trailAfterPoints with breakevenOnTrail)
+     * and that stop is tighter than the current one: saves it through the runner and returns it (applying from
+     * {@code from}); otherwise the stop as it was. Trailing on candle blocks stays with the minute run.
+     */
+    private Stop protect(LivePosition p, Params params, double price, Stop current, Instant from) {
+        Double be = params == null ? null : breakevenStop(p, params, price);
+        if (be == null || !tighter(p.getOptionType(), be, current.level())) return current;
+        if (!runner.protectStop(p.getId(), be, from)) return current;
+        log.info("EXIT_WATCH_BREAKEVEN #{} {} user {}: stop {} → {} at index {}", p.getStrategyId(), p.getMode(), p.getUserId(),
+                current.level(), be, price);
+        return new Stop(be, from);
+    }
+
+    /**
+     * The breakeven stop (entry, or entry ± breakevenLockPoints in the trade's favour) once {@code price} is
+     * trailAfterPoints in favour of the entry, with breakevenOnTrail set; else null. The same trigger the engines arm
+     * on (a 1-minute candle's high for CE, low for PE). A trailAfterR trigger needs the initial risk, so it stays
+     * with the minute run.
+     */
+    static Double breakevenStop(LivePosition p, Params params, double price) {
+        if (!Boolean.parseBoolean(params.stringOr("breakevenOnTrail", "false").trim())) return null;
+        double after = params.doubleOr("trailAfterPoints", 0);
+        if (after <= 0 || params.doubleOr("trailAfterR", 0) > 0) return null;
+        boolean call = "CE".equals(p.getOptionType());
+        double entry = p.getEntrySpot();
+        if ((call ? price - entry : entry - price) < after) return null;
+        double lock = params.doubleOr("breakevenLockPoints", 0);
+        return call ? entry + lock : entry - lock;
+    }
+
+    private static boolean tighter(String optionType, double stop, Double current) {
+        return current == null || ("CE".equals(optionType) ? stop > current : stop < current);
     }
 
     /** "SL_HIT" or "TARGET_HIT" when a candle's range reached the stop or the target (stop first), else null. */

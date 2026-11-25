@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 /**
@@ -121,6 +122,19 @@ public class LiveStrategyRunner {
         }
         synchronized (positionLock) { report.addAll(enforceDayLoss()); }
         return report;
+    }
+
+    /**
+     * From {@link LiveExitWatcher}: the live price reached a strategy's breakeven trigger before the minute run saw it.
+     * Lifts the open position's stop (never loosens it) under the lock; true when it moved.
+     */
+    public boolean protectStop(Long positionId, double stop, Instant from) {
+        synchronized (positionLock) {
+            LivePosition p = positions.findById(positionId).orElse(null);
+            if (p == null || p.getStatus() != LivePosition.Status.OPEN || !p.tightenStop(stop, from)) return false;
+            positions.save(p);
+            return true;
+        }
     }
 
     /**
@@ -290,10 +304,11 @@ public class LiveStrategyRunner {
                 did.add(enter(cfg, s, params, t, today));
             } else if (existing.get().getStatus() == LivePosition.Status.OPEN) {
                 LivePosition p = existing.get();
+                // The engine has walked every closed 1-min candle, so its stop applies from the minute now forming.
+                boolean moved = p.tightenStop(t.getFinalStopLoss(), now.truncatedTo(ChronoUnit.MINUTES));
                 if (stillOpen) {
-                    p.trackStop(t.getFinalStopLoss());
-                    positions.save(p);
-                } else {
+                    if (moved) positions.save(p);
+                } else {   // the closed trade keeps the stop it exited at, not the one it started with
                     did.add(exit(p, t.getExitSpotPrice(), t.getExitReason(), estimate(t), "STRATEGY", params));
                 }
             }

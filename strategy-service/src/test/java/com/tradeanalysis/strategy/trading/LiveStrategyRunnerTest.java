@@ -234,6 +234,85 @@ class LiveStrategyRunnerTest {
         assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0).getStatus()).isEqualTo(LivePosition.Status.OPEN);
     }
 
+    /** Strategy #56 with breakeven after +30 points (the engine never arms it: the candles' best is 24,200, +10). */
+    private void withBreakeven(Runnable test) {
+        String keys = "('trailAfterPoints', 'breakevenOnTrail', 'breakevenLockPoints', 'trailAfterR')";
+        List<Map<String, Object>> saved = jdbc.queryForList("SELECT param_key, param_value FROM strategy_param WHERE strategy_id = 56 AND param_key IN " + keys);
+        jdbc.update("DELETE FROM strategy_param WHERE strategy_id = 56 AND param_key IN " + keys);
+        jdbc.update("INSERT INTO strategy_param (strategy_id, param_key, param_value) VALUES (56, 'trailAfterPoints', '30'), (56, 'breakevenOnTrail', 'true')");
+        try { test.run(); }
+        finally {   // #56 as seeded for the other tests
+            jdbc.update("DELETE FROM strategy_param WHERE strategy_id = 56 AND param_key IN " + keys);
+            for (Map<String, Object> r : saved)
+                jdbc.update("INSERT INTO strategy_param (strategy_id, param_key, param_value) VALUES (56, ?, ?)", r.get("param_key"), r.get("param_value"));
+        }
+    }
+
+    @Test
+    void theExitWatcherMovesTheStopToBreakevenTheMomentThePriceReachesTheTrigger() {
+        withBreakeven(() -> {
+            prices(120.0, 24180);
+            CLOCK.set(at(TUE, 9, 26));
+            runner.runAll();                                                       // CE from 24,190, stop 24,115
+
+            prices(130.0, 24221);                                                  // +31: past the +30 trigger
+            CLOCK.set(at(TUE, 9, 26).plusSeconds(20));
+            assertThat(watcher.check()).isEmpty();
+            LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+            assertThat(p.getCurrentStop()).isEqualTo(24190.0);                     // at once, not at the next minute run
+            assertThat(p.getStopFrom()).isEqualTo(at(TUE, 9, 27));                 // candles from the next minute on
+
+            CLOCK.set(at(TUE, 9, 27).plusSeconds(3));                              // the minute run hasn't armed it: it never loosens it
+            runner.runAll();
+            assertThat(positions.findById(p.getId()).orElseThrow().getCurrentStop()).isEqualTo(24190.0);
+
+            prices(118.0, 24189);                                                  // back below the entry
+            CLOCK.set(at(TUE, 9, 27).plusSeconds(20));
+            assertThat(watcher.check()).anyMatch(l -> l.contains("SELL 130 NIFTY26N0324150CE (SL_HIT)"));
+            p = positions.findById(p.getId()).orElseThrow();
+            assertThat(p.getExitSpot()).isEqualTo(24189.0);
+            assertThat(p.getCurrentStop()).isEqualTo(24190.0);                     // the closed trade keeps the stop it exited at
+        });
+    }
+
+    @Test
+    void aBreakevenStopIsNeverHitByTheEarlierLowOfTheMinuteThatArmedIt() {
+        withBreakeven(() -> {
+            prices(120.0, 24180);
+            CLOCK.set(at(TUE, 9, 26));
+            runner.runAll();
+            // The 09:26 candle went down to 24,170 and then up to 24,225 (+35): breakeven, but not hit by that low.
+            watcher.readCandlesNextCheck();
+            when(kite.minuteBars(eq("NIFTY 50"), any(), any())).thenReturn(List.of(new KiteApi.MinuteBar(at(TUE, 9, 26), 24225, 24170)));
+            CLOCK.set(at(TUE, 9, 26).plusSeconds(50));
+            assertThat(watcher.check()).isEmpty();
+            LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+            assertThat(p.getStatus()).isEqualTo(LivePosition.Status.OPEN);
+            assertThat(p.getCurrentStop()).isEqualTo(24190.0);
+
+            // The 09:27 candle dips to 24,185: that one counts.
+            prices(118.0, 24195);
+            watcher.readCandlesNextCheck();
+            when(kite.minuteBars(eq("NIFTY 50"), any(), any())).thenReturn(List.of(
+                    new KiteApi.MinuteBar(at(TUE, 9, 26), 24225, 24170), new KiteApi.MinuteBar(at(TUE, 9, 27), 24200, 24185)));
+            CLOCK.set(at(TUE, 9, 27).plusSeconds(20));
+            assertThat(watcher.check()).anyMatch(l -> l.contains("SELL 130 NIFTY26N0324150CE (SL_HIT)"));
+            assertThat(positions.findById(p.getId()).orElseThrow().getExitSpot()).isEqualTo(24190.0);   // at the stop
+        });
+    }
+
+    @Test
+    void theMinuteRunRecordsTheStopATradeExitedAt() {
+        prices(120.0, 24180);
+        CLOCK.set(at(TUE, 9, 26));
+        runner.runAll();
+        CLOCK.set(at(TUE, 9, 31));
+        prices(100.0, 24110);
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("(SL_HIT)"));
+        LivePosition p = positions.findByTradeDateOrderByOpenedAtDesc(TUE).get(0);
+        assertThat(p.getCurrentStop()).isNotNull().isGreaterThanOrEqualTo(24115.0);   // the engine's stop at the exit, never looser
+    }
+
     @Test
     void theExitWatcherTakesTheTargetToo() {
         prices(120.0, 24180);
