@@ -8,6 +8,7 @@ import com.tradeanalysis.common.indicator.Params;
 import com.tradeanalysis.common.market.Underlying;
 import com.tradeanalysis.strategy.engine.MarketDataClient;
 import com.tradeanalysis.strategy.engine.NiftyOpeningBreakoutEngine;
+import com.tradeanalysis.strategy.estimate.PairStop;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.model.Strategy;
 import com.tradeanalysis.strategy.service.StrategyService;
@@ -169,6 +170,8 @@ public class LiveStrategyRunner {
             if (p == null || p.getStatus() != LivePosition.Status.OPEN) return null;
             Strategy s = strategies.load(p.getStrategyId());
             Params params = new Params(new HashMap<>(s.getParameters() == null ? Map.of() : s.getParameters()));
+            Double pairLevel = pairLevels.remove(p.getId());
+            if ("SL_HIT".equals(reason) && pairLevel != null && pairLevel.equals(p.getCurrentStop())) reason = PairStop.REASON;
             return "#" + p.getStrategyId() + " " + p.getMode() + " user " + p.getUserId() + ": " + exit(p, spot, reason, null, "STRATEGY", params);
         }
     }
@@ -409,10 +412,80 @@ public class LiveStrategyRunner {
         if (req == null) req = new OrderRequest("NFO", p.getTradingsymbol(), "SELL", qty, entry == null ? "MIS" : entry.getProduct(), "MARKET", null, null);
         TradeOrder o = orderService.place(req, p.getMode(), source, p.getStrategyId(), p.getUserId(), true);
         if (entry != null) p.entryPrice(entry.getAveragePrice());
-        p.closed(o, exitSpot, reason, pnl(p, o, estimate, params), o.getMessage());
+        String msg = o.getMessage();
+        if (PairStop.REASON.equals(reason) && p.getMessage() != null && p.getMessage().startsWith(PAIR_NOTE))   // say why
+            msg = p.getMessage() + (msg == null || msg.isBlank() ? "" : " · " + msg);
+        p.closed(o, exitSpot, reason, pnl(p, o, estimate, params), msg == null || msg.length() <= 512 ? msg : msg.substring(0, 512));
         positions.save(p);
         alerts.positionClosed(p);
-        return "SELL " + qty + " " + p.getTradingsymbol() + " (" + reason + ")";
+        String did = "SELL " + qty + " " + p.getTradingsymbol() + " (" + reason + ")";
+        String pair = pairStop(p);
+        return pair == null ? did : did + "; " + pair;
+    }
+
+    /** How the pair stop's note on the partner starts; the exit keeps it, so the user sees why it was closed. */
+    static final String PAIR_NOTE = "Pair stop: ";
+
+    /** "#56 CE gap-up" for messages; just "#56" when the strategy can't be read. */
+    private String strategyLabel(Long id) {
+        try {
+            String name = strategies.load(id).getName();
+            return "#" + id + (name == null || name.isBlank() ? "" : " " + name);
+        } catch (RuntimeException e) {
+            return "#" + id;
+        }
+    }
+
+    /** Positions whose stop was moved by the pair stop, with the level it was moved to: a touch there is a PAIR_STOP. */
+    private final Map<Long, Double> pairLevels = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The pair stop (the user's setting, off when null; PairStop for backtests): when {@code p} was just stopped out at a
+     * loss, the user's other open positions in the same option from the same signal minute (another strategy that bought
+     * it too) are closed at once (0 points), or get their stop moved to that many index points past p's exit (lower for
+     * calls, higher for puts), which the exit watcher then closes as PAIR_STOP. Call under the lock. What it did, or null.
+     */
+    private String pairStop(LivePosition p) {
+        if (!"SL_HIT".equals(p.getExitReason()) || p.getTradingsymbol() == null || p.getEntryCandle() == null) return null;
+        boolean call = "CE".equals(p.getOptionType());
+        Double spot = p.getExitSpot();
+        boolean lost = p.getPnl() != null ? p.getPnl() < 0 : spot != null && (call ? spot < p.getEntrySpot() : spot > p.getEntrySpot());
+        if (!lost) return null;
+        Integer points;
+        try { points = orderService.pairStopPoints(p.getUserId()); }
+        catch (RuntimeException e) { log.warn("PAIR_STOP_CHECK_FAILED user={}: {}", p.getUserId(), e.getMessage()); return null; }
+        if (points == null || points < 0) return null;
+        List<LivePosition> partners = positions.findByTradeDateAndModeAndStatus(p.getTradeDate(), p.getMode(), LivePosition.Status.OPEN).stream()
+                .filter(o -> !o.getId().equals(p.getId()) && Objects.equals(o.getUserId(), p.getUserId())
+                        && p.getTradingsymbol().equals(o.getTradingsymbol()) && p.getEntryCandle().equals(o.getEntryCandle()))
+                .toList();
+        List<String> did = new ArrayList<>();
+        String by = strategyLabel(p.getStrategyId());
+        for (LivePosition o : partners) {
+            try {
+                String why = PAIR_NOTE + by + " bought the same option on the same minute and was stopped out at a loss";
+                if (points == 0 || spot == null) {
+                    o.note(why + (spot == null ? "" : " at " + spot));
+                    Strategy s = strategies.load(o.getStrategyId());
+                    Params params = new Params(new HashMap<>(s.getParameters() == null ? Map.of() : s.getParameters()));
+                    did.add("pair stop #" + o.getStrategyId() + ": " + exit(o, spot, PairStop.REASON, null, PairStop.REASON, params));
+                } else {
+                    double level = call ? spot - points : spot + points;
+                    Instant from = clock.instant().truncatedTo(ChronoUnit.MINUTES).plus(Duration.ofMinutes(1));
+                    if (o.tightenStop(level, from)) {
+                        pairLevels.put(o.getId(), level);
+                        o.note(why + " at " + spot + "; stop moved " + points + " points further, to " + level);
+                        positions.save(o);
+                        did.add("pair stop #" + o.getStrategyId() + ": stop moved to " + level);
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.error("PAIR_STOP_FAILED position={}: {}", o.getId(), e.getMessage(), e);
+                did.add("pair stop #" + o.getStrategyId() + " failed — " + e.getMessage());
+            }
+        }
+        if (!did.isEmpty()) log.info("PAIR_STOP user={} after #{} {}: {}", p.getUserId(), p.getStrategyId(), p.getTradingsymbol(), did);
+        return did.isEmpty() ? null : String.join("; ", did);
     }
 
     /** Real option P&L when both fills have prices, otherwise the engine's estimate. */

@@ -552,4 +552,67 @@ class LiveStrategyRunnerTest {
         assertThat(com.tradeanalysis.common.market.SpecialSessions.on(LocalDate.of(2026, 11, 9))).isEmpty();
         assertThat(com.tradeanalysis.common.market.SpecialSessions.at(at(muhurat, 12, 16))).isEmpty();   // before pre-open
     }
+
+    /** Two strategies of one user holding the same option from the same signal candle (no entry orders: paper). */
+    private List<LivePosition> pair(long userId) {
+        List<LivePosition> out = new ArrayList<>();
+        for (long strategyId : List.of(56L, 55L))
+            out.add(positions.save(new LivePosition(strategyId, userId, TUE, TradingMode.PAPER, "CE", "NIFTY26N0324150CE", 130,
+                    at(TUE, 9, 20), 24190, 24115.0)));
+        return out;
+    }
+
+    @Test
+    void thePairStopClosesTheOtherStrategyOnTheSameOptionWhenOneIsStoppedAtALoss() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET pair_stop_points = 0 WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 100.0));
+        CLOCK.set(at(TUE, 9, 40));
+        List<LivePosition> two = pair(a);
+
+        assertThat(runner.exitOnTouch(two.get(0).getId(), 24110, "SL_HIT"))
+                .contains("SELL 130 NIFTY26N0324150CE (SL_HIT)").contains("pair stop #55: SELL 130 NIFTY26N0324150CE (PAIR_STOP)");
+        LivePosition partner = positions.findById(two.get(1).getId()).orElseThrow();
+        assertThat(partner.getStatus()).isEqualTo(LivePosition.Status.CLOSED);
+        assertThat(partner.getExitReason()).isEqualTo("PAIR_STOP");
+        assertThat(partner.getExitSpot()).isEqualTo(24110);
+        assertThat(partner.getMessage()).startsWith("Pair stop: #56").contains("bought the same option on the same minute and was stopped out at a loss at 24110");
+        jdbc.update("UPDATE app_user SET pair_stop_points = NULL");
+    }
+
+    @Test
+    void withAWaitThePairStopMovesThePartnersStopAndItsTouchIsAPairStop() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET pair_stop_points = 20 WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 100.0));
+        CLOCK.set(at(TUE, 9, 40));
+        List<LivePosition> two = pair(a);
+        LivePosition wide = two.get(1);   // the partner's own stop is further away: 24,050
+        positions.delete(wide);
+        two.set(1, positions.save(new LivePosition(55L, a, TUE, TradingMode.PAPER, "CE", "NIFTY26N0324150CE", 130,
+                at(TUE, 9, 20), 24190, 24050.0)));
+
+        assertThat(runner.exitOnTouch(two.get(0).getId(), 24110, "SL_HIT")).contains("pair stop #55: stop moved to 24090.0");
+        LivePosition partner = positions.findById(two.get(1).getId()).orElseThrow();
+        assertThat(partner.getStatus()).isEqualTo(LivePosition.Status.OPEN);
+        assertThat(partner.getCurrentStop()).isEqualTo(24090.0);
+        assertThat(partner.getStopFrom()).isEqualTo(at(TUE, 9, 41));
+
+        assertThat(runner.exitOnTouch(partner.getId(), 24090, "SL_HIT")).contains("(PAIR_STOP)");
+        partner = positions.findById(partner.getId()).orElseThrow();
+        assertThat(partner.getExitReason()).isEqualTo("PAIR_STOP");
+        assertThat(partner.getMessage()).startsWith("Pair stop: #56").contains("stop moved 20 points further, to 24090.0");
+        jdbc.update("UPDATE app_user SET pair_stop_points = NULL");
+    }
+
+    @Test
+    void withThePairStopOffThePartnerKeepsTrading() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET pair_stop_points = NULL WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 100.0));
+        CLOCK.set(at(TUE, 9, 40));
+        List<LivePosition> two = pair(a);
+        assertThat(runner.exitOnTouch(two.get(0).getId(), 24110, "SL_HIT")).doesNotContain("pair stop");
+        assertThat(positions.findById(two.get(1).getId()).orElseThrow().getStatus()).isEqualTo(LivePosition.Status.OPEN);
+    }
 }

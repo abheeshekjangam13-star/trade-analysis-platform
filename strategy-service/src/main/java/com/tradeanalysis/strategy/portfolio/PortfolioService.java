@@ -3,6 +3,7 @@ package com.tradeanalysis.strategy.portfolio;
 import com.tradeanalysis.common.exception.NotFoundException;
 import com.tradeanalysis.strategy.engine.CandleMemo;
 import com.tradeanalysis.strategy.estimate.DayLossStop;
+import com.tradeanalysis.strategy.estimate.PairStop;
 import com.tradeanalysis.strategy.model.BacktestResult;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.service.StrategyService;
@@ -161,6 +162,8 @@ public class PortfolioService {
                 ownIndex ? null : symbol, capital);
         // The user's max day loss covers all the portfolio's strategies together, as in live trading (DayLossStop).
         Double maxDayLoss = strategies.currentMaxDayLoss();
+        // Two strategies holding the same option from the same minute: one's losing stop closes the other (PairStop).
+        Integer pairStopPoints = strategies.currentPairStopPoints();
         int longest = windows.stream().mapToInt(Integer::intValue).max().orElse(0);
         Map<String, com.tradeanalysis.common.dto.PriceSeries> minutes = new HashMap<>();
         List<PortfolioReport> saved = new ArrayList<>();
@@ -177,11 +180,12 @@ public class PortfolioService {
             // The stored trades carry their real premiums; the max day loss also needs each option's minute prices.
             optionPrices.apply(all);
             com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(all, capital);
-            if (maxDayLoss != null) {
+            if (maxDayLoss != null || (pairStopPoints != null && pairStopPoints > 0)) {
                 List<String> missing = fit.kept().stream().map(NiftyTradeLog::getSymbol).distinct()
                         .filter(sym -> !minutes.containsKey(sym)).toList();
                 if (!missing.isEmpty()) minutes.putAll(strategies.minuteCandles(missing, today.minusDays(longest), today));
             }
+            PairStop.apply(fit.kept(), pairStopPoints, minutes);
             DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, minutes, dayLossAtLimit);
             List<NiftyTradeLog> kept = stop.kept();
             List<PortfolioReportItem> items = new ArrayList<>();
@@ -193,6 +197,7 @@ public class PortfolioService {
                     capital, PortfolioMath.summarize(kept), PortfolioMath.capitalUse(kept), fit.skipped(), user, items);
             made.setCapitalToFitAll(PortfolioMath.capitalToFitAll(all));   // kept and left out, at the lots asked for
             made.setDayLoss(maxDayLoss, stop.stops().size());
+            made.setPairStopPoints(pairStopPoints);
             PortfolioReport report = reports.save(made);
             // The report's own version of the trades; the backtests' trades stay as each backtest made them.
             PortfolioTrades.store(jdbc, report.getId(), kept, fit.left(), stop.blocked());

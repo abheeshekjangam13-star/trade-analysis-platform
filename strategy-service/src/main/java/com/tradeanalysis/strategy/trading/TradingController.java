@@ -77,6 +77,7 @@ public class TradingController {
                 .toOffsetDateTime().toString());   // e.g. 2026-11-18T09:15+05:30, for "resume at 9:15 AM on Wed, 18 Nov"
         out.put("controls", trading.controls());
         out.put("maxDayLoss", trading.currentMaxDayLoss());   // the caller's own, for all their strategies together
+        out.put("pairStopPoints", trading.currentPairStopPoints());   // the caller's own pair stop (null = off)
         Long who = trading.isAdmin() ? null : me;   // non-admins: their own numbers
         for (TradingMode m : who == null || trading.liveAllowed() ? List.of(TradingMode.PAPER, TradingMode.LIVE) : List.of(TradingMode.PAPER))
             out.put(m.name().toLowerCase(), Map.of("ordersToday", orders.ordersToday(m, who), "realizedToday", orders.realizedToday(m, who),
@@ -117,6 +118,26 @@ public class TradingController {
     public Map<String, Object> setDayLoss(@RequestBody DayLossRequest r) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("maxDayLoss", trading.setMaxDayLoss(r == null ? null : r.maxDayLoss()));
+        return out;
+    }
+
+    public record PairStopRequest(Integer points) {}
+
+    @GetMapping("/pair-stop")
+    @Operation(summary = "Your own pair stop (null = off)")
+    public Map<String, Object> pairStop() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("points", trading.currentPairStopPoints());
+        return out;
+    }
+
+    @PutMapping("/pair-stop")
+    @Operation(summary = "Set your own pair stop: when two of your strategies bought the same option on the same signal "
+            + "minute and one is stopped out at a loss, the other is closed too: at once (0) or once the index moves this "
+            + "many more points against it. Null turns it off. Portfolio reports apply it the same way")
+    public Map<String, Object> setPairStop(@RequestBody PairStopRequest r) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("points", trading.setPairStopPoints(r == null ? null : r.points()));
         return out;
     }
 

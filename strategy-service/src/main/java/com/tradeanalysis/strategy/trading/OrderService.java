@@ -254,6 +254,13 @@ public class OrderService {
         return userId == null ? null : users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::getMaxDayLoss).orElse(null);
     }
 
+    /** The user's pair stop in index points (0 = close at once), or null when it is off (see LiveStrategyRunner#pairStop). */
+    public Integer pairStopPoints(Long userId) {
+        if (userId == null) return null;
+        Integer points = users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::getPairStopPoints).orElse(null);
+        return points == null || points < 0 ? null : points;
+    }
+
     /**
      * Why the user may not open new risk today because of their own max day loss (realized + open positions, all
      * strategies together), or null when they may.

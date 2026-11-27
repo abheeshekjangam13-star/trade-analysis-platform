@@ -33,6 +33,7 @@ public class PortfolioReport {
     private Double capitalToFitAll;
     private Double maxDayLoss;     // the user's max day loss the report applied (null = none, see DayLossStop)
     private int dayLossStops;      // days on which it was reached
+    private Integer pairStopPoints; // the pair stop the report applied (null = off, see PairStop)
     private Boolean ivAssumed;
     private Long runByUserId;
     @Column(nullable = false) private Instant createdAt = Instant.now();
@@ -85,6 +86,8 @@ public class PortfolioReport {
     public Double getMaxDayLoss()           { return maxDayLoss; }
     public int getDayLossStops()            { return dayLossStops; }
     void setDayLoss(Double limit, int stops) { this.maxDayLoss = limit; this.dayLossStops = stops; }
+    public Integer getPairStopPoints()      { return pairStopPoints; }
+    void setPairStopPoints(Integer points)  { this.pairStopPoints = points; }
     public Long getRunByUserId()            { return runByUserId; }
     public Instant getCreatedAt()           { return createdAt; }
     public List<PortfolioReportItem> getItems() { return items; }

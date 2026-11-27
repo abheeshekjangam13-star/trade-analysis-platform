@@ -159,6 +159,28 @@ public class TradingService {
         return CurrentUser.id().flatMap(users::findById).map(com.tradeanalysis.strategy.user.AppUser::getMaxDayLoss).orElse(null);
     }
 
+    /** The caller's own pair stop in points (0 = close the partner at once), or null when off. */
+    public Integer currentPairStopPoints() {
+        return CurrentUser.id().flatMap(users::findById).map(com.tradeanalysis.strategy.user.AppUser::getPairStopPoints).orElse(null);
+    }
+
+    public static final int MAX_PAIR_STOP_POINTS = 500;
+
+    /**
+     * Sets the caller's pair stop: null turns it off; 0 closes the partner trade at once when one of two strategies
+     * holding the same option from the same minute is stopped out at a loss; more waits that many index points.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Integer setPairStopPoints(Integer points) {
+        Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        if (points != null && (points < 0 || points > MAX_PAIR_STOP_POINTS))
+            throw new TradingException("Pair stop must be between 0 and " + MAX_PAIR_STOP_POINTS + " points, or off");
+        var u = users.findById(me).orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        u.setPairStopPoints(points);
+        users.save(u);
+        return u.getPairStopPoints();
+    }
+
     public static final double MAX_DAY_LOSS_CAP = 100_000_000;
 
     /** Sets the caller's own max day loss: a positive amount in rupees, for all their strategies together. */

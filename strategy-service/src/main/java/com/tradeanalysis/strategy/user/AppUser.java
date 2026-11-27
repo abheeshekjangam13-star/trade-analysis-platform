@@ -76,6 +76,13 @@ public class AppUser {
     /** The user's own maximum loss for a day across all their strategies (per mode), or null when not set. */
     private Double maxDayLoss;
 
+    /**
+     * Pair stop: when two of the user's strategies bought the same option on the same signal minute and one is stopped
+     * out at a loss, the other is closed too, at once (0) or once the index moves this many more points against it.
+     * Null = off.
+     */
+    private Integer pairStopPoints;
+
     // May trade live while an admin restricts live trading to picked users (trading_control.live_restricted)
     @Column(nullable = false)
     private boolean liveAccess;
@@ -118,6 +125,8 @@ public class AppUser {
     public void acceptTerms(String version, Instant at) { this.termsVersion = version; this.termsAcceptedAt = at; }
     public void setMaxDayLoss(Double amount) { this.maxDayLoss = amount; }
     public Double getMaxDayLoss()           { return maxDayLoss; }
+    public Integer getPairStopPoints()      { return pairStopPoints; }
+    public void setPairStopPoints(Integer points) { this.pairStopPoints = points; }
     public boolean isLiveAccess()           { return liveAccess; }
     public void setLiveAccess(boolean on)   { this.liveAccess = on; }
 

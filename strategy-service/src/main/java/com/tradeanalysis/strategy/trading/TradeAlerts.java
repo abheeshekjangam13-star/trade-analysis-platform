@@ -75,6 +75,7 @@ public class TradeAlerts {
                 case "TARGET_HIT" -> "🎯 Target hit";
                 case "SL_HIT" -> "Stop loss hit";
                 case "MAX_DAY_LOSS" -> "Day loss limit reached: position closed";
+                case "PAIR_STOP" -> "Pair stop: position closed";
                 case "KILL_SWITCH" -> "Kill switch: position closed";
                 case "ENTRY_NOT_FILLED" -> "Entry not filled: cancelled";
                 default -> "Position closed: " + StrategyStatusService.readable(reason);
@@ -84,6 +85,7 @@ public class TradeAlerts {
             body.append(" · ").append(p.getMode());
             if (p.getPnl() != null) body.append("\nP&L ").append(signedRupees(p.getPnl()))
                     .append(p.getMode() == TradingMode.LIVE && p.getExitPrice() == null ? " (estimate until the fill comes in)" : "");
+            if ("PAIR_STOP".equals(reason) && p.getMessage() != null) body.append("\n").append(p.getMessage());   // which strategy and why
             push.notify(p.getUserId(), new Alert(title, body.toString(), "/trading", "position-" + p.getId(), TRADE_TTL));
         } catch (RuntimeException e) {
             log.warn("ALERT position {} not sent: {}", p == null ? null : p.getId(), e.getMessage());

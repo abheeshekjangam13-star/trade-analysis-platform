@@ -424,6 +424,14 @@ public class StrategyService {
         return engine.minuteCandles(symbols, from, until);
     }
 
+    /** The caller's own pair stop (points; 0 = close at once), or null when off: portfolio reports apply it as live trading does. */
+    public Integer currentPairStopPoints() {
+        Long id = CurrentUser.id().orElse(null);
+        if (id == null) return null;
+        List<Integer> v = jdbc.queryForList("SELECT pair_stop_points FROM app_user WHERE id = ?", Integer.class, id);
+        return v.isEmpty() || v.get(0) == null || v.get(0) < 0 ? null : v.get(0);
+    }
+
     /** The caller's own max day loss (My account), or null when none is set: backtests apply it as live trading does. */
     public Double currentMaxDayLoss() {
         Long id = CurrentUser.id().orElse(null);
