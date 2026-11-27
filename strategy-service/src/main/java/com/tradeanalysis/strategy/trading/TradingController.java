@@ -78,6 +78,7 @@ public class TradingController {
         out.put("controls", trading.controls());
         out.put("maxDayLoss", trading.currentMaxDayLoss());   // the caller's own, for all their strategies together
         out.put("pairStopPoints", trading.currentPairStopPoints());   // the caller's own pair stop (null = off)
+        out.put("sameStrikeWaitMinutes", trading.currentSameStrikeWaitMinutes());   // the caller's own same-strike wait (null = off)
         Long who = trading.isAdmin() ? null : me;   // non-admins: their own numbers
         for (TradingMode m : who == null || trading.liveAllowed() ? List.of(TradingMode.PAPER, TradingMode.LIVE) : List.of(TradingMode.PAPER))
             out.put(m.name().toLowerCase(), Map.of("ordersToday", orders.ordersToday(m, who), "realizedToday", orders.realizedToday(m, who),
@@ -138,6 +139,26 @@ public class TradingController {
     public Map<String, Object> setPairStop(@RequestBody PairStopRequest r) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("points", trading.setPairStopPoints(r == null ? null : r.points()));
+        return out;
+    }
+
+    public record SameStrikeWaitRequest(Integer minutes) {}
+
+    @GetMapping("/same-strike-wait")
+    @Operation(summary = "Your own same-strike wait in minutes (null = off)")
+    public Map<String, Object> sameStrikeWait() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("minutes", trading.currentSameStrikeWaitMinutes());
+        return out;
+    }
+
+    @PutMapping("/same-strike-wait")
+    @Operation(summary = "Set your own same-strike wait: when another of your strategies already bought the same option "
+            + "today, a second buy waits this many minutes (1 to 30) after its signal, and is dropped if the trade is over "
+            + "by then. Null turns it off. Portfolio reports apply it the same way")
+    public Map<String, Object> setSameStrikeWait(@RequestBody SameStrikeWaitRequest r) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("minutes", trading.setSameStrikeWaitMinutes(r == null ? null : r.minutes()));
         return out;
     }
 

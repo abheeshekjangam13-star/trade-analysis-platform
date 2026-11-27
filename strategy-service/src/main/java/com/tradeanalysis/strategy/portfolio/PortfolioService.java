@@ -4,6 +4,7 @@ import com.tradeanalysis.common.exception.NotFoundException;
 import com.tradeanalysis.strategy.engine.CandleMemo;
 import com.tradeanalysis.strategy.estimate.DayLossStop;
 import com.tradeanalysis.strategy.estimate.PairStop;
+import com.tradeanalysis.strategy.estimate.SameStrikeWait;
 import com.tradeanalysis.strategy.model.BacktestResult;
 import com.tradeanalysis.strategy.model.NiftyTradeLog;
 import com.tradeanalysis.strategy.service.StrategyService;
@@ -164,6 +165,8 @@ public class PortfolioService {
         Double maxDayLoss = strategies.currentMaxDayLoss();
         // Two strategies holding the same option from the same minute: one's losing stop closes the other (PairStop).
         Integer pairStopPoints = strategies.currentPairStopPoints();
+        // A second buy of an option another strategy already bought that day waits this long (SameStrikeWait).
+        Integer waitMinutes = strategies.currentSameStrikeWaitMinutes();
         int longest = windows.stream().mapToInt(Integer::intValue).max().orElse(0);
         Map<String, com.tradeanalysis.common.dto.PriceSeries> minutes = new HashMap<>();
         List<PortfolioReport> saved = new ArrayList<>();
@@ -179,12 +182,15 @@ public class PortfolioService {
             }
             // The stored trades carry their real premiums; the max day loss also needs each option's minute prices.
             optionPrices.apply(all);
-            com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(all, capital);
-            if (maxDayLoss != null || (pairStopPoints != null && pairStopPoints > 0)) {
-                List<String> missing = fit.kept().stream().map(NiftyTradeLog::getSymbol).distinct()
+            if (maxDayLoss != null || (pairStopPoints != null && pairStopPoints > 0) || waitMinutes != null) {
+                List<String> missing = all.stream().map(NiftyTradeLog::getSymbol).distinct()
                         .filter(sym -> !minutes.containsKey(sym)).toList();
                 if (!missing.isEmpty()) minutes.putAll(strategies.minuteCandles(missing, today.minusDays(longest), today));
             }
+            List<NiftyTradeLog> waited = SameStrikeWait.apply(all, waitMinutes, minutes);
+            List<NiftyTradeLog> taken = new ArrayList<>(all);
+            taken.removeAll(waited);
+            com.tradeanalysis.strategy.estimate.CapitalFit.Fit fit = capitalFit.fit(taken, capital);
             PairStop.apply(fit.kept(), pairStopPoints, minutes);
             DayLossStop.Result stop = DayLossStop.apply(fit.kept(), maxDayLoss, minutes, dayLossAtLimit);
             List<NiftyTradeLog> kept = stop.kept();
@@ -198,9 +204,10 @@ public class PortfolioService {
             made.setCapitalToFitAll(PortfolioMath.capitalToFitAll(all));   // kept and left out, at the lots asked for
             made.setDayLoss(maxDayLoss, stop.stops().size());
             made.setPairStopPoints(pairStopPoints);
+            made.setSameStrikeWaitMinutes(waitMinutes);
             PortfolioReport report = reports.save(made);
             // The report's own version of the trades; the backtests' trades stay as each backtest made them.
-            PortfolioTrades.store(jdbc, report.getId(), kept, fit.left(), stop.blocked());
+            PortfolioTrades.store(jdbc, report.getId(), kept, fit.left(), stop.blocked(), waited);
             replaceOlderReports(report);
             saved.add(report);
         }

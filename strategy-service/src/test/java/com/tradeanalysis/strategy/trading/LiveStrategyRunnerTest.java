@@ -615,4 +615,34 @@ class LiveStrategyRunnerTest {
         assertThat(runner.exitOnTouch(two.get(0).getId(), 24110, "SL_HIT")).doesNotContain("pair stop");
         assertThat(positions.findById(two.get(1).getId()).orElseThrow().getStatus()).isEqualTo(LivePosition.Status.OPEN);
     }
+
+    @Test
+    void theSameStrikeWaitHoldsASecondBuyOfAnOptionAnotherStrategyAlreadyBought() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET same_strike_wait_minutes = 3 WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
+        positions.save(new LivePosition(55L, a, TUE, TradingMode.PAPER, "CE", "NIFTY26N0324150CE", 130, at(TUE, 9, 15), 24120, 24080.0));
+
+        // #56's signal candle closed at 09:25; #55 already holds the option, so the buy waits until 09:28.
+        CLOCK.set(at(TUE, 9, 26));
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("waiting until 09:28: #55 already bought NIFTY26N0324150CE today (same-strike wait 3 min)"));
+        assertThat(positions.findByTradeDateOrderByOpenedAtDesc(TUE)).hasSize(1);
+
+        // With a 1-minute wait it buys at 09:26, and the position says why it waited.
+        jdbc.update("UPDATE app_user SET same_strike_wait_minutes = 1 WHERE id = ?", a);
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("BUY 130 NIFTY26N0324150CE"));
+        LivePosition mine = positions.findByTradeDateOrderByOpenedAtDesc(TUE).stream().filter(p -> p.getStrategyId() == 56L).findFirst().orElseThrow();
+        assertThat(mine.getMessage()).isEqualTo("Same-strike wait: bought 1 min after the signal, as #55 already bought this option today");
+        jdbc.update("UPDATE app_user SET same_strike_wait_minutes = NULL");
+    }
+
+    @Test
+    void withoutTheSameStrikeWaitTheSecondBuyGoesAtOnce() {
+        long a = user("runner-a");
+        jdbc.update("UPDATE app_user SET same_strike_wait_minutes = NULL WHERE id = ?", a);
+        when(kite.ltp(anyList())).thenReturn(Map.of("NFO:NIFTY26N0324150CE", 120.0));
+        positions.save(new LivePosition(55L, a, TUE, TradingMode.PAPER, "CE", "NIFTY26N0324150CE", 130, at(TUE, 9, 15), 24120, 24080.0));
+        CLOCK.set(at(TUE, 9, 26));
+        assertThat(runner.runAll()).anyMatch(l -> l.contains("BUY 130 NIFTY26N0324150CE"));
+    }
 }

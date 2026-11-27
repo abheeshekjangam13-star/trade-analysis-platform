@@ -330,6 +330,20 @@ public class LiveStrategyRunner {
             if (existing.isEmpty()) {
                 if (!stillOpen) continue;                                   // engine trade already over before we saw it
                 Instant signalAt = t.getEntryTimestamp().plus(Duration.ofMinutes(5));
+                // The same-strike wait: another of the user's strategies already bought this option today.
+                String waitNote = null;
+                SameStrikeHold hold = sameStrikeHold(cfg, s, params, t, today);
+                if (hold != null) {
+                    Instant buyFrom = signalAt.plus(Duration.ofMinutes(hold.minutes()));
+                    if (now.isBefore(buyFrom)) {
+                        did.add("waiting until " + buyFrom.atZone(IST).toLocalTime() + ": #" + hold.strategyId()
+                                + " already bought " + hold.tradingsymbol() + " today (same-strike wait " + hold.minutes() + " min)");
+                        continue;
+                    }
+                    signalAt = buyFrom;   // fresh for the usual delay from the end of the wait
+                    waitNote = "Same-strike wait: bought " + hold.minutes() + " min after the signal, as #" + hold.strategyId()
+                            + " already bought this option today";
+                }
                 if (now.isAfter(signalAt.plus(maxEntryDelay))) {
                     did.add("skipped stale entry from " + signalAt.atZone(IST).toLocalTime());
                     continue;
@@ -339,7 +353,7 @@ public class LiveStrategyRunner {
                 if (cfg.getMode() == TradingMode.LIVE && orderService.accessRefusal(cfg.getUserId()) != null) { did.add("entry blocked: no live access"); continue; }
                 String dayLoss = orderService.dayLossRefusal(cfg.getMode(), cfg.getUserId());
                 if (dayLoss != null) { did.add("entry blocked: " + dayLoss); continue; }
-                did.add(enter(cfg, s, params, t, today));
+                did.add(enter(cfg, s, params, t, today, waitNote));
             } else if (existing.get().getStatus() == LivePosition.Status.OPEN) {
                 LivePosition p = existing.get();
                 // The engine has walked every closed 1-min candle, so its stop applies from the minute now forming.
@@ -354,7 +368,33 @@ public class LiveStrategyRunner {
         return "#" + s.getId() + " " + cfg.getMode() + " user " + cfg.getUserId() + ": " + (did.isEmpty() ? "no change" : String.join("; ", did));
     }
 
-    private String enter(StrategyLiveConfig cfg, Strategy s, Params params, NiftyTradeLog t, LocalDate today) {
+    /** Another of the user's strategies that bought the option (today, same mode), and how long the user waits. */
+    record SameStrikeHold(int minutes, Long strategyId, String tradingsymbol) {}
+
+    /**
+     * The same-strike wait (the user's setting, off when null; SameStrikeWait for backtests): when another of the user's
+     * strategies already bought this option today in this mode (open, or closed after a real entry), a second buy waits
+     * that many minutes after its signal. Null when there is nothing to wait for.
+     */
+    private SameStrikeHold sameStrikeHold(StrategyLiveConfig cfg, Strategy s, Params params, NiftyTradeLog t, LocalDate today) {
+        Integer minutes;
+        try { minutes = orderService.sameStrikeWaitMinutes(cfg.getUserId()); }
+        catch (RuntimeException e) { log.warn("SAME_STRIKE_CHECK_FAILED user={}: {}", cfg.getUserId(), e.getMessage()); return null; }
+        if (minutes == null || minutes < 1) return null;
+        String symbol;
+        try { symbol = options.resolve(underlying(params), t.getOptionType(), t.getStrikePrice(), today).tradingsymbol(); }
+        catch (RuntimeException e) { return null; }   // enter() reports the missing option
+        return positions.findByTradeDateAndUserIdOrderByOpenedAtDesc(today, cfg.getUserId()).stream()
+                .filter(p -> p.getMode() == cfg.getMode() && !Objects.equals(p.getStrategyId(), s.getId())
+                        && symbol.equals(p.getTradingsymbol())
+                        && (p.getStatus() == LivePosition.Status.OPEN
+                            || (p.getStatus() == LivePosition.Status.CLOSED && !"ENTRY_NOT_FILLED".equals(p.getExitReason()))))
+                .findFirst()
+                .map(p -> new SameStrikeHold(minutes, p.getStrategyId(), symbol))
+                .orElse(null);
+    }
+
+    private String enter(StrategyLiveConfig cfg, Strategy s, Params params, NiftyTradeLog t, LocalDate today, String note) {
         KiteApi.OptionInstrument opt;
         try {
             opt = options.resolve(underlying(params), t.getOptionType(), t.getStrikePrice(), today);
@@ -376,6 +416,7 @@ public class LiveStrategyRunner {
         }
         TradeOrder o = orderService.place(req, cfg.getMode(), "STRATEGY", s.getId(), cfg.getUserId(), false);
         p.entered(o);
+        if (note != null && p.getStatus() == LivePosition.Status.OPEN) p.note(note);
         positions.save(p);
         return o.getStatus() == TradeOrder.Status.REJECTED
                 ? "entry refused: " + o.getMessage()
