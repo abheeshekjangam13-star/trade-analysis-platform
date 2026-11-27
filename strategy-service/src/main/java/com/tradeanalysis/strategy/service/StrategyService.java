@@ -432,14 +432,6 @@ public class StrategyService {
         return v.isEmpty() || v.get(0) == null || v.get(0) < 0 ? null : v.get(0);
     }
 
-    /** The caller's own same-strike wait in minutes, or null when off: portfolio reports apply it as live trading does. */
-    public Integer currentSameStrikeWaitMinutes() {
-        Long id = CurrentUser.id().orElse(null);
-        if (id == null) return null;
-        List<Integer> v = jdbc.queryForList("SELECT same_strike_wait_minutes FROM app_user WHERE id = ?", Integer.class, id);
-        return v.isEmpty() || v.get(0) == null || v.get(0) < 1 ? null : v.get(0);
-    }
-
     /** The caller's own max day loss (My account), or null when none is set: backtests apply it as live trading does. */
     public Double currentMaxDayLoss() {
         Long id = CurrentUser.id().orElse(null);

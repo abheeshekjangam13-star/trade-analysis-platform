@@ -274,31 +274,6 @@ public class NiftyTradeLog {
     public Boolean getIvAssumed()         { return ivAssumed; }
     public Double getBacktestCapital()    { return backtestCapital; }
     public String getSkipReason()         { return skipReason; }
-    @Transient private Integer entryDelayMinutes;   // a portfolio report's same-strike wait delayed this buy (null = not delayed)
-    public Integer getEntryDelayMinutes() { return entryDelayMinutes; }
-
-    /**
-     * The same-strike wait (SameStrikeWait): this buy waited {@code minutes} and was made at index price {@code spot} at
-     * {@code boughtAt}, with the option's premium then when the trade has real prices. The exit stays; the P&L is
-     * worked out again. Only the copy in hand changes.
-     */
-    public void delayEntry(int minutes, double spot, Instant boughtAt) {
-        this.entryDelayMinutes = minutes;
-        this.entrySpotPrice = spot;
-        if (premiumCloses != null) {
-            Double p = premiumBefore(premiumCloses, boughtAt);
-            if (p != null) this.entryPremium = p;
-        }
-        if (exitTimestamp != null) this.estimatedPnl = pnlFor(lots);
-    }
-
-    /** A delayed buy as a stored portfolio report counted it (see PortfolioTrades). */
-    public void asDelayedByPortfolio(Integer minutes, Double spot) {
-        if (minutes == null || spot == null) return;
-        this.entryDelayMinutes = minutes;
-        this.entrySpotPrice = spot;
-    }
-
     /** Marks the trade as left out (e.g. CAPITAL: not even one lot was free at its entry); its P&L is what it would have made. */
     public void markSkipped(String reason) { this.skipReason = reason; }
     public void setBacktestCapital(Double capital) { this.backtestCapital = capital; }

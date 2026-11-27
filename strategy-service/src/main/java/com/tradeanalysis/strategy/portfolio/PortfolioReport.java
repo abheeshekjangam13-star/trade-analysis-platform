@@ -34,7 +34,6 @@ public class PortfolioReport {
     private Double maxDayLoss;     // the user's max day loss the report applied (null = none, see DayLossStop)
     private int dayLossStops;      // days on which it was reached
     private Integer pairStopPoints; // the pair stop the report applied (null = off, see PairStop)
-    private Integer sameStrikeWaitMinutes; // the same-strike wait the report applied (null = off, see SameStrikeWait)
     private Boolean ivAssumed;
     private Long runByUserId;
     @Column(nullable = false) private Instant createdAt = Instant.now();
@@ -89,8 +88,6 @@ public class PortfolioReport {
     void setDayLoss(Double limit, int stops) { this.maxDayLoss = limit; this.dayLossStops = stops; }
     public Integer getPairStopPoints()      { return pairStopPoints; }
     void setPairStopPoints(Integer points)  { this.pairStopPoints = points; }
-    public Integer getSameStrikeWaitMinutes() { return sameStrikeWaitMinutes; }
-    void setSameStrikeWaitMinutes(Integer minutes) { this.sameStrikeWaitMinutes = minutes; }
     public Long getRunByUserId()            { return runByUserId; }
     public Instant getCreatedAt()           { return createdAt; }
     public List<PortfolioReportItem> getItems() { return items; }

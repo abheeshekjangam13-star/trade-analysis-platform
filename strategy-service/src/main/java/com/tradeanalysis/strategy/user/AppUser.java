@@ -82,11 +82,6 @@ public class AppUser {
      * Null = off.
      */
     private Integer pairStopPoints;
-    /**
-     * Same-strike wait: when another of the user's strategies already bought the same option that day, a second buy waits
-     * this many minutes after its signal before entering (dropped if the trade is over by then). Null = off.
-     */
-    private Integer sameStrikeWaitMinutes;
 
     // May trade live while an admin restricts live trading to picked users (trading_control.live_restricted)
     @Column(nullable = false)
@@ -132,8 +127,6 @@ public class AppUser {
     public Double getMaxDayLoss()           { return maxDayLoss; }
     public Integer getPairStopPoints()      { return pairStopPoints; }
     public void setPairStopPoints(Integer points) { this.pairStopPoints = points; }
-    public Integer getSameStrikeWaitMinutes() { return sameStrikeWaitMinutes; }
-    public void setSameStrikeWaitMinutes(Integer minutes) { this.sameStrikeWaitMinutes = minutes; }
     public boolean isLiveAccess()           { return liveAccess; }
     public void setLiveAccess(boolean on)   { this.liveAccess = on; }
 

@@ -254,14 +254,7 @@ public class OrderService {
         return userId == null ? null : users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::getMaxDayLoss).orElse(null);
     }
 
-    /** The user's same-strike wait in minutes, or null when it is off (see LiveStrategyRunner#sameStrikeHold). */
-    public Integer sameStrikeWaitMinutes(Long userId) {
-        if (userId == null) return null;
-        Integer m = users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::getSameStrikeWaitMinutes).orElse(null);
-        return m == null || m < 1 ? null : m;
-    }
-
-        /** The user's pair stop in index points (0 = close at once), or null when it is off (see LiveStrategyRunner#pairStop). */
+    /** The user's pair stop in index points (0 = close at once), or null when it is off (see LiveStrategyRunner#pairStop). */
     public Integer pairStopPoints(Long userId) {
         if (userId == null) return null;
         Integer points = users.findById(userId).map(com.tradeanalysis.strategy.user.AppUser::getPairStopPoints).orElse(null);

@@ -18,18 +18,12 @@ public final class PortfolioTrades {
     private PortfolioTrades() {}
 
     private static final String INSERT = "INSERT INTO portfolio_trade (portfolio_report_id, trade_log_id, lots, estimated_pnl, "
-            + "skip_reason, exit_timestamp, exit_spot_price, exit_reason, option_symbol, entry_premium, exit_premium, slippage, "
-            + "entry_delay_minutes, entry_spot_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            + "skip_reason, exit_timestamp, exit_spot_price, exit_reason, option_symbol, entry_premium, exit_premium, slippage) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     /** Stores the report's version of every trade it combined: kept, left out for capital, and kept out by the max day loss. */
     public static void store(JdbcTemplate jdbc, Long reportId, List<NiftyTradeLog> kept, List<NiftyTradeLog> left,
                              List<NiftyTradeLog> blocked) {
-        store(jdbc, reportId, kept, left, blocked, List.of());
-    }
-
-    /** As above, plus the trades the same-strike wait dropped (over before the delayed buy). */
-    public static void store(JdbcTemplate jdbc, Long reportId, List<NiftyTradeLog> kept, List<NiftyTradeLog> left,
-                             List<NiftyTradeLog> blocked, List<NiftyTradeLog> waited) {
         List<Object[]> rows = new ArrayList<>();
         for (NiftyTradeLog t : kept) rows.add(row(reportId, t, null));
         for (NiftyTradeLog t : left) {
@@ -37,15 +31,13 @@ public final class PortfolioTrades {
             rows.add(row(reportId, t, "CAPITAL"));
         }
         for (NiftyTradeLog t : blocked) rows.add(row(reportId, t, com.tradeanalysis.strategy.estimate.DayLossStop.REASON));
-        for (NiftyTradeLog t : waited) rows.add(row(reportId, t, com.tradeanalysis.strategy.estimate.SameStrikeWait.REASON));
         if (!rows.isEmpty()) jdbc.batchUpdate(INSERT, rows);
     }
 
     private static Object[] row(Long reportId, NiftyTradeLog t, String skip) {
         return new Object[]{reportId, t.getId(), t.getLots(), t.getEstimatedPnl(), skip,
                 t.getExitTimestamp() == null ? null : Timestamp.from(t.getExitTimestamp()),
-                t.getExitSpotPrice(), t.getExitReason(), t.getOptionSymbol(), t.getEntryPremium(), t.getExitPremium(), t.getSlippage(),
-                t.getEntryDelayMinutes(), t.getEntryDelayMinutes() == null ? null : t.getEntrySpotPrice()};
+                t.getExitSpotPrice(), t.getExitReason(), t.getOptionSymbol(), t.getEntryPremium(), t.getExitPremium(), t.getSlippage()};
     }
 
     /**
@@ -67,7 +59,6 @@ public final class PortfolioTrades {
                     exit == null ? null : exit.toInstant(), rs.getDouble("exit_spot_price"), rs.getString("exit_reason"),
                     rs.getString("option_symbol"), rs.getObject("entry_premium", Double.class),
                     rs.getObject("exit_premium", Double.class), rs.getObject("slippage", Double.class));
-            t.asDelayedByPortfolio(rs.getObject("entry_delay_minutes", Integer.class), rs.getObject("entry_spot_price", Double.class));
         }, reportId, backtestId);
         return trades;
     }

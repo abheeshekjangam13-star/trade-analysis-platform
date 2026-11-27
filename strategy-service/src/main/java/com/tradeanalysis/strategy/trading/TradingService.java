@@ -181,28 +181,6 @@ public class TradingService {
         return u.getPairStopPoints();
     }
 
-    /** The caller's own same-strike wait in minutes, or null when off. */
-    public Integer currentSameStrikeWaitMinutes() {
-        return CurrentUser.id().flatMap(users::findById).map(com.tradeanalysis.strategy.user.AppUser::getSameStrikeWaitMinutes).orElse(null);
-    }
-
-    public static final int MAX_SAME_STRIKE_WAIT_MINUTES = 30;
-
-    /**
-     * Sets the caller's same-strike wait: null turns it off; 1 to 30 = when another of their strategies already bought
-     * that option today, a second buy waits that many minutes after its signal (dropped if the trade is over by then).
-     */
-    @org.springframework.transaction.annotation.Transactional
-    public Integer setSameStrikeWaitMinutes(Integer minutes) {
-        Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
-        if (minutes != null && (minutes < 1 || minutes > MAX_SAME_STRIKE_WAIT_MINUTES))
-            throw new TradingException("Same-strike wait must be between 1 and " + MAX_SAME_STRIKE_WAIT_MINUTES + " minutes, or off");
-        var u = users.findById(me).orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
-        u.setSameStrikeWaitMinutes(minutes);
-        users.save(u);
-        return u.getSameStrikeWaitMinutes();
-    }
-
     public static final double MAX_DAY_LOSS_CAP = 100_000_000;
 
     /** Sets the caller's own max day loss: a positive amount in rupees, for all their strategies together. */
