@@ -10,14 +10,18 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Last traded prices for the UI, close to real time without breaking Kite's quote limit (1 request per second for
- * the whole account). Every screen polls about once a second; all symbols anyone asked for in the last few seconds
- * are fetched together in at most one Kite call per second, and everyone is served from that.
+ * Last traded prices for the UI and the exit watcher. While Kite's live stream ({@link KiteTicker}) is up, prices come
+ * from it as they change, with no Kite call. Otherwise they stay close to real time without breaking Kite's quote
+ * limit (1 request per second for the whole account): all symbols anyone asked for in the last few seconds are
+ * fetched together in at most one Kite call per second, and everyone is served from that.
  */
 @Component
 public class QuoteCache {
 
-    public record Quotes(Map<String, Double> prices, Instant asOf) {}
+    /** {@code streaming}: these prices came from Kite's live stream (screens may then ask several times a second). */
+    public record Quotes(Map<String, Double> prices, Instant asOf, boolean streaming) {
+        public Quotes(Map<String, Double> prices, Instant asOf) { this(prices, asOf, false); }
+    }
 
     private record Quote(Double price, Instant at) {}
 
@@ -30,6 +34,11 @@ public class QuoteCache {
     private final Map<String, Quote> quotes = new ConcurrentHashMap<>();
     private final Map<String, Instant> watched = new ConcurrentHashMap<>();
     private volatile Instant lastCall = Instant.EPOCH;
+    private KiteTicker stream;
+
+    /** Kite's live stream, when the server runs one (not in most tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void useStream(KiteTicker stream) { this.stream = stream; }
 
     public QuoteCache(KiteApi kite, Clock clock,
                       @Value("${trading.quotes.min-interval-ms:1000}") long minIntervalMs,
@@ -41,6 +50,11 @@ public class QuoteCache {
 
     public Quotes get(List<String> symbols) {
         Instant asked = clock.instant();
+        if (stream != null) {
+            stream.watch(symbols);
+            Map<String, Double> live = stream.prices(symbols);   // empty unless streaming
+            if (!symbols.isEmpty() && live.keySet().containsAll(symbols)) return new Quotes(live, asked, true);
+        }
         symbols.forEach(s -> watched.put(s, asked));
         if (needsFetch(symbols, asked)) {
             synchronized (this) {
@@ -58,6 +72,9 @@ public class QuoteCache {
         }
         return new Quotes(out, oldest);
     }
+
+    /** Whether prices are streaming from Kite now (so they can be read many times a second at no cost). */
+    public boolean streaming() { return stream != null && stream.live(); }
 
     /** Forgets every price (tests: each starts without prices cached by another). */
     void clear() { quotes.clear(); watched.clear(); lastCall = Instant.EPOCH; }

@@ -13,6 +13,9 @@ eureka:
 trading:
   runner:
     enabled: false
+    order-sync-initial-ms: 3600000   # tests sync orders themselves
+  ticker:
+    enabled: false                   # no Kite live stream in tests
 auth:
   trust-user-header: true     # tests identify callers by X-User without logging in
   auto-register-users: true

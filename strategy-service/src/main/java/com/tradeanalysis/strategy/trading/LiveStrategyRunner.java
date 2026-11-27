@@ -58,6 +58,7 @@ public class LiveStrategyRunner {
     private final Clock clock;
     private final Duration maxEntryDelay;
     private final TradeAlerts alerts;
+    private KiteTicker stream;
     private final Set<String> invalidWarned = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Held while positions are opened or closed: the minute run and the exit watcher never act on one at the same time. */
     private final Object positionLock = new Object();
@@ -74,13 +75,34 @@ public class LiveStrategyRunner {
         this.maxEntryDelay = Duration.ofMinutes(maxEntryDelayMinutes);
     }
 
+    /** Kite's live stream, when the server runs one: order prices come from it instead of a Kite call. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void useStream(KiteTicker stream) { this.stream = stream; }
+
     @Scheduled(cron = "${trading.runner.cron:3 * * * * *}", zone = "Asia/Kolkata")
     public void tick() {
+        // Entries first: the broker sync and price refresh run after, so they never delay a signal's order.
+        if (marketOpen(clock.instant()))
+            for (String line : runAll())   // log only what changed (an entry, exit, refusal or error), not every quiet minute
+                if (!line.endsWith("no change")) log.info("RUNNER {}", line);
+        syncOrders();
+    }
+
+    /**
+     * Fills and rejections of open live orders, every couple of seconds (trading.runner.order-sync-ms) instead of once a
+     * minute, so a filled entry shows its price and a rejected one is marked within seconds. No broker call when no live
+     * order is open.
+     */
+    @Scheduled(fixedDelayString = "${trading.runner.order-sync-ms:2000}", initialDelayString = "${trading.runner.order-sync-initial-ms:20000}")
+    public void syncOpenOrders() {
+        int open;
+        try { open = orderService.syncLiveOrders(); } catch (RuntimeException e) { log.warn("LIVE_SYNC_FAILED {}", e.getMessage()); return; }
+        if (open > 0) refreshLivePrices();
+    }
+
+    private void syncOrders() {
         try { orderService.syncLiveOrders(); } catch (RuntimeException e) { log.warn("LIVE_SYNC_FAILED {}", e.getMessage()); }
         refreshLivePrices();
-        if (!marketOpen(clock.instant())) return;
-        for (String line : runAll())   // log only what changed (an entry, exit, refusal or error), not every quiet minute
-            if (!line.endsWith("no change")) log.info("RUNNER {}", line);
     }
 
     /** Runs every PAPER/LIVE strategy once now (engine once per strategy, positions per user); a line per user and strategy. */
@@ -398,8 +420,9 @@ public class LiveStrategyRunner {
     /** Live: LIMIT a little through the last price (3%) so it fills like a market order with a cap; paper: MARKET. */
     private OrderRequest marketable(String symbol, String side, int qty, String product, double tick, TradingMode mode) {
         if (mode == TradingMode.PAPER) return new OrderRequest("NFO", symbol, side, qty, product, "MARKET", null, null);
-        Double ltp;
-        try { ltp = kite.ltp(List.of("NFO:" + symbol)).get("NFO:" + symbol); } catch (RuntimeException e) { ltp = null; }
+        Double ltp = stream == null ? null : stream.prices(List.of("NFO:" + symbol)).get("NFO:" + symbol);   // streamed: no Kite call
+        if (ltp == null)
+            try { ltp = kite.ltp(List.of("NFO:" + symbol)).get("NFO:" + symbol); } catch (RuntimeException e) { ltp = null; }
         if (ltp == null || ltp <= 0) return null;
         double raw = "BUY".equals(side) ? ltp * 1.03 : ltp * 0.97;
         BigDecimal ticks = BigDecimal.valueOf(raw / tick).setScale(0, "BUY".equals(side) ? RoundingMode.CEILING : RoundingMode.FLOOR);

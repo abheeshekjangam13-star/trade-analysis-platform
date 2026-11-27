@@ -58,6 +58,17 @@ class StrategyStatusServiceTest {
     }
 
     @Test
+    void missingCandlesSayMarketClosedOutsideMarketHours() {
+        TradingDays days = new TradingDays("2026-11-24");
+        java.util.function.Function<LocalDateTime, String> at = t -> StrategyStatusService.dataProblem(t.atZone(IST).toInstant(), days);
+        assertThat(at.apply(LocalDate.of(2026, 11, 27).atTime(8, 40))).isEqualTo("Market closed");                      // Friday, before 09:15
+        assertThat(at.apply(LocalDate.of(2026, 11, 27).atTime(15, 45))).isEqualTo("Market closed");                     // after 15:30
+        assertThat(at.apply(LocalDate.of(2026, 11, 28).atTime(11, 0))).isEqualTo("Market closed");                      // Saturday
+        assertThat(at.apply(LocalDate.of(2026, 11, 24).atTime(11, 0))).isEqualTo("Market closed");                      // listed holiday
+        assertThat(at.apply(LocalDate.of(2026, 11, 27).atTime(11, 0))).isEqualTo("Market data unavailable right now");  // trading hours
+    }
+
+    @Test
     void cachedStatusExpiresAtEachFiveMinuteCloseOrAfterAMinute() {
         Instant at = TODAY.atTime(10, 1, 10).atZone(IST).toInstant();
         assertThat(StrategyStatusService.fresh(at, at.plusSeconds(50))).isTrue();                          // 10:02:00: same candle

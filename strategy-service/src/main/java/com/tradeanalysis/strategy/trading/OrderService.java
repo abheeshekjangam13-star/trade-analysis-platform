@@ -135,9 +135,11 @@ public class OrderService {
         return orders.save(o);
     }
 
-    /** Refreshes open live orders from the broker (Kite or Angel One: fills, rejections). */
-    public void syncLiveOrders() {
-        for (TradeOrder o : orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN)) sync(o);
+    /** Refreshes every open live order from the broker (Kite or Angel One: fills, rejections); returns how many were open. */
+    public int syncLiveOrders() {
+        List<TradeOrder> open = orders.findByModeAndStatus(TradingMode.LIVE, TradeOrder.Status.OPEN);
+        for (TradeOrder o : open) sync(o);
+        return open.size();
     }
 
     /**

@@ -9,7 +9,7 @@ spring:
   task:
     scheduling:
       pool:
-        size: 4        # the 1-second exit watcher must not wait behind the minute runner or other jobs
+        size: 8        # the exit watcher must not wait behind the minute runner, order sync, the ticker's (re)connect or other jobs
   datasource:
     # PostgreSQL: one database for all services; see README "Database (PostgreSQL)".
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trade_analysis}?reWriteBatchedInserts=true   # batches go as multi-row INSERTs
@@ -77,9 +77,13 @@ trading:
     enabled: ${TRADING_RUNNER_ENABLED:true}       # runs PAPER/LIVE strategies every minute in market hours
     cron: "3 * * * * *"                           # 3 s after each minute's close (IST): market-data treats a candle as final 2 s after its close
     max-entry-delay-minutes: 5                    # never enter a signal older than this (e.g. after a late start)
+    order-sync-ms: 2000                           # open live orders' fills and rejections are read from the broker this often
   exit-watch:
-    interval-ms: 1000                             # open positions are checked against the live index price every second
+    interval-ms: 250                              # open positions are checked against the live index price 4x a second (once a second without the live stream)
     candle-every-ms: 3000                         # and against the forming 1-minute candle's high/low (catches sub-second touches)
+  ticker:
+    enabled: ${KITE_TICKER_ENABLED:true}          # Kite's live price stream (WebSocket) for screens and exits; falls back to once-a-second quotes
+    maintain-ms: 2000                             # connects, resubscribes and reconnects this often
   # NSE weekday trading holidays (equity & F&O), from NSE's yearly circular (+ later additions). The 09:15 market-open
   # alert and the 08:45 Kite reminder skip these days. ADD NEXT YEAR'S LINE EACH DECEMBER (a warning is logged when
   # the current year has no dates). MARKET_HOLIDAYS replaces the whole list.

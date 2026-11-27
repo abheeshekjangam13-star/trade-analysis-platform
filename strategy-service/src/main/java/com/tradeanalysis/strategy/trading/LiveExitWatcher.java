@@ -21,9 +21,9 @@ import java.util.*;
 
 /**
  * Closes open strategy positions the moment the index touches their stop or target, instead of waiting for the
- * 1-minute candle to close and the next minute run (up to two minutes later). Every second in market hours it reads
- * the live index price (through {@link QuoteCache}: one Kite call a second for the whole account, shared with the
- * screens) and compares it with each open position's
+ * 1-minute candle to close and the next minute run (up to two minutes later). Four times a second while Kite's live
+ * stream is up (once a second otherwise) it reads the live index price (through {@link QuoteCache}: streamed, or one
+ * Kite call a second for the whole account, shared with the screens) and compares it with each open position's
  * <ul>
  *   <li>stop: the one the engine keeps (trailed every minute by {@link LiveStrategyRunner}), lifted to breakeven
  *       (entry ± breakevenLockPoints) the moment the price reaches trailAfterPoints with breakevenOnTrail, and</li>
@@ -63,6 +63,9 @@ public class LiveExitWatcher {
     private volatile String lastProblem;
     private volatile String lastCandleProblem;
     private volatile Instant lastCandleCheck = Instant.EPOCH;
+    private volatile Instant lastCheck = Instant.EPOCH;
+    /** Without Kite's live stream prices change at most once a second, so checking more often only adds work. */
+    static final Duration POLLED_EVERY = Duration.ofSeconds(1);
 
     public LiveExitWatcher(LivePositionRepository positions, StrategyService strategies, QuoteCache quotes,
                            LiveStrategyRunner runner, Clock clock, KiteApi kite,
@@ -74,9 +77,12 @@ public class LiveExitWatcher {
         this.orders = orders; this.dayLossEvery = Duration.ofMillis(dayLossEveryMs);
     }
 
-    @Scheduled(fixedDelayString = "${trading.exit-watch.interval-ms:1000}", initialDelayString = "${trading.exit-watch.initial-delay-ms:30000}")
+    @Scheduled(fixedDelayString = "${trading.exit-watch.interval-ms:250}", initialDelayString = "${trading.exit-watch.initial-delay-ms:30000}")
     public void tick() {
-        if (!LiveStrategyRunner.marketOpen(clock.instant())) return;
+        Instant now = clock.instant();
+        if (!LiveStrategyRunner.marketOpen(now)) return;
+        if (!quotes.streaming() && now.isBefore(lastCheck.plus(POLLED_EVERY))) return;
+        lastCheck = now;
         try {
             check();
             lastProblem = null;

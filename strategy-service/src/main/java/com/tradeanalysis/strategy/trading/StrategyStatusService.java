@@ -63,14 +63,15 @@ public class StrategyStatusService {
     private final MarketDataClient marketData;
     private final NiftyOpeningBreakoutEngine engine;
     private final Clock clock;
+    private final TradingDays tradingDays;
     private final Duration maxEntryDelay;
     private final Map<Long, Engine> cache = new ConcurrentHashMap<>();
 
     public StrategyStatusService(StrategyLiveConfigRepository configs, LivePositionRepository positions, StrategyService strategies,
-                                 MarketDataClient marketData, NiftyOpeningBreakoutEngine engine, Clock clock,
+                                 MarketDataClient marketData, NiftyOpeningBreakoutEngine engine, Clock clock, TradingDays tradingDays,
                                  @org.springframework.beans.factory.annotation.Value("${trading.runner.max-entry-delay-minutes:5}") long maxEntryDelayMinutes) {
         this.configs = configs; this.positions = positions; this.strategies = strategies;
-        this.marketData = marketData; this.engine = engine; this.clock = clock;
+        this.marketData = marketData; this.engine = engine; this.clock = clock; this.tradingDays = tradingDays;
         this.maxEntryDelay = Duration.ofMinutes(maxEntryDelayMinutes);   // the runner's: older signals are never entered
     }
 
@@ -230,10 +231,18 @@ public class StrategyStatusService {
             fresh = new Engine(now, null, List.of(), null, null, "Invalid parameters: " + ex.getMessage(), List.of());
         } catch (RuntimeException ex) {
             log.warn("STATUS_FAILED strategy={}: {}", s.getId(), ex.getMessage());
-            fresh = new Engine(now, null, List.of(), null, null, "Market data unavailable right now", List.of());
+            fresh = new Engine(now, null, List.of(), null, null, dataProblem(now, tradingDays), List.of());
         }
         cache.put(s.getId(), fresh);
         return fresh;
+    }
+
+    /**
+     * What a strategy shows when today's candles couldn't be fetched: before 09:15, after 15:30, on weekends and holidays
+     * there are simply none yet, so "Market closed"; while NSE is trading it is a real problem worth seeing.
+     */
+    static String dataProblem(Instant now, TradingDays days) {
+        return LiveStrategyRunner.exchangeOpen(now, days) ? "Market data unavailable right now" : "Market closed";
     }
 
     private static String hhmm(Instant i) {
