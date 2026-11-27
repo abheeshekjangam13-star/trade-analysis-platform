@@ -37,8 +37,10 @@ public class StrategyStatusService {
      * A level that would open a trade, the points still to go, and the stop and target the trade would start with if it
      * opened right at the level (null when the rule doesn't fix one in advance, e.g. a breakout-candle stop without a cap).
      */
-    public record Trigger(String side, double level, double distance, Double stop, Double target) {
+    /** targetFromLine: the target is that price whatever candle it buys on; false = targetPoints from where it buys. */
+    public record Trigger(String side, double level, double distance, Double stop, Double target, boolean targetFromLine) {
         public Trigger(String side, double level, double distance) { this(side, level, distance, null, null); }
+        public Trigger(String side, double level, double distance, Double stop, Double target) { this(side, level, distance, stop, target, false); }
     }
     public record Position(String optionType, String tradingsymbol, double entrySpot, Double stop, Double target, Double entryPrice,
                            int quantity, Instant openedAt) {}
@@ -176,7 +178,7 @@ public class StrategyStatusService {
             return new Status(s.getId(), s.getName(), mode, u, State.IN_TRADE, "In " + x.getOptionType() + " from spot "
                     + Math.round(x.getEntrySpot()) + (x.getCurrentStop() == null ? "" : " · stop " + Math.round(x.getCurrentStop())),
                     e.spot(), List.of(), new Position(x.getOptionType(), x.getTradingsymbol(), x.getEntrySpot(), x.getCurrentStop(),
-                    tp > 0 ? x.getEntrySpot() + ("CE".equals(x.getOptionType()) ? tp : -tp) : null,
+                    x.getTargetSpot() != null ? x.getTargetSpot() : tp > 0 ? x.getEntrySpot() + ("CE".equals(x.getOptionType()) ? tp : -tp) : null,
                     x.getEntryPrice(), x.getQuantity(), x.getOpenedAt()), pnl(mine), from, until);
         }
         // A position the broker refused (entry rejected: FAILED) also ends the strategy's day.
@@ -349,7 +351,8 @@ public class StrategyStatusService {
         Double roundedStop = null, roundedTarget = null;
         if (stop != null) roundedStop = round(stop);
         if (target != null) roundedTarget = round(target);
-        return new Trigger(call ? "CE" : "PE", round(level), round(distance), roundedStop, roundedTarget);
+        boolean fromLine = tp > 0 && com.tradeanalysis.strategy.engine.TargetFrom.of(p) == com.tradeanalysis.strategy.engine.TargetFrom.LINE;
+        return new Trigger(call ? "CE" : "PE", round(level), round(distance), roundedStop, roundedTarget, fromLine);
     }
 
     private static double round(double v) { return Double.isNaN(v) ? v : Math.round(v * 100) / 100.0; }

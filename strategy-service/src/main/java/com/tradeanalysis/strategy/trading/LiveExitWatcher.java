@@ -286,8 +286,12 @@ public class LiveExitWatcher {
         return null;
     }
 
-    /** Entry ± targetPoints for the engines whose target is that; null otherwise (gap fill, targetR, no target). */
+    /**
+     * The target saved on the position when it opened (targetFrom LINE), else entry ± targetPoints for the engines whose
+     * target is that; null otherwise (gap fill, targetR, no target).
+     */
     static Double target(LivePosition p, Params params) {
+        if (p.getTargetSpot() != null) return p.getTargetSpot();
         if (GapFillEngine.handles(params)) return null;
         double tp = params.doubleOr("targetPoints", 0);
         if (tp <= 0) return null;

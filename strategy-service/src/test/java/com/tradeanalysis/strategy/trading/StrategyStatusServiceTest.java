@@ -97,6 +97,15 @@ class StrategyStatusServiceTest {
     }
 
     @Test
+    void triggersSayWhenTheTargetIsMeasuredFromTheLine() {
+        var line = StrategyStatusService.triggers(p("referenceMode", "PREVIOUS_DAY", "targetPoints", "60", "targetFrom", "LINE"), bars, TODAY, 25950.0);
+        assertThat(line.get(0).target()).isEqualTo(26060.0);
+        assertThat(line.get(0).targetFromLine()).isTrue();
+        var entry = StrategyStatusService.triggers(p("referenceMode", "PREVIOUS_DAY", "targetPoints", "60"), bars, TODAY, 25950.0);
+        assertThat(entry.get(0).targetFromLine()).isFalse();
+    }
+
+    @Test
     void previousDayTriggersAreYesterdaysHighAndLow() {
         var t = StrategyStatusService.triggers(p("referenceMode", "PREVIOUS_DAY"), bars, TODAY, 25950.0);
         assertThat(t).containsExactly(new StrategyStatusService.Trigger("CE", 26000, 50, 25800.0, null), new StrategyStatusService.Trigger("PE", 25800, 150, 26000.0, null));   // stop: the other side

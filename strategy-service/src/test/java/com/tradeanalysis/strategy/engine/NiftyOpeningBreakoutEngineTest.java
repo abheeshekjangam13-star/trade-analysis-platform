@@ -201,6 +201,30 @@ class NiftyOpeningBreakoutEngineTest {
     }
 
     @Test
+    void aTargetFromTheLineIsMeasuredFromTheRangeHighNotTheEntry() {
+        List<Candle> fiveMin = List.of(REF,
+                bar(9, 20, 24060, 24130, 24060, 24120),   // CE entry 24120, 20 past the range high 24100: target 24100 + 120
+                bar(9, 25, 24120, 24260, 24110, 24250));
+        List<Candle> oneMin = List.of(
+                bar(9, 25, 24120, 24180, 24110, 24170),
+                bar(9, 26, 24170, 24260, 24165, 24250));
+
+        NiftyTradeLog t = run(params("targetPoints", "120", "targetFrom", "LINE"), fiveMin, oneMin, closeOf(9, 25), null).tradeLogs().get(0);
+        assertThat(t.getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(t.getExitSpotPrice()).isEqualTo(24220.0);
+    }
+
+    @Test
+    void aBreakoutAlreadyPastATargetFromTheLineIsNotTaken() {
+        List<Candle> fiveMin = List.of(REF,
+                bar(9, 20, 24060, 24130, 24060, 24120),   // closes 20 past the line: a 15-point target from the line is behind it
+                bar(9, 25, 24120, 24260, 24110, 24250));
+
+        assertThat(run(params("targetPoints", "15", "targetFrom", "LINE"), fiveMin, List.of(), closeOf(9, 25), null).tradeLogs()).isEmpty();
+        assertThat(run(params("targetPoints", "15"), fiveMin, List.of(), closeOf(9, 25), null).tradeLogs()).hasSize(1);   // from the entry: taken
+    }
+
+    @Test
     void stopIsCheckedBeforeTargetWithinTheSameMinute() {
         List<Candle> fiveMin = List.of(REF,
                 bar(9, 20, 24060, 24130, 24060, 24120),

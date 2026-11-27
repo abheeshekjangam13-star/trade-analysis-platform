@@ -28,7 +28,7 @@ import static com.tradeanalysis.strategy.engine.FixedStopTrade.*;
  * - The day must open (09:15 open) between S1 and R1.
  * - Entry: the first 5-min candle after 09:15 that closes above R1 (CE) or below S1 (PE), a fresh cross, before
  *   entryUntil (default 14:00), once a day.
- * - Stop: the pivot, but never more than maxStopPoints from entry when that is set. Target: targetPoints in favour
+ * - Stop: the pivot, but never more than maxStopPoints from entry when that is set. Target: targetPoints in favour (of the entry, or of R1 / S1 with targetFrom LINE)
  *   (0 = none). Checked on 1-min candles, stop first; square-off at 15:20.
  *
  * Selected by {@code referenceMode=CPR}; see {@link BacktestEngine}. Parameters: those of {@link FixedStopTrade.Basics}
@@ -135,6 +135,11 @@ public class CprEngine {
             }
 
             double entrySpot = entry.close().doubleValue();
+            double line = call ? r1 : s1;
+            if (b.targetFrom().noRoom(call, entrySpot, line, b.targetPoints())) {
+                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE", TargetFrom.noRoomReason(entrySpot, line, b.targetPoints()), 0));
+                continue;
+            }
             double stop = b.capStop(call, entrySpot, pivot);
             String side = call ? "CE" : "PE";
             int strike = b.underlying().strike(call, entrySpot);
@@ -144,7 +149,7 @@ public class CprEngine {
             signals.add(new Signal(entry.timestamp(), Signal.SignalType.BUY, BigDecimal.valueOf(entrySpot), String.format(
                     "ENTRY %s | Strike %d | Pivot %.2f | R1 %.2f | S1 %.2f | CPR %.3f%% | Stop %.2f", side, strike, pivot, r1, s1, widthPct, stop)));
 
-            Exit exit = exitFor(call, stop, entrySpot, call ? entrySpot + b.targetPoints() : entrySpot - b.targetPoints(),
+            Exit exit = exitFor(call, stop, entrySpot, b.targetFrom().target(call, entrySpot, line, b.targetPoints()),
                     b.targetPoints() > 0, b.protect(), entry, date, oneMin, now, closeAtEnd, trade::trackStop);
             if (exit == null) {   // live: still open
                 openTrades.add(trade);

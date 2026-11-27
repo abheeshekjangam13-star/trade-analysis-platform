@@ -61,4 +61,23 @@ class LiveExitWatcherTest {
         assertThat(LiveExitWatcher.target(ce, p("targetR", "2"))).isNull();                                    // R target: minute run
         assertThat(LiveExitWatcher.target(ce, p("referenceMode", "GAP_FILL", "targetPoints", "50"))).isNull();   // gap fill: its own target
     }
+
+    @Test
+    void aTargetFromTheLineIsTheOneSavedWhenThePositionOpened() {
+        // #174: line 25,975, bought 25,995, target 60 from the line = 26,035 (not 25,995 + 60).
+        LivePosition ce = new LivePosition(174L, 1L, LocalDate.of(2026, 11, 27), TradingMode.LIVE, "CE", "X", 260, Instant.EPOCH, 25995, 25895.0);
+        ce.targetAt(26035.0);
+        assertThat(LiveExitWatcher.target(ce, p("referenceMode", "PREVIOUS_DAY", "targetPoints", "60", "targetFrom", "LINE"))).isEqualTo(26035.0);
+    }
+
+    @Test
+    void theRunnerSavesTheTargetFromTheLineTheEngineTradeBroke() {
+        var t = new com.tradeanalysis.strategy.model.NiftyTradeLog(174L, "NIFTY 50", LocalDate.of(2026, 11, 27), 1, "BULLISH", 25975, 25700,
+                Instant.EPOCH, Instant.EPOCH, 25995, "CE", 26000, 4, 65, 25895.0);
+        assertThat(LiveStrategyRunner.lineTarget(p("targetPoints", "60", "targetFrom", "LINE"), t)).isEqualTo(26035.0);
+        assertThat(LiveStrategyRunner.lineTarget(p("targetPoints", "60"), t)).isNull();                 // from the entry: the watcher's rule
+        var pe = new com.tradeanalysis.strategy.model.NiftyTradeLog(243L, "NIFTY 50", LocalDate.of(2026, 11, 27), 1, "BEARISH", 25995, 25754,
+                Instant.EPOCH, Instant.EPOCH, 25731, "PE", 25700, 2, 65, 25791.0);
+        assertThat(LiveStrategyRunner.lineTarget(p("targetPoints", "100", "targetFrom", "LINE"), pe)).isEqualTo(25654.0);
+    }
 }
