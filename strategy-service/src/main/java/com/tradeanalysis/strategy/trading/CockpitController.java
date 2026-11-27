@@ -32,6 +32,10 @@ public class CockpitController {
         return status.today(CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first")));
     }
 
+    @PostMapping("/strategies/{id}/stop")
+    @Operation(summary = "Stop one of your strategies: it goes OFF for you and your open position in it is closed now")
+    public TradingService.StopResult stopStrategy(@PathVariable Long id) { return trading.stopStrategy(id); }
+
     @PostMapping("/stop-mine")
     @Operation(summary = "Your own emergency stop: all your strategies OFF and your open strategy positions closed now")
     public TradingService.StopResult stopMine() { return trading.stopMine(); }

@@ -91,6 +91,46 @@ class TradingServiceAuditTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void stoppingOneStrategyTurnsOnlyItOffAndClosesOnlyItsPosition() {
+        StrategyLiveConfig nr7 = new StrategyLiveConfig(137L, ME);
+        nr7.set(TradingMode.LIVE, "MIS");
+        StrategyLiveConfig cpr = new StrategyLiveConfig(104L, ME);
+        cpr.set(TradingMode.LIVE, "MIS");
+        when(configs.findByUserId(ME)).thenReturn(List.of(nr7, cpr));
+        LivePosition mine = position(1L, 137L, ME), otherStrategy = position(2L, 104L, ME), otherUser = position(3L, 137L, 42L);
+        when(positions.findByStatus(LivePosition.Status.OPEN)).thenReturn(List.of(mine, otherStrategy, otherUser));
+        LiveStrategyRunner runner = mock(LiveStrategyRunner.class);
+        when(runner.exitOnStop(1L)).thenReturn("SELL 130 NIFTY26D0126000CE (STOPPED_BY_USER)");
+        ObjectProvider<LiveStrategyRunner> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(runner);
+        TradingService withRunner = new TradingService(configs, mock(TradingControlRepository.class), mock(TradeOrderRepository.class), positions,
+                mock(OrderService.class), strategies, mock(com.tradeanalysis.strategy.user.AppUserRepository.class),
+                provider, mock(BrokerAccounts.class), mock(com.tradeanalysis.strategy.repository.StrategyRepository.class),
+                mock(LiveOrderBilling.class), mock(com.tradeanalysis.strategy.compliance.Compliance.class), audit, txManager);
+
+        TradingService.StopResult r = withRunner.stopStrategy(137L);
+
+        assertThat(r.strategiesStopped()).isEqualTo(1);
+        assertThat(r.positionsClosed()).isEqualTo(1);
+        assertThat(nr7.getMode()).isEqualTo(TradingMode.OFF);
+        assertThat(cpr.getMode()).isEqualTo(TradingMode.LIVE);                    // the user's other strategy keeps running
+        verify(runner).exitOnStop(1L);
+        verify(runner, never()).exitOnStop(2L);
+        verify(runner, never()).exitOnStop(3L);                                    // another user's trade in the same strategy
+        verify(audit).recordOrFail(ME, TradingService.MODE_ACTION, "strategy 137 OFF MIS (stop)");
+        verify(audit, times(1)).recordOrFail(anyLong(), anyString(), anyString());
+    }
+
+    static LivePosition position(long id, long strategyId, long userId) {
+        LivePosition p = mock(LivePosition.class);
+        when(p.getId()).thenReturn(id);
+        when(p.getStrategyId()).thenReturn(strategyId);
+        when(p.getUserId()).thenReturn(userId);
+        return p;
+    }
+
+    @Test
     void theKillSwitchRecordsWhoseStrategyItStopped() {
         StrategyLiveConfig usha = new StrategyLiveConfig(137L, 42L);
         usha.set(TradingMode.LIVE, "MIS");

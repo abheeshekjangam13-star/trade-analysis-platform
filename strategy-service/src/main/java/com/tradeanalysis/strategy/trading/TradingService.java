@@ -272,22 +272,42 @@ public class TradingService {
      */
     public StopResult stopMine() {
         Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        StopResult r = stop(me, null, "stop all");
+        log.warn("STOP_MINE user={} strategies={} positions={}", me, r.strategiesStopped(), r.positionsClosed());
+        return r;
+    }
+
+    /**
+     * The caller's stop for one strategy: it goes OFF for them and their open position in it is closed now (paper and
+     * live). Their other strategies and other users trading the same strategy are not touched.
+     */
+    public StopResult stopStrategy(Long strategyId) {
+        Long me = CurrentUser.id().orElseThrow(() -> new TradingException(HttpStatus.UNAUTHORIZED, "Log in first"));
+        strategies.get(strategyId);   // one the caller can see, or not found
+        StopResult r = stop(me, strategyId, "stop");
+        log.warn("STOP_STRATEGY user={} strategy={} positions={}", me, strategyId, r.positionsClosed());
+        return r;
+    }
+
+    /** Switches the user's strategies OFF (one, or all when strategyId is null) and closes their open positions in them. */
+    private StopResult stop(Long me, Long strategyId, String via) {
         int stopped = 0;
         for (StrategyLiveConfig cfg : configs.findByUserId(me)) {
-            if (cfg.getMode() == TradingMode.OFF) continue;
-            saveMode(cfg, TradingMode.OFF, null, "stop all", false);
+            if (cfg.getMode() == TradingMode.OFF || (strategyId != null && !strategyId.equals(cfg.getStrategyId()))) continue;
+            saveMode(cfg, TradingMode.OFF, null, via, false);
             stopped++;
         }
         List<String> details = new ArrayList<>();
         int closed = 0;
         LiveStrategyRunner r = runner.getIfAvailable();
         for (LivePosition p : positions.findByStatus(LivePosition.Status.OPEN)) {
-            if (!me.equals(p.getUserId())) continue;
+            if (!me.equals(p.getUserId()) || (strategyId != null && !strategyId.equals(p.getStrategyId()))) continue;
             if (r == null) { details.add("position " + p.getId() + ": runner disabled, close it in Kite"); continue; }
-            try { details.add(r.exit(p, null, "STOPPED_BY_USER", null, "STOPPED_BY_USER", null)); closed++; }
-            catch (RuntimeException e) { details.add("position " + p.getId() + ": " + e.getMessage()); }
+            try {
+                String did = r.exitOnStop(p.getId());   // under the runner's lock: never sold twice with a stop or target exit
+                if (did != null) { details.add(did); closed++; }
+            } catch (RuntimeException e) { details.add("position " + p.getId() + ": " + e.getMessage()); }
         }
-        log.warn("STOP_MINE user={} strategies={} positions={}", me, stopped, closed);
         return new StopResult(stopped, closed, details);
     }
 

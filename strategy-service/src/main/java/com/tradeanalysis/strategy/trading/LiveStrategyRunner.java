@@ -174,6 +174,19 @@ public class LiveStrategyRunner {
     }
 
     /**
+     * Closes an open position because its user stopped it (a strategy's Stop or Stop all), at the market price. Under
+     * the lock, so a position the exit watcher or the minute run is closing at the same moment is never sold twice;
+     * null when it was already closed.
+     */
+    public String exitOnStop(Long positionId) {
+        synchronized (positionLock) {
+            LivePosition p = positions.findById(positionId).orElse(null);
+            if (p == null || p.getStatus() != LivePosition.Status.OPEN) return null;
+            return exit(p, null, "STOPPED_BY_USER", null, "STOPPED_BY_USER", null);
+        }
+    }
+
+    /**
      * Each user's own max day loss covers all their strategies together: once today's loss in a mode (realized plus
      * open positions) reaches it, every open strategy position of that user in that mode is closed. New entries are
      * refused for the rest of the day (see OrderService#dayLossRefusal).
