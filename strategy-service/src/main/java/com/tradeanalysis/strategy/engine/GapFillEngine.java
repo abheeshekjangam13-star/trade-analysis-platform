@@ -160,7 +160,6 @@ public class GapFillEngine {
                             LocalTime entryUntil, Set<DayOfWeek> skipDays, double costPerTrade, Underlying underlying,
                             boolean allowCe, boolean allowPe) {
         static Settings from(Params p) {
-            TargetFrom.needsALine(p, "gap-fill");
             String dirs = p.stringOr("directions", "BOTH").trim().toUpperCase(Locale.ROOT);
             if (dirs.isEmpty()) dirs = "BOTH";
             if (!Set.of("CE", "PE", "BOTH").contains(dirs))

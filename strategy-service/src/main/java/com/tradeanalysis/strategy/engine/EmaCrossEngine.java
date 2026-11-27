@@ -160,7 +160,6 @@ public class EmaCrossEngine {
             if (s <= f || s > 400) throw new IllegalArgumentException("slowEma must be above fastEma and at most 400: " + s);
             if (swing < 1 || swing > 20) throw new IllegalArgumentException("swingBars must be 1-20: " + swing);
             Basics b = Basics.from(p, "EMA crossover");
-            TargetFrom.needsALine(p, "EMA crossover");
             LocalTime from = time(p, "entryFrom", DEFAULT_ENTRY_FROM);
             if (!from.isBefore(b.entryUntil())) throw new IllegalArgumentException("entryFrom must be before entryUntil: " + from);
             return new Settings(b, f, s, from, swing);

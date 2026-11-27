@@ -71,10 +71,6 @@ class StrategyDescriberTest {
                 "targetPoints", "80", "maxStopPoints", "40", "breakevenOnTrail", "true", "trailAfterPoints", "32", "trailMinutes", "0"));
         roundTrip(B, m("referenceMode", "PREVIOUS_DAY", "directions", "CE", "underlying", "BANKNIFTY", "entryUntil", "11:00", "targetPoints", "0", "skipDays", "MON"));
         roundTrip(B, m("referenceMode", "PREVIOUS_DAY", "lots", "2"));
-        roundTrip(B, m("referenceMode", "PREVIOUS_DAY", "directions", "CE", "targetPoints", "50", "targetFrom", "LINE", "maxStopPoints", "100", "lots", "4"));
-        roundTrip(B, m("referenceMode", "CPR", "targetPoints", "100", "targetFrom", "LINE", "maxStopPoints", "60"));
-        assertThat(StrategyDescriber.describe(B, m("referenceMode", "PREVIOUS_DAY", "targetPoints", "50", "targetFrom", "LINE")))
-                .contains("Target 50 points from the line.");
         roundTrip(B, m("referenceMode", "GAP_FILL", "directions", "PE", "underlying", "BANKNIFTY", "gapPct", "0.5", "maxGapPct", "2", "gapFillTarget", "0.5",
                 "lots", "1", "skipMonthEndExpiry", "true"));
         roundTrip(B, m("referenceMode", "GAP_FILL", "directions", "CE", "gapFillTarget", "1"));

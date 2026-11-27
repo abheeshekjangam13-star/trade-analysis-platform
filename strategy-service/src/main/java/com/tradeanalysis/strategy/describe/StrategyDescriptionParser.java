@@ -326,12 +326,7 @@ public class StrategyDescriptionParser {
                 });
         s.match("\\bdelayed\\s+trail\\b", m -> s.note(m, "Delayed trail: give the points with \"trail after N points\""));
 
-        // Target. "Target 50 points from the line": measured from the line it broke, not the entry (targetFrom LINE).
-        s.match("\\btarget(\\s+of)?\\s*\\+?\\s*" + NUM + "\\s*(points?|pts?)?\\s+from\\s+(the\\s+)?(breakout\\s+)?(line|level)\\b", m -> {
-            s.setNum("targetPoints", m.group(2), 1, 3000, m);
-            s.set("targetFrom", "LINE", m, "Target measured from the line, not the entry");
-        });
-        s.match("\\btarget(\\s+of)?\\s*\\+?\\s*" + NUM + "\\s*(points?|pts?)?\\s+from\\s+(the\\s+)?entry\\b", m -> s.setNum("targetPoints", m.group(2), 1, 3000, m));
+        // Target
         s.match("\\btarget(\\s+of)?\\s*(\\+|-)?\\s*" + NUM + "\\s*(points?|pts?)?\\b", m -> s.setNum("targetPoints", m.group(3), 1, 3000, m));
         s.match("\\b" + NUM + "\\s*(points?|pts?)?\\s+target\\b", m -> s.setNum("targetPoints", m.group(1), 1, 3000, m));
         s.match("\\bno\\s+target\\b", m -> s.set("targetPoints", "0", m, "No target"));
@@ -524,7 +519,7 @@ public class StrategyDescriptionParser {
                 appendNarrowRange(n, p);
             }
             else n.append(" EMA ").append(p.getOrDefault("fastEma", "9")).append("/").append(p.getOrDefault("slowEma", "21")).append(" Cross");
-            if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target").append(fromLine(p));
+            if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
             if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
             if (p.containsKey("lots")) n.append(" - ").append(lots(p.get("lots")));
             return n.toString();
@@ -540,16 +535,11 @@ public class StrategyDescriptionParser {
         else if (p.containsKey("referenceMinutes") && !p.get("referenceMinutes").equals("5")) n.append(" ").append(p.get("referenceMinutes")).append("-min");
         n.append(dir.equals("PE") ? " Breakdown" : " Breakout");
         if (!p.containsKey("referenceMode")) appendNarrowRange(n, p);
-        if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target").append(fromLine(p));
+        if (p.containsKey("targetPoints") && !p.get("targetPoints").equals("0")) n.append(" ").append(trim(p.get("targetPoints"))).append(" Target");
         else if (p.containsKey("targetR")) n.append(" ").append(trim(p.get("targetR"))).append("R Target");
         if (p.containsKey("maxStopPoints")) n.append(" - stop cap ").append(trim(p.get("maxStopPoints")));
         if (p.containsKey("lots")) n.append(" - ").append(lots(p.get("lots")));
         return n.toString();
-    }
-
-    /** " (line)" after the target in a name when it is measured from the line. */
-    private static String fromLine(Map<String, String> p) {
-        return "LINE".equalsIgnoreCase(p.getOrDefault("targetFrom", "")) ? " (line)" : "";
     }
 
     private static void appendNarrowRange(StringBuilder n, Map<String, String> p) {

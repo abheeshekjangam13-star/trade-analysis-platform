@@ -125,8 +125,7 @@ public final class StrategyDescriber {
             out.add("0".equals(p.get("trailMinutes")) ? "No candle trail." : "Trail on " + p.get("trailMinutes") + "-minute lows and highs.");
 
         if (p.containsKey("targetR")) out.add("Target " + p.get("targetR") + "R.");
-        if (p.containsKey("targetPoints")) out.add("0".equals(p.get("targetPoints")) ? "No target."
-                : "Target " + p.get("targetPoints") + " points" + ("LINE".equalsIgnoreCase(p.get("targetFrom")) ? " from the line." : "."));
+        if (p.containsKey("targetPoints")) out.add("0".equals(p.get("targetPoints")) ? "No target." : "Target " + p.get("targetPoints") + " points.");
         out.add("Square-off at 15:20.");
 
         if (p.containsKey("lots")) out.add(StrategyDescriptionParser.lots(p.get("lots")) + ".");

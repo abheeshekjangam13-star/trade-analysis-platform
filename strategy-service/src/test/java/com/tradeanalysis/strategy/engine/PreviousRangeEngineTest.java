@@ -103,37 +103,6 @@ class PreviousRangeEngineTest {
         assertThat(t.getEstimatedPnl()).isPositive();
     }
 
-    /** Yesterday's high 24200; the 09:25 candle closes 24220, 20 past it; the next minute reaches 24255. */
-    static NiftyOpeningBreakoutEngine.BreakoutResult ceBreakout(Map<String, String> extra) {
-        List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());
-        fiveMin.add(c(DAY, 9, 15, 24100, 24150, 24090, 24140));
-        fiveMin.add(c(DAY, 9, 20, 24140, 24190, 24130, 24180));
-        fiveMin.add(c(DAY, 9, 25, 24180, 24230, 24175, 24220));
-        List<Candle> oneMin = List.of(c(DAY, 9, 30, 24220, 24255, 24215, 24250));
-        java.util.HashMap<String, String> p = new java.util.HashMap<>(Map.of("directions", "CE"));
-        p.putAll(extra);
-        return new PreviousRangeEngine().run(new PriceSeries("NIFTY 50", Interval.MINUTE_5, fiveMin),
-                new PriceSeries("NIFTY 50", Interval.MINUTE_1, oneMin), params(p), 7L, NOW, null);
-    }
-
-    @Test
-    void aTargetFromTheLineSitsTargetPointsBeyondYesterdaysHighWhateverTheEntry() {
-        NiftyTradeLog fromEntry = ceBreakout(Map.of()).tradeLogs().get(0);
-        assertThat(fromEntry.getExitSpotPrice()).isEqualTo(24250.0);               // 24220 + 30
-
-        NiftyTradeLog fromLine = ceBreakout(Map.of("targetFrom", "LINE")).tradeLogs().get(0);
-        assertThat(fromLine.getExitReason()).isEqualTo("TARGET_HIT");
-        assertThat(fromLine.getExitSpotPrice()).isEqualTo(24230.0);                // 24200 + 30: 10 points from the entry
-    }
-
-    @Test
-    void anEntryAlreadyPastATargetFromTheLineIsNotTaken() {
-        var r = ceBreakout(Map.of("targetFrom", "LINE", "targetPoints", "15"));   // target 24215, but it bought at 24220
-        assertThat(r.tradeLogs()).isEmpty();
-        assertThat(r.days()).anyMatch(d -> d.date().equals(DAY) && d.status().equals("NO_TRADE")
-                && d.reason().contains("20 points past the line 24200.00") && d.reason().contains("15-point target from the line"));
-    }
-
     @Test
     void ceStopIsYesterdaysLow() {
         List<Candle> fiveMin = new java.util.ArrayList<>(previousDay());

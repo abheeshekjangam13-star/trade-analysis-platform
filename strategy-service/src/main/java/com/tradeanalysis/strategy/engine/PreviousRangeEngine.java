@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  *   cross, after 09:15 and before entryUntil (default 14:00), once a day. With directions BOTH the first breakout
  *   either way is taken.
  * - Stop: the other side of the range (CE: yesterday's low, PE: yesterday's high), but never more than maxStopPoints
- *   from entry when that is set (0 or missing = no cap). Target: targetPoints in favour of the entry, or of the line with targetFrom LINE ({@link TargetFrom}) (0 = none), checked on 1-min
+ *   from entry when that is set (0 or missing = no cap). Target: targetPoints in favour (0 = none), checked on 1-min
  *   candles, stop first.
  * - Square-off at 15:20 IST.
  * - Optional narrow-range filter: with narrowRangeDays N, trade only after an NR-N day, when yesterday's high-low range
@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  *   same day.
  *
  * Selected by {@code referenceMode=PREVIOUS_DAY} in the strategy's parameters; see {@link BacktestEngine}.
- * Parameters used: lots (2), underlying, targetPoints (0), targetFrom ENTRY|LINE (ENTRY), maxStopPoints (0 = no cap), entryUntil (14:00), skipDays (none), costPerTrade (0),
+ * Parameters used: lots (2), underlying, targetPoints (0), maxStopPoints (0 = no cap), entryUntil (14:00), skipDays (none), costPerTrade (0),
  * directions (PE when empty, so older PE-only strategies keep their results; CE, PE or BOTH),
  * narrowRangeDays (0 = off, 2-20), excludeNarrowRangeDays (0 = off, above narrowRangeDays, up to 20).
  */
@@ -162,12 +162,6 @@ public class PreviousRangeEngine {
             }
 
             double entrySpot = entryCandle.close().doubleValue();
-            double line = call ? pHigh : pLow;
-            if (cfg.targetFrom().noRoom(call, entrySpot, line, cfg.targetPoints())) {
-                days.add(new NiftyOpeningBreakoutEngine.DayReport(date, gap, "NO_TRADE",
-                        TargetFrom.noRoomReason(entrySpot, line, cfg.targetPoints()), 0));
-                continue;
-            }
             String side = call ? "CE" : "PE";
             double stop = cfg.capStop(call, entrySpot, call ? pLow : pHigh);
             int strike = cfg.underlying().strike(call, entrySpot);
@@ -179,7 +173,7 @@ public class PreviousRangeEngine {
                             side, strike, pHigh, pLow, stop)));
 
             FixedStopTrade.Exit exit = FixedStopTrade.exitFor(call, stop, entrySpot,
-                    cfg.targetFrom().target(call, entrySpot, line, cfg.targetPoints()), cfg.targetPoints() > 0, protect,
+                    call ? entrySpot + cfg.targetPoints() : entrySpot - cfg.targetPoints(), cfg.targetPoints() > 0, protect,
                     entryCandle, date, oneMin, now, closeAtEnd, trade::trackStop);
             if (exit == null) {   // live: still open now
                 openTrades.add(trade);
@@ -218,7 +212,7 @@ public class PreviousRangeEngine {
 
     private record Settings(int lots, int lotSize, double targetPoints, LocalTime entryUntil, Set<DayOfWeek> skipDays,
                             double costPerTrade, Underlying underlying, boolean allowCe, boolean allowPe, double maxStopPoints,
-                            int narrowRangeDays, int excludeNarrowRangeDays, TargetFrom targetFrom) {
+                            int narrowRangeDays, int excludeNarrowRangeDays) {
 
         /** The range stop, moved closer to entry when it is further away than maxStopPoints (CE below entry, PE above). */
         double capStop(boolean call, double entry, double rangeStop) {
@@ -245,7 +239,7 @@ public class PreviousRangeEngine {
                 throw new IllegalArgumentException("excludeNarrowRangeDays must be above narrowRangeDays and at most 20: " + nrExclude);
             return new Settings(p.intOr("lots", 2), u.defaultLotSize, p.doubleOr("targetPoints", 0), entryUntil,
                     parseDays(p.stringOr("skipDays", "")), p.doubleOr("costPerTrade", 0), u,
-                    !dirs.equals("PE"), !dirs.equals("CE"), cap, nr, nrExclude, TargetFrom.of(p));
+                    !dirs.equals("PE"), !dirs.equals("CE"), cap, nr, nrExclude);
         }
 
         private static LocalTime parseTime(String name, String v) {

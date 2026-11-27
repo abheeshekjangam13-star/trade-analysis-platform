@@ -24,7 +24,6 @@ public class LivePosition {
     private double entrySpot;
     private Double currentStop;
     private Instant stopFrom;     // first 1-min candle currentStop applies to (null = every candle after entry)
-    private Double targetSpot;    // the target's Nifty price when measured from the line (null = entry ± targetPoints)
     private Long entryOrderId;
     private Double entryPrice;
     private Long exitOrderId;
@@ -87,8 +86,6 @@ public class LivePosition {
     public double getEntrySpot()    { return entrySpot; }
     public Double getCurrentStop()  { return currentStop; }
     public Instant getStopFrom()    { return stopFrom; }
-    public Double getTargetSpot()   { return targetSpot; }
-    void targetAt(Double spot)      { targetSpot = spot; }
     public Long getEntryOrderId()   { return entryOrderId; }
     public Double getEntryPrice()   { return entryPrice; }
     public Long getExitOrderId()    { return exitOrderId; }

@@ -27,8 +27,7 @@ import java.util.stream.Collectors;
  * - SL hit: CE when spot trades ≤ sl, PE when spot trades ≥ sl, checked against each 1-min candle's
  *   low/high as a stand-in for ticks; filled at the stop, or at the open if the candle gapped through.
  *   If 1-min data is missing for a 5-min window, the hit is checked on the 5-min candle and the stop is not trailed
- * - Optional target: exit when spot moves {@code targetPoints} in favour (SL is checked first within a candle), from
- *   the entry, or from the range's high / low with targetFrom LINE ({@link TargetFrom}; a breakout already past it is not taken)
+ * - Optional target: exit when spot moves {@code targetPoints} in favour (SL is checked first within a candle)
  * - Optional gap filter on the 09:15 open vs the previous session's close
  * - Candles still forming at {@code now} are ignored
  * - EOD square-off at 15:20 IST regardless
@@ -139,7 +138,7 @@ public class NiftyOpeningBreakoutEngine {
                             Set<DayOfWeek> skipDays, LocalTime referenceTime, StopBasis stopBasis, LocalDate onlyOn,
                             com.tradeanalysis.common.market.Underlying underlying, int referenceMinutes,
                             boolean withGap, double targetR, double trailAfterR, double breakoutStrength, int trendSma,
-                            NarrowRange narrowRange, TargetFrom targetFrom) {
+                            NarrowRange narrowRange) {
         static Settings from(Params p) {
             com.tradeanalysis.common.market.Underlying u = com.tradeanalysis.common.market.Underlying.of(p.stringOr("underlying", ""));
             String dirs = p.stringOr("directions", "BOTH").toUpperCase();
@@ -153,8 +152,6 @@ public class NiftyOpeningBreakoutEngine {
                 throw new IllegalArgumentException("targetR and trailAfterR can't be negative");
             if (targetR > 0 && p.doubleOr("targetPoints", 0) > 0)
                 throw new IllegalArgumentException("Set targetR or targetPoints, not both");
-            if (targetR > 0 && TargetFrom.of(p) == TargetFrom.LINE)
-                throw new IllegalArgumentException("Target from the line works with a target in points, not targetR");
             if (trailAfterR > 0 && p.doubleOr("trailAfterPoints", 0) > 0)
                 throw new IllegalArgumentException("Set trailAfterR or trailAfterPoints, not both");
             double strength = p.doubleOr("breakoutStrength", 0);
@@ -179,7 +176,7 @@ public class NiftyOpeningBreakoutEngine {
                     Optional.ofNullable(parseTime("referenceTime", p.stringOr("referenceTime", ""))).orElse(REF_CANDLE_TIME),
                     parseStop(p.stringOr("initialStop", "MIDPOINT")),
                     parseDate("onlyOn", p.stringOr("onlyOn", "")), u, refMinutes,
-                    dirs.equals("WITH_GAP"), targetR, trailAfterR, strength, trendSma, NarrowRange.from(p), TargetFrom.of(p));
+                    dirs.equals("WITH_GAP"), targetR, trailAfterR, strength, trendSma, NarrowRange.from(p));
         }
 
         private static StopBasis parseStop(String v) {
@@ -463,9 +460,6 @@ public class NiftyOpeningBreakoutEngine {
                         double pos = range > 0 ? (spot - candle.low().doubleValue()) / range : 1.0;
                         if ((freshBullish ? pos : 1 - pos) < cfg.breakoutStrength()) freshBullish = freshBearish = false;
                     }
-                    // Already at or past a target measured from the line: no profit left, not taken (next entry needs a fresh cross).
-                    if ((freshBullish || freshBearish) && cfg.targetFrom().noRoom(freshBullish, spot, freshBullish ? refHigh : refLow, cfg.targetPoints()))
-                        freshBullish = freshBearish = false;
 
                     if (freshBullish || freshBearish) {
                         TrailingStopLoss.Direction dir = freshBullish
@@ -482,9 +476,7 @@ public class NiftyOpeningBreakoutEngine {
                             stop.tightenTo(freshBullish ? spot - cfg.maxStopPoints() : spot + cfg.maxStopPoints());
                         // Initial risk in points; floored at 1 so a breakout candle closing on its extreme still gets a target.
                         double risk = Math.max(1, Math.abs(spot - stop.currentStop()));
-                        // Points from entry: targetPoints, less how far past the line it bought when the target is measured from the line.
-                        openTarget = cfg.targetR() > 0 ? cfg.targetR() * risk : cfg.targetPoints() <= 0 ? 0
-                                : Math.abs(cfg.targetFrom().target(freshBullish, spot, freshBullish ? refHigh : refLow, cfg.targetPoints()) - spot);
+                        openTarget = cfg.targetR() > 0 ? cfg.targetR() * risk : cfg.targetPoints();
                         double trailAfter = cfg.trailAfterR() > 0 ? cfg.trailAfterR() * risk : cfg.trailAfterPoints();
                         if (trailAfter > 0) stop.trailOnlyAfter(spot, trailAfter, cfg.breakevenOnTrail(),
                                 cfg.breakevenLockPoints());

@@ -351,19 +351,6 @@ public class LiveStrategyRunner {
         return "#" + s.getId() + " " + cfg.getMode() + " user " + cfg.getUserId() + ": " + (did.isEmpty() ? "no change" : String.join("; ", did));
     }
 
-    /**
-     * The target price of a strategy whose target is measured from the line (targetFrom LINE): targetPoints from the line
-     * the engine's trade broke (its reference high for a CE, low for a PE). Null otherwise: the exit watcher then works
-     * the target out from the entry.
-     */
-    static Double lineTarget(Params params, NiftyTradeLog t) {
-        double tp = params.doubleOr("targetPoints", 0);
-        if (tp <= 0 || com.tradeanalysis.strategy.engine.TargetFrom.of(params) != com.tradeanalysis.strategy.engine.TargetFrom.LINE) return null;
-        boolean call = "CE".equals(t.getOptionType());
-        return com.tradeanalysis.strategy.engine.TargetFrom.LINE.target(call, t.getEntrySpotPrice(),
-                call ? t.getReferenceHigh() : t.getReferenceLow(), tp);
-    }
-
     private String enter(StrategyLiveConfig cfg, Strategy s, Params params, NiftyTradeLog t, LocalDate today) {
         KiteApi.OptionInstrument opt;
         try {
@@ -379,7 +366,6 @@ public class LiveStrategyRunner {
         OrderRequest req = marketable(opt.tradingsymbol(), "BUY", qty, cfg.getProduct(), opt.tickSize(), cfg.getMode());
         LivePosition p = new LivePosition(s.getId(), cfg.getUserId(), today, cfg.getMode(), t.getOptionType(), opt.tradingsymbol(), qty,
                 t.getEntryTimestamp(), t.getEntrySpotPrice(), t.getFinalStopLoss());
-        p.targetAt(lineTarget(params, t));
         if (req == null) {
             p.failed("No option price from Kite for a live order");
             positions.save(p);

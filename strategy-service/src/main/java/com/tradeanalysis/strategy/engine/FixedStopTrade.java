@@ -67,12 +67,11 @@ final class FixedStopTrade {
 
     /**
      * Settings common to these engines. Parameters: lots (2), underlying, directions CE|PE|BOTH (BOTH), targetPoints
-     * (0 = none), targetFrom ENTRY|LINE (ENTRY, {@link TargetFrom}), maxStopPoints (0 = no cap), entryUntil (14:00), skipDays (none), costPerTrade (0), and the stop
+     * (0 = none), maxStopPoints (0 = no cap), entryUntil (14:00), skipDays (none), costPerTrade (0), and the stop
      * protection of {@link Protect}.
      */
     record Basics(int lots, int lotSize, Underlying underlying, boolean allowCe, boolean allowPe, double targetPoints,
-                  double maxStopPoints, LocalTime entryUntil, Set<DayOfWeek> skipDays, double costPerTrade, Protect protect,
-                  TargetFrom targetFrom) {
+                  double maxStopPoints, LocalTime entryUntil, Set<DayOfWeek> skipDays, double costPerTrade, Protect protect) {
 
         static Basics from(Params p, String strategyName) {
             String dirs = p.stringOr("directions", "BOTH").trim().toUpperCase(Locale.ROOT);
@@ -85,7 +84,7 @@ final class FixedStopTrade {
             Underlying u = Underlying.of(p.stringOr("underlying", ""));
             return new Basics(p.intOr("lots", 2), u.defaultLotSize, u, !dirs.equals("PE"), !dirs.equals("CE"), target, cap,
                     time(p, "entryUntil", DEFAULT_ENTRY_UNTIL), days(p.stringOr("skipDays", "")), p.doubleOr("costPerTrade", 0),
-                    Protect.from(p), TargetFrom.of(p));
+                    Protect.from(p));
         }
 
         /** The setup's stop, moved closer to entry when it is further away than maxStopPoints (CE below entry, PE above). */
